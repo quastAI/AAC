@@ -65,6 +65,17 @@ Not doing: compute-Pareto sweeps, stagewise data specialisation, detachment grid
 
 ## Repository layout
 
+This repository holds only the project documentation (this README). The three codebases below are separate repositories (forks under `quastAI`) with their own history. They are not submodules. Clone them side by side in one parent folder:
+
+```
+AAC/            this repository (documentation)
+Craftax/        github.com/quastAI/Craftax
+purejaxql/      github.com/quastAI/purejaxql
+H-JEPA/         github.com/quastAI/H-JEPA
+```
+
+Code changes are committed in the repository they belong to, so a result should be traceable to a commit in each of the three.
+
 | Folder | Contents | Planned changes |
 |---|---|---|
 | [Craftax](Craftax) | Environment | Pixel rendering and state export for data collection |
