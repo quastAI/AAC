@@ -163,7 +163,7 @@ python time_run.py --config-name craftax_hjepa_l2 --eval-config-name craftax_l2 
 python ../../experiments/run.py plan E1                                                                                       # the whole experiment
 ```
 
-Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed. Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built) and a compute-scaling probe C1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
+Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built) and a compute-scaling probe C1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
 
 ### Design notes
 

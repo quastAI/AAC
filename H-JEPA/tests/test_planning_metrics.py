@@ -215,8 +215,14 @@ CALLABLES = [
 
 
 def run_eval(policy, dataset, budget=8):
+    # the fixture episode is a random one (source 2): a plumbing test, so no source filter
     tasks = eval_tasks.make_tasks(
-        dataset, mode='achievements', num_tasks=1, depths=(1,), seed=0
+        dataset,
+        mode='achievements',
+        num_tasks=1,
+        depths=(1,),
+        seed=0,
+        sources=None,
     )
     payload = eval_tasks.build_payload(dataset, tasks, eval_budget=budget)
     world = swm.World(

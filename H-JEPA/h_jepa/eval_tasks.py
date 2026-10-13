@@ -4,7 +4,9 @@ A task is (episode, start, goal). Its *required* set is the achievements the goa
 frame has and the start frame lacks; the environment's goal test succeeds when
 all of them are unlocked, so a task always contains progress. Tasks come from
 held-out dataset episodes, at most one per episode (the evaluation asserts that
-all world seeds differ).
+all world seeds differ). Only expert episodes (source 0, the ones that reach
+the diamond) are used: a goal frame from a noised or random episode is not a goal
+the expert reaches.
 
 Modes
     offset        goal frame = start + one of `offsets`; only pairs with progress.
@@ -46,6 +48,17 @@ def episode_achievements(dataset) -> list[np.ndarray]:
     """Per episode, the cumulative achievement flags (length, 22) as bool."""
     flags = np.asarray(dataset.get_col_data("achievements")).astype(bool)
     return [flags[o : o + n] for o, n in zip(dataset.offsets, dataset.lengths)]
+
+
+def episode_sources(dataset) -> np.ndarray:
+    """Per episode, the `source` column (0 expert, 1 noised expert, 2 random)."""
+    if "source" not in dataset.column_names:
+        raise ValueError(
+            "the dataset has no `source` column, so the expert episodes cannot be told apart; "
+            "pass sources=None (--all-sources) to use every episode"
+        )
+    source = np.asarray(dataset.get_col_data("source")).reshape(-1)
+    return np.array([source[o] for o in dataset.offsets])
 
 
 def unlock_frames(flags: np.ndarray) -> np.ndarray:
@@ -106,14 +119,21 @@ def make_tasks(
     depths=(1, 2, 3),
     max_distance: int | None = None,
     target: int = DIAMOND,
+    sources: tuple[int, ...] | None = (0,),
 ) -> list[dict]:
-    """Sample up to `num_tasks` tasks, one per episode, spread over offsets or depths."""
+    """Sample up to `num_tasks` tasks, one per episode, spread over offsets or depths.
+
+    Only episodes whose `source` is in `sources` are used (default: expert episodes); None uses all.
+    """
     if mode not in ("offset", "achievements", "episode"):
         raise ValueError(f"unknown mode {mode!r}")
     rng = np.random.default_rng(seed)
     flags = episode_achievements(dataset)
+    allowed = np.ones(len(flags), dtype=bool)
+    if sources is not None:
+        allowed = np.isin(episode_sources(dataset), list(sources))
     tasks = []
-    for i, e in enumerate(rng.permutation(len(flags))):
+    for i, e in enumerate(rng.permutation(np.nonzero(allowed)[0])):
         if len(tasks) >= num_tasks:
             break
         f = flags[e]
@@ -182,6 +202,8 @@ def main():
     parser.add_argument("--max-distance", type=int, default=None)
     parser.add_argument("--eval-budget", type=int, required=True, help="environment steps the planner gets")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--sources", type=int, nargs="+", default=[0], help="episode sources to use (0 expert)")
+    parser.add_argument("--all-sources", action="store_true", help="use every episode, whatever its source")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -192,7 +214,7 @@ def main():
     )
     tasks = make_tasks(
         dataset, mode=args.mode, num_tasks=args.num_tasks, seed=args.seed, offsets=args.offsets,
-        depths=args.depths, max_distance=args.max_distance,
+        depths=args.depths, max_distance=args.max_distance, sources=None if args.all_sources else tuple(args.sources),
     )  # fmt: skip
     print(describe(tasks))
     if len(tasks) < args.num_tasks:

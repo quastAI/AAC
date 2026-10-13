@@ -38,6 +38,7 @@ def dataset(tmp_path):
             'seed',
             'step_idx',
             'action',
+            'source',
         )
     }
     for e in range(12):
@@ -49,6 +50,7 @@ def dataset(tmp_path):
         columns['full_state'].append(np.full((LENGTH, 5), e, dtype=np.uint8))
         columns['seed'].append(np.full(LENGTH, 1000 + e, dtype=np.int64))
         columns['step_idx'].append(np.arange(LENGTH, dtype=np.int32))
+        columns['source'].append(np.zeros(LENGTH, dtype=np.int8))
         action = np.zeros((LENGTH, 1), dtype=np.float32)
         action[-1] = np.nan
         columns['action'].append(action)
@@ -166,3 +168,47 @@ def test_payload_is_loadable_with_variable_lengths(dataset):
     assert 'goal' in eval_tasks.describe(
         tasks
     ) or 'tasks' in eval_tasks.describe(tasks)
+
+
+def reload_with_sources(dataset, sources):
+    import stable_worldmodel as swm
+
+    with h5py.File(dataset.h5_path, 'r+') as f:
+        del f['source']
+        f.create_dataset(
+            'source', data=np.repeat(np.asarray(sources, dtype=np.int8), LENGTH)
+        )
+    return swm.data.HDF5Dataset(
+        'tasks',
+        cache_dir=dataset.h5_path.parent,
+        level1={'frameskip': 1, 'num_steps': 1},
+    )
+
+
+@pytest.mark.parametrize('mode', ['offset', 'achievements', 'episode'])
+def test_tasks_come_from_expert_episodes_only(dataset, mode):
+    sources = [e % 2 for e in range(12)]  # diamond episodes: e % 3 == 0
+    dataset = reload_with_sources(dataset, sources)
+    kwargs = dict(mode=mode, num_tasks=12, seed=1)
+    tasks = eval_tasks.make_tasks(dataset, **kwargs)
+    assert tasks
+    assert {sources[t['episode']] for t in tasks} == {0}
+    everything = eval_tasks.make_tasks(dataset, sources=None, **kwargs)
+    assert {sources[t['episode']] for t in everything} - {0}
+
+
+def test_a_dataset_without_sources_is_refused_unless_asked(dataset):
+    import stable_worldmodel as swm
+
+    with h5py.File(dataset.h5_path, 'r+') as f:
+        del f['source']
+    plain = swm.data.HDF5Dataset(
+        'tasks',
+        cache_dir=dataset.h5_path.parent,
+        level1={'frameskip': 1, 'num_steps': 1},
+    )
+    with pytest.raises(ValueError, match='source'):
+        eval_tasks.make_tasks(plain, mode='offset', num_tasks=3)
+    assert eval_tasks.make_tasks(
+        plain, mode='offset', num_tasks=3, sources=None
+    )
