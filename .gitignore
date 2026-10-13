@@ -1,0 +1,28 @@
+# Reference papers (published; cited in README, not redistributed)
+papers/*.pdf
+
+# Read-only reference clones, not part of this repository
+/Craftax/
+/stable-worldmodel-craftax/
+
+# Python / environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Run outputs, data and checkpoints (published separately, see README)
+outputs/
+multirun/
+wandb/
+lightning_logs/
+*.h5
+*.hdf5
+*.safetensors
+*.ckpt
+*.pt
+
+# OS / editor
+.DS_Store
+.idea/
