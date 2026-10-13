@@ -81,3 +81,24 @@ def test_append_skips_used_seeds(collect, monkeypatch, tmp_path):
     seeds = f["seed"][f["ep_offset"][:]]
     assert len(seeds) == 8 and len(set(seeds.tolist())) == 8
     assert sorted(set(f["ep_idx"][:].tolist())) == list(range(8))
+
+
+def test_append_after_an_interrupted_run(collect, monkeypatch, tmp_path):
+    # a kill between two column writes leaves rows behind that no finished
+    # episode covers; the next run must not misalign the columns
+    kwargs = dict(num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
+    path = tmp_path / "e.h5"
+    run(collect, monkeypatch, path, num_episodes=2, **kwargs).close()
+    with h5py.File(path, "a") as f:
+        rows = f["pixels"].shape[0]
+        f["pixels"].resize(rows + 13, axis=0)  # orphans in some columns only
+        f["action"].resize(rows + 13, axis=0)
+    f = run(collect, monkeypatch, path, num_episodes=2, seed_start=100, **kwargs)
+    total = int(f["ep_offset"][-1] + f["ep_len"][-1])
+    assert all(f[key].shape[0] == total for key in f if not key.startswith("ep_o") and key != "ep_len")
+    offsets = f["ep_offset"][:]
+    assert f["seed"][offsets].tolist() == [0, 1, 100, 101]
+    assert f["ep_idx"][offsets].tolist() == [0, 1, 2, 3]
+    # the rows of every episode belong to its seed
+    for offset, length in zip(offsets, f["ep_len"][:]):
+        assert len(set(f["seed"][offset : offset + length].tolist())) == 1

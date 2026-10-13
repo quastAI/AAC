@@ -269,6 +269,29 @@ class EpisodeWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.f = h5py.File(path, "a")
         self.initialized = "ep_len" in self.f
+        if self.initialized:
+            self._drop_unfinished_rows()
+
+    def _drop_unfinished_rows(self):
+        """Cut rows that an interrupted run wrote after its last finished episode.
+
+        An episode counts once its ep_offset and ep_len entries exist, and those are written last.
+        Columns longer than that hold the rows of an unfinished episode; a shorter one is damage
+        that cannot be repaired here.
+        """
+        if self.num_episodes:
+            rows = int(self.f["ep_offset"][-1] + self.f["ep_len"][-1])
+        else:
+            rows = 0
+        for key in self.f:
+            if key in ("ep_offset", "ep_len"):
+                continue
+            have = int(self.f[key].shape[0])
+            if have < rows:
+                raise RuntimeError(f"{key} has {have} rows but the finished episodes cover {rows}")
+            if have > rows:
+                print(f"{key}: dropping {have - rows} rows of an unfinished episode")
+                self.f[key].resize(rows, axis=0)
 
     @property
     def num_episodes(self):
@@ -310,8 +333,8 @@ class EpisodeWriter:
             ds = self.f[key]
             if ds.shape[1:] != data.shape[1:] or ds.dtype != data.dtype:
                 raise ValueError(f"{key}: {data.shape}/{data.dtype} does not match {ds.shape}/{ds.dtype}")
-            ds.resize(ds.shape[0] + n, axis=0)
-            ds[-n:] = data
+            ds.resize(start + n, axis=0)
+            ds[start : start + n] = data
         for key, value in (("ep_offset", start), ("ep_len", n)):
             self.f[key].resize(self.f[key].shape[0] + 1, axis=0)
             self.f[key][-1] = value
