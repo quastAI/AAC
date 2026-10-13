@@ -156,6 +156,31 @@ def test_live_hook_logs_and_flags(setup, callback):
     assert callback._seen  # an untrained model raises findings
 
 
+def test_live_hook_accepts_autocast_outputs(setup, callback):
+    # under precision bf16-mixed the training forward returns bf16 latents
+    # while the monitor's predictor is fp32 (this crashed at the first live step)
+    cfg, module, _ = setup
+    steps = 33
+    batch = {
+        'pixels_level1': torch.rand(4, steps, 3, 63, 63),
+        'action_level1': torch.nn.functional.one_hot(
+            torch.randint(0, 17, (4, steps)), 17
+        ).float(),
+    }
+    module.train()
+    with torch.autocast('cpu', dtype=torch.bfloat16):
+        outputs = hjepa_forward(
+            module, batch, 'fit', cfg, normalize_batch=lambda b: None
+        )
+    assert outputs['embed_1'].dtype == torch.bfloat16
+    logger = Logger()
+    trainer = SimpleNamespace(
+        global_step=0, is_global_zero=True, logger=logger
+    )
+    callback.on_train_batch_end(trainer, module, outputs, batch, 0)
+    assert 'health/level1/rep/erank' in logger.logged
+
+
 def test_loader_falls_back_to_shorter_clips(setup, dataset):
     cfg, _, _ = setup
     transform = hjepa_data.Compose(

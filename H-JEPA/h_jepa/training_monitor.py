@@ -167,7 +167,8 @@ class TrainingHealthCallback(Callback):
             emb, act = outputs.get(f"embed_{n}"), outputs.get(f"action_{n}")
             if emb is None:
                 continue
-            emb, act = emb.detach(), act.detach()
+            # the training forward runs under autocast: these are bf16, the metrics run in fp32
+            emb, act = emb.detach().float(), act.detach().float()
             jepa = self._jepa(pl_module, n)
             entry = {"rep": health.representation_summary(emb)}
             entry["dyn"] = health.teacher_forced_metrics(jepa, emb, act, self._history(n), self.generator)
