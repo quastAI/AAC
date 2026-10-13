@@ -36,7 +36,7 @@ Test venvs are throwaway: recreate them with `python3 -m venv`. The default pip 
 
 ## Decisions taken
 
-Discrete CEM at every level; VQ latent actions with a factorized codebook above level 1; IDM (cross-entropy) on at every level (E5 ablates per model); native 63x63 frames with a ViT of patch 7; actors are learned separately later (frozen, after the world model); the band of horizons (E7) is meant to become the default. Planner design (proposals, trust region, actors) is deferred; README "Open decisions" lists the rest.
+Settled with the user: goal test `new_achievements` with all achievements counting (random baseline as reference); protocol A main task set = offsets with progress, per offset; data = expert (diamond filter) + 25% non-expert (half noised expert eps 0.3, half random), seed ranges 0 / 1M / 2M for train / val / test, headline runs use the test worlds; level-1 step = 1 environment step. Earlier: Discrete CEM at every level; VQ latent actions with a factorized codebook above level 1; IDM (cross-entropy) on at every level (E5 ablates per model); native 63x63 frames with a ViT of patch 7; actors are learned separately later (frozen, after the world model); the band of horizons (E7) is meant to become the default. Planner design (proposals, trust region, actors) is deferred; README "Open decisions" lists the rest.
 
 ## Diagnostics (all in `H-JEPA/h_jepa`)
 

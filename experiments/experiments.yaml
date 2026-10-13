@@ -11,9 +11,21 @@ settings:
   seeds_explore: [42]
   seeds_final: [42, 43, 44]
   train_dataset: craftax_expert_train  # placeholder names of the collector's output
-  val_dataset: craftax_expert_val
+  val_dataset: craftax_expert_val  # exploration: tasks come from here
+  test_dataset: craftax_expert_test  # headline results (--final): tasks come from here
   tasks_dir: eval_tasks  # under $HJEPA_HOME
   chunk_size: 10  # evaluation tasks per resumable chunk
+
+# Data collection (D1): expert episodes that reach the diamond, plus a share of non-expert episodes
+# (half noised expert, half uniform random) for level-1 dynamics coverage and for actions the expert
+# never takes. Seeds are the split: disjoint ranges, so validation and test worlds are held out.
+# The non-expert seeds start 500000 into the range, so they never meet the expert seeds.
+# Episode counts are placeholders.
+collection:
+  episodes: {train: 3000, val: 300, test: 300}
+  nonexpert_share: 0.25
+  noise_eps: 0.3
+  seed_start: {train: 0, val: 1000000, test: 2000000}
 
 # Task sets (eval_tasks.py). The budget is in environment steps. Placeholders: the offsets,
 # the number of tasks and the budgets follow from the goal-test decision and the timing run.
@@ -22,6 +34,10 @@ tasks:
   B: {mode: episode, num_tasks: 100, eval_budget: 3000}
 
 experiments:
+  D1:
+    title: Data collection (needs the trained expert, --expert-checkpoint)
+    collection: true
+
   D0:
     title: Data analysis (clip counts, event durations, time scales, chunk diversity)
     analysis: true

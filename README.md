@@ -43,7 +43,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 **Expert.** PQN-RNN from [purejaxql](purejaxql), trained on `Craftax-Classic-Symbolic-v1`. Rolled-out episodes are filtered to the successful ones (diamond collected), and the collector renders pixels from the same state.
 
-**Data.** Mostly expert episodes, plus a share of random or noised-expert episodes for level-1 dynamics coverage. The ratio is open. Validation, probing and planning tasks use held-out world seeds. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
+**Data.** Expert episodes that reach the diamond, plus 25% non-expert episodes (half noised expert with epsilon 0.3, half uniform random) for level-1 dynamics coverage and for actions the expert never takes. Seeds are the split: training from 0, validation from 1,000,000, test from 2,000,000 (the non-expert episodes start 500,000 into each range). Exploration takes its tasks from the validation worlds, headline results (`--final`) from the test worlds. `experiments/run.py plan D1 --expert-checkpoint <ckpt>` prints the collection commands. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
 
 ## Models
 
@@ -60,9 +60,9 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 | **A. Offset goals** | Start and goal frames from held-out expert trajectories, one task per world seed, only pairs with progress between start and goal (fixed offsets, or the d-th next achievement) | Success and progress under the goal test below, against a random policy on the same tasks |
 | **B. Full episodes** | From reset to the frame where the expert unlocks the diamond in the same world seed, so the whole chain is required (the final goal only; key states are not built) | Progress by achievement depth, and the diamond rate |
 
-**Goal test.** A task's required set is the achievements the goal frame has and the start frame lacks. Success means all of them are unlocked, in any order and by any route; progress is the share unlocked. The planner never sees this: it minimises the latent distance to the goal frame (in the projected embedding space that the predictor and SIGReg use; between levels, predictions are encoded up to the upper latent). The test only judges the result. The final definition is open (see Open decisions).
+**Goal test.** A task's required set is the achievements the goal frame has and the start frame lacks. Success means all of them are unlocked, in any order and by any route; progress is the share unlocked. The planner never sees this: it minimises the latent distance to the goal frame (in the projected embedding space that the predictor and SIGReg use; between levels, predictions are encoded up to the upper latent). The test only judges the result. 
 
-Every reported success number comes with the planner compute used. The planner is goal-conditioned and reward-free, so results are phrased as "reaches X% of the expert's achievement rate given goal frames", not "beats the expert".
+All achievements count, including those a random agent gets by itself (wake up, drink, sapling): the random baseline on the same tasks is the reference. Protocol A uses offsets with progress as its main task set, reported per offset. Every reported success number comes with the planner compute used. The planner is goal-conditioned and reward-free, so results are phrased as "reaches X% of the expert's achievement rate given goal frames", not "beats the expert".
 
 ## Experiments
 
@@ -130,7 +130,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 | `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random |
 
 - **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
-- **Seeds are the split.** Use disjoint seed ranges for train, validation and test so that probing and planning tasks use held-out worlds. The ranges are not fixed yet.
+- **Seeds are the split.** Train from 0, validation from 1,000,000, test from 2,000,000, so that probing and planning tasks use held-out worlds (see Data).
 
 ### Planning environment (H-JEPA)
 
@@ -206,10 +206,8 @@ About 15 A100-hours per month (~180 in total). One seed for exploration, three s
 ## Open decisions
 
 - Planner: proposals, trust region, learned actors (stay with discrete CEM until decided)
-- Expert / random data ratio
-- Goal test and offsets for protocol A, and whether to ignore achievements a random agent gets by itself
+- Numbers to set from the data analysis and the timing run: the offsets and budgets of the task sets, the episode counts, the strides
 - Goal sequence for protocol B (the final goal only is built; key states need goal switching in the policy)
-- Level-1 step size (1 env step vs a few with concatenated actions)
 - Band ranges for E7, and whether the planner may choose k freely
 
 ## References

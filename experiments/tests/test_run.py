@@ -48,7 +48,7 @@ def test_e1_commands_and_dependencies(spec):
     assert ev.after == ['tasks_A', 'train_e1_hjepa_l2_s42']
     assert 'policy=ckpts/craftax/e1_hjepa_l2/seed42' in ev.command
     assert 'output.dir=seed42/eval_A_craftax_l2' in ev.command
-    assert 'load_eval_trajs_path=/data/eval_tasks/A.pt' in ev.command
+    assert 'load_eval_trajs_path=/data/eval_tasks/A_val.pt' in ev.command
     # tasks A (offsets with progress) and B (full episodes) and a random baseline for each
     assert '--offsets' in jobs['tasks_A'].command and '--mode' in jobs['tasks_B'].command
     base = jobs['eval_random_B']
@@ -172,3 +172,38 @@ def test_cli_list_and_plan(spec, capsys):
     assert 'e2_hwm_l3' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         run.main(['plan', 'E7'])
+
+
+def test_final_runs_take_their_tasks_from_the_test_split(spec):
+    jobs = by_name(run.build_jobs(spec, 'E1', [42], home='/data', final=True))
+    assert 'craftax_expert_test' in jobs['tasks_A'].command
+    assert jobs['tasks_A'].output == '/data/eval_tasks/A_test.pt'
+    ev = jobs['eval_e1_hjepa_l2_s42_A']
+    assert 'eval.dataset_name=craftax_expert_test' in ev.command
+    # training still validates on the validation worlds
+    assert 'data.dataset.val_name=craftax_expert_val' in jobs['train_e1_hjepa_l2_s42'].command
+
+
+def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):
+    jobs = run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/ckpt/expert.safetensors')
+    c = spec['collection']
+    for split, dataset in (('train', 'craftax_expert_train'), ('val', 'craftax_expert_val'), ('test', 'craftax_expert_test')):
+        expert, noised, rand = (by_name(jobs)[f'collect_{split}_{k}'] for k in ('expert', 'noised', 'random'))
+        total = c['episodes'][split]
+        count = lambda job: int(job.command[job.command.index('--num-episodes') + 1])  # noqa: E731
+        assert count(expert) + count(noised) + count(rand) == total
+        assert count(noised) + count(rand) == round(total * c['nonexpert_share'])
+        assert all('/data/' + dataset + '.h5' in j.command for j in (expert, noised, rand))
+        # one file, so the runs are chained; seeds of the three runs do not overlap
+        assert noised.after == [expert.name] and rand.after == [noised.name]
+        starts = [int(j.command[j.command.index('--seed-start') + 1]) for j in (expert, noised, rand)]
+        assert starts == [c['seed_start'][split], c['seed_start'][split] + 500_000, c['seed_start'][split] + 750_000]
+        assert '--no-require-diamond' not in expert.command and '--no-require-diamond' in noised.command
+        assert '--checkpoint' not in rand.command and rand.command[rand.command.index('--eps') + 1] == '1.0'
+    ranges = [c['seed_start'][s] for s in ('train', 'val', 'test')]
+    assert ranges == sorted(ranges) and ranges[1] - ranges[0] >= 1_000_000  # disjoint splits
+
+
+def test_collection_run_needs_the_checkpoint(spec):
+    with pytest.raises(SystemExit, match='expert-checkpoint'):
+        run.main(['run', 'D1', '--mode', 'slurm'])

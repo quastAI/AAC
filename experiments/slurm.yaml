@@ -12,5 +12,6 @@ time:  # wall-clock limit per kind of job
   probe: "02:00:00"
   tasks: "01:00:00"
   analysis: "01:00:00"
+  collect: "12:00:00"
   compare: "00:30:00"
 extra: []  # more lines for the top of every script, e.g. "module load cuda"
