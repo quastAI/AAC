@@ -48,10 +48,10 @@ class SIGReg(torch.nn.Module):
 
 
 class InverseDynamicsModel(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim):
+    def __init__(self, state_dim, hidden_dim, action_dim, extra_dim=0):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(state_dim * 2, hidden_dim),
+            nn.Linear(state_dim * 2 + extra_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -59,8 +59,9 @@ class InverseDynamicsModel(nn.Module):
         )
         self.apply(init_module_weights)
 
-    def forward(self, state_t, state_t_plus_1):
-        return self.model(torch.cat([state_t, state_t_plus_1], dim=1))
+    def forward(self, state_t, state_t_plus_1, extra=None):
+        parts = [state_t, state_t_plus_1] + ([] if extra is None else [extra])
+        return self.model(torch.cat(parts, dim=1))
 
 
 class InverseDynamicsLoss(nn.Module):
@@ -87,17 +88,23 @@ class DiscreteInverseDynamicsLoss(nn.Module):
     of the last call is kept in `last_accuracy` for logging.
     """
 
-    def __init__(self, idm, num_slots: int, num_classes: int):
+    def __init__(self, idm, num_slots: int, num_classes: int, num_durations: int = 0):
         super().__init__()
         self.idm = idm
         self.num_slots, self.num_classes = int(num_slots), int(num_classes)
+        self.num_durations = int(num_durations)
         self.last_accuracy = None
 
-    def forward(self, emb, target):
+    def forward(self, emb, target, duration=None):
         """
-        emb: (B, T, D), target: (B, T or T-1, num_slots) long, -1 = ignore
+        emb: (B, T, D), target: (B, T or T-1, num_slots) long, -1 = ignore,
+        duration: (B, T or T-1, 1) index of the step duration, when the model has durations
         """
-        logits = self.idm(emb[:, :-1].flatten(0, 1), emb[:, 1:].flatten(0, 1))
+        extra = None
+        if self.num_durations:
+            duration = duration[:, : emb.size(1) - 1, 0].flatten(0, 1)
+            extra = F.one_hot(duration, self.num_durations).float()
+        logits = self.idm(emb[:, :-1].flatten(0, 1), emb[:, 1:].flatten(0, 1), extra)
         logits = logits.reshape(-1, self.num_slots, self.num_classes)
         target = target[:, : emb.size(1) - 1].flatten(0, 1)  # [B*(T-1), slots]
         valid = target >= 0

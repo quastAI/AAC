@@ -402,9 +402,9 @@ class LevelCostModel(nn.Module):
         """Forward latent-action queue access to the wrapped level model."""
         return self.model.get_latent_action_queue()
 
-    def get_action_codebook(self) -> torch.Tensor | None:
-        """Forward the VQ codebook of the wrapped level model (None if continuous)."""
-        return self.model.get_action_codebook()
+    def get_action_spec(self):
+        """Forward the VQ action spec of the wrapped level model (None if continuous)."""
+        return self.model.get_action_spec()
 
     def get_cost(self, info_dict: dict, action_candidates: torch.Tensor) -> torch.Tensor:
         info_dict = self.rollout(info_dict, action_candidates)

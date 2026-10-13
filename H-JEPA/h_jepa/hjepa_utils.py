@@ -180,7 +180,7 @@ def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
             if idm_target is None:
                 idm_loss = jepa.idm_loss_fn(emb, act_emb)
             else:
-                idm_loss = jepa.idm_loss_fn(emb, idm_target)
+                idm_loss = jepa.idm_loss_fn(emb, idm_target, output.get(f"duration_index_{level}"))
                 output[f"idm_accuracy_loss{level_suffix}"] = jepa.idm_loss_fn.last_accuracy
             output[f"idm_loss{level_suffix}"] = idm_loss
             level_loss = level_loss + idm_coeff * idm_loss
@@ -339,6 +339,8 @@ def create_world_model(cfg):
         if action_embed_kwargs.pop("type", None) == "identity":
             action_embed = torch.nn.Identity()
         else:
+            if hasattr(action_encoder, "token_dim"):
+                action_embed_kwargs["input_dim"] = action_encoder.token_dim
             if level == 1:
                 # discrete actions enter as one-hot vectors of num_actions entries
                 action_embed_kwargs["input_dim"] = cfg.data.dataset.level1.frameskip * int(
@@ -360,11 +362,14 @@ def create_world_model(cfg):
         )
 
         if float(level_cfg.get("idm_coeff", 0.0)) > 0:
+            num_durations = 0
             if level == 1 and level_cfg.wm.get("num_actions", None) is not None:
                 # discrete level-1 actions: classify the action(s) of each step
                 slots, classes = int(cfg.data.dataset.level1.frameskip), int(level_cfg.wm.num_actions)
             elif vq_cfg is not None:
-                slots, classes = 1, int(vq_cfg["num_codes"])  # classify the code of each chunk
+                # classify the code of each group of the chunk's action; the duration is an input
+                slots, classes = int(vq_cfg.get("groups", 1)), int(vq_cfg["num_codes"])
+                num_durations = len(vq_cfg.get("durations") or [])
             else:
                 slots = classes = None
             if classes is None:
@@ -381,9 +386,11 @@ def create_world_model(cfg):
                         state_dim=embed_dim,
                         hidden_dim=int(level_cfg.idm.hidden_dim),
                         action_dim=slots * classes,
+                        extra_dim=num_durations,
                     ),
                     num_slots=slots,
                     num_classes=classes,
+                    num_durations=num_durations,
                 )
 
         jepas.append(jepa)

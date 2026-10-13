@@ -343,21 +343,27 @@ class JEPA(nn.Module):
 
         if "action" in info:
             action_mask = info.get("action_mask")
+            encoder_kwargs = {}
+            if getattr(self.action_encoder, "durations", None) is not None:
+                # explicit step durations (a band of horizons); None = the fixed stride
+                encoder_kwargs["duration"] = info.get("action_duration")
             if action_mask is None:
-                latent_actions = self.action_encoder(info["action"])
+                latent_actions = self.action_encoder(info["action"], **encoder_kwargs)
             else:
-                latent_actions = self.action_encoder(info["action"], action_mask)
+                latent_actions = self.action_encoder(info["action"], action_mask, **encoder_kwargs)
             self._update_latent_action_queue(latent_actions)
             info["action_0"] = self.action_embed(latent_actions)
             if getattr(self.action_encoder, "last_indices", None) is not None:
                 info["action_index_0"] = self.action_encoder.last_indices
+            if getattr(self.action_encoder, "last_duration_index", None) is not None:
+                info["duration_index_0"] = self.action_encoder.last_duration_index
 
         return info
 
-    def get_action_codebook(self) -> torch.Tensor | None:
-        """Code vectors of the VQ action encoder (num_codes, dim); None if continuous."""
-        codebook = getattr(self.action_encoder, "codebook", None)
-        return codebook if torch.is_tensor(codebook) else None
+    def get_action_spec(self):
+        """Codebooks and allowed durations of the VQ action encoder; None if continuous."""
+        spec = getattr(self.action_encoder, "action_spec", None)
+        return spec() if callable(spec) else None
 
     def predict(self, emb, act_emb):
         """Predict next state embedding

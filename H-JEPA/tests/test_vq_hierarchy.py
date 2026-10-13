@@ -41,8 +41,9 @@ def make_vq(num_codes=8, **kwargs):
     return VQActionEncoder(MeanEncoder(), num_codes=num_codes, **kwargs)
 
 
-def test_vq_quantizes_to_codes_with_straight_through_gradient():
-    vq = make_vq()
+@pytest.mark.parametrize('groups', [1, 2])
+def test_vq_quantizes_to_codes_with_straight_through_gradient(groups):
+    vq = make_vq(groups=groups)
     inputs = torch.randn(3, 5, 4, 8)
     vq(inputs)  # training mode: initialises the codebook
     vq.pop_aux()
@@ -50,20 +51,29 @@ def test_vq_quantizes_to_codes_with_straight_through_gradient():
     vq.eval()  # frozen codebook: outputs can be compared with it
     out = vq(inputs)
     assert out.shape == (3, 5, 4)
-    # the value is a code vector, the gradient reaches the encoder
-    gap = (out[..., None, :] - vq.codebook).abs().sum(-1).min(-1).values
+    assert vq.codebook.shape == (groups, 8, 4 // groups)
+    # every group of the output is one of that group's codes
+    parts = out.reshape(3, 5, groups, 1, 4 // groups)
+    gap = (parts - vq.codebook).abs().sum(-1).min(-1).values
     assert (gap < 1e-5).all()
     out.sum().backward()
     assert vq.encoder.linear.weight.grad.abs().sum() > 0
-    assert vq.last_indices.shape == (3, 5, 1)
+    assert vq.last_indices.shape == (3, 5, groups)
+    assert vq.last_duration_index is None
     aux = vq.pop_aux()
     assert aux['loss'] > 0 and 0 < aux['usage'] <= 1
     assert vq.pop_aux() is None  # consumed
 
 
-def test_vq_codebook_follows_the_data_and_eval_mode_is_frozen():
+def test_vq_rejects_groups_that_do_not_divide_the_dimension():
+    with pytest.raises(ValueError, match='divide'):
+        make_vq(groups=3)
+
+
+@pytest.mark.parametrize('groups', [1, 2])
+def test_vq_codebook_follows_the_data_and_eval_mode_is_frozen(groups):
     torch.manual_seed(0)
-    vq = make_vq(num_codes=4, decay=0.9)
+    vq = make_vq(num_codes=4, groups=groups, decay=0.9)
     centers = torch.randn(4, 8) * 3
 
     def batch():
@@ -84,14 +94,48 @@ def test_vq_codebook_follows_the_data_and_eval_mode_is_frozen():
     assert torch.equal(before, vq.codebook)
 
 
-def test_vq_reseeds_dead_codes():
+def test_vq_reseeds_dead_codes_in_every_group():
     torch.manual_seed(0)
-    vq = make_vq(num_codes=16, decay=0.5, dead_threshold=0.5)
+    vq = make_vq(num_codes=16, groups=2, decay=0.5, dead_threshold=0.5)
     cluster = torch.randn(1, 8) * 3
     for _ in range(40):  # one tight cluster: most codes receive nothing
         vq((cluster + 0.01 * torch.randn(32, 8)).reshape(4, 8, 1, 8))
-    assert (vq.ema_count >= 0.5).all()  # none stays dead
+    assert (vq.ema_count >= 0.5).all()  # none stays dead, in any group
     assert vq.pop_aux()['perplexity'] >= 1.0
+
+
+def test_vq_duration_token():
+    vq = make_vq(groups=2, durations=(2, 4, 8), default_duration=4)
+    assert vq.token_dim == 4 + 3
+    inputs = torch.randn(2, 3, 4, 8)
+
+    default = vq(inputs)  # no duration given: the fixed stride
+    assert default.shape == (2, 3, 7)
+    assert (default[..., 4:] == torch.tensor([0.0, 1.0, 0.0])).all()
+    assert (vq.last_duration_index == 1).all()
+
+    duration = torch.tensor([[2, 4, 8], [8, 8, 2]])
+    token = vq(inputs, duration=duration)
+    assert token[..., 4:].argmax(-1).tolist() == [[0, 1, 2], [2, 2, 0]]
+    assert vq.last_duration_index.shape == (2, 3, 1)
+
+    with pytest.raises(ValueError, match='allowed'):
+        vq(inputs, duration=torch.full((2, 3), 5))
+
+
+def test_vq_duration_config_is_validated():
+    with pytest.raises(ValueError, match='default_duration'):
+        make_vq(durations=(2, 4), default_duration=3)
+    with pytest.raises(ValueError, match='distinct'):
+        make_vq(durations=(2, 2), default_duration=2)
+
+
+def test_vq_action_spec():
+    spec = make_vq(
+        groups=2, durations=(2, 4), default_duration=2
+    ).action_spec()
+    assert spec.codebook.shape == (2, 8, 2) and spec.durations == (2, 4)
+    assert make_vq().action_spec().durations is None
 
 
 def test_discrete_idm_learns_and_ignores_missing_actions():
@@ -121,6 +165,26 @@ def test_discrete_idm_learns_and_ignores_missing_actions():
     assert loss_fn(emb, ignored) == 0
 
 
+def test_discrete_idm_uses_the_duration_input():
+    torch.manual_seed(0)
+    dim, num_durations = 8, 3
+    loss_fn = DiscreteInverseDynamicsLoss(
+        InverseDynamicsModel(dim, 64, num_durations, extra_dim=num_durations),
+        1,
+        num_durations,
+        num_durations=num_durations,
+    )
+    optimizer = torch.optim.Adam(loss_fn.parameters(), lr=1e-2)
+    emb = torch.randn(64, 5, dim)  # the states say nothing about the action
+    duration = torch.randint(0, num_durations, (64, 4, 1))
+    for _ in range(150):  # only the duration input can predict the target
+        optimizer.zero_grad()
+        loss_fn(emb, duration.clone(), duration).backward()
+        optimizer.step()
+    loss_fn(emb, duration.clone(), duration)
+    assert loss_fn.last_accuracy > 0.95
+
+
 # --- whole hierarchical models ---------------------------------------------
 
 CONFIGS = [
@@ -131,13 +195,13 @@ CONFIGS = [
 ]
 
 
-def compose_train(name):
+def compose_train(name, overrides=()):
     if not OmegaConf.has_resolver('eval'):
         OmegaConf.register_new_resolver('eval', eval)
     with hydra.initialize_config_dir(
         config_dir=str(H_JEPA / 'config' / 'train'), version_base=None
     ):
-        return hydra.compose(config_name=name)
+        return hydra.compose(config_name=name, overrides=list(overrides))
 
 
 class FakeModule(nn.Module):
@@ -171,7 +235,11 @@ def test_hierarchical_training_step(name, levels):
     model, losses = create_world_model(cfg)
     assert model.num_levels == levels
     for level in range(2, levels + 1):
-        assert model.get_level(level).get_action_codebook().shape == (128, 16)
+        assert model.get_level(level).get_action_spec().codebook.shape == (
+            2,
+            64,
+            8,
+        )
 
     frames = level1_frames(cfg)
     index = torch.randint(0, 17, (2, frames))
@@ -193,7 +261,8 @@ def test_hierarchical_training_step(name, levels):
     for level in range(2, levels + 1):
         assert torch.isfinite(out[f'vq_loss_level{level}'])
         assert out[f'vq_perplexity_loss_level{level}'] >= 1
-        assert out[f'action_index_{level}'].shape[-1] == 1
+        assert out[f'action_index_{level}'].shape[-1] == 2  # two code groups
+        assert f'duration_index_{level}' not in out
 
     out['loss'].backward()
     top = model.get_level(2)
@@ -238,3 +307,72 @@ def test_hierarchical_cem_plans_with_codes():
         r for s in solver.level_solvers.values() for r in s.solve_records
     ]
     assert sorted(r['level'] for r in records) == [1, 2]
+
+
+BAND = [
+    '+level2.action_encoder.vq.durations=[2,4,8]',
+    '+level2.action_encoder.vq.default_duration=4',
+]
+
+
+def test_training_step_with_a_duration_band():
+    from hjepa_utils import create_world_model, hjepa_forward
+
+    cfg = compose_train('craftax_hjepa_l2', BAND)
+    model, losses = create_world_model(cfg)
+    top = model.get_level(2)
+    assert top.get_action_spec().durations == (2, 4, 8)
+    # the action embedder takes the code vectors and the one-hot duration
+    assert top.action_embed.patch_embed is None
+    assert top.action_embed.embed[0].in_features == 16 + 3
+
+    frames = level1_frames(cfg)
+    index = torch.randint(0, 17, (2, frames))
+    batch = {
+        'pixels_level1': torch.randn(2, frames, 3, 63, 63),
+        'action_level1': torch.nn.functional.one_hot(index, 17).float(),
+    }
+    out = hjepa_forward(
+        FakeModule(model, losses),
+        batch,
+        'train',
+        cfg,
+        normalize_batch=lambda batch: None,
+    )
+    assert torch.isfinite(out['loss'])
+    # fixed stride: every step has the default duration (index 1 of [2, 4, 8])
+    assert (out['duration_index_2'] == 1).all()
+    assert torch.isfinite(out['idm_loss_level2'])
+    out['loss'].backward()
+    idm = top.idm_loss_fn.idm.model[0]
+    assert idm.in_features == 2 * 192 + 3  # the IDM also sees the duration
+
+
+def test_hierarchical_cem_plans_codes_and_durations():
+    import planning_eval
+    from eval_config_utils import _build_policy_plan_config
+    from hierarchical_solver import build_hierarchical_solver
+    from hjepa_utils import create_world_model
+
+    model, _ = create_world_model(compose_train('craftax_hjepa_l2', BAND))
+    model.eval()
+    cfg = planning_eval.load_eval_config(config_name='craftax_l2')
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+    for level in (1, 2):
+        cfg.solver.solvers[f'level{level}'].update(
+            device='cpu', num_samples=6, n_iters=2, topk=2, batch_size=2
+        )
+    solver = build_hierarchical_solver(cfg, model)
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17] * 2),
+        n_envs=2,
+        config=_build_policy_plan_config(cfg),
+    )
+    info = {
+        'pixels': torch.randn(2, 1, 3, 63, 63),
+        'goal': torch.randn(2, 1, 3, 63, 63),
+        'action': torch.zeros(2, 1, 17),
+    }
+    out = solver.solve(info, steps_taken=0, eval_budget=20)
+    assert out['actions'].dtype == torch.long and out['actions'].shape[0] == 2
+    assert solver.level_solvers[2].action_dim == 16 + 3

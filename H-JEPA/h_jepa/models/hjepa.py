@@ -105,6 +105,7 @@ class HJEPA(nn.Module):
 			f"proprio_embed_{level}",
 			f"action_{level}",
 			f"action_index_{level}",
+			f"duration_index_{level}",
 		}
 		ref_keys = [f"embed_{level}", f"action_{level}"]
 		if extra_keys:
@@ -269,8 +270,9 @@ class HJEPA(nn.Module):
 				if f"{output_name}_0" in level_out:
 					level_info[f"{output_name}_{level}"] = level_out[f"{output_name}_0"]
 			level_info[f"action_{level}"] = level_out["action_0"]
-			if "action_index_0" in level_out:
-				level_info[f"action_index_{level}"] = level_out["action_index_0"]
+			for name in ("action_index", "duration_index"):
+				if f"{name}_0" in level_out:
+					level_info[f"{name}_{level}"] = level_out[f"{name}_0"]
 
 		output = dict(info)
 		output.update(

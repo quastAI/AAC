@@ -18,17 +18,24 @@ from .solver import (
 class CategoricalCEMSolver(torch.nn.Module):
     """CEM over a sequence of categorical actions (forward passes only).
 
-    Every planned step holds one independent categorical distribution, which
-    starts uniform. Each iteration samples `num_samples` action sequences,
-    scores them with `model.get_cost`, and moves the distributions toward the
-    `topk` cheapest sequences.
+    Every planned step holds a few independent categorical distributions
+    ("slots"), which start uniform. Each iteration samples `num_samples` action
+    sequences, scores them with `model.get_cost`, and moves the distributions
+    toward the `topk` cheapest sequences.
 
-    Level 1 plans the environment's discrete actions and passes them to the
-    model as one-hot vectors of size `num_actions * action_block`, the encoding
-    the world model is trained on. Levels above 1 plan the codes of the VQ
-    action encoder (`model.get_action_codebook()`) and pass the code vectors.
-    `solve` returns the best sequence as `action_indices`; `actions` holds the
-    indices at level 1 and the code vectors above it.
+    Level 1 plans the environment's discrete actions: `action_block` slots of
+    `num_actions` classes, passed to the model as one-hot vectors of size
+    `num_actions * action_block`, the encoding the world model is trained on.
+
+    Levels above 1 plan the action tokens of the VQ action encoder
+    (`model.get_action_spec()`): one slot per code group, plus one slot for the
+    step duration k when the model has a band of durations. The model receives
+    the code vectors of the groups, followed by the one-hot of k. These levels
+    need `action_block == 1`.
+
+    `solve` returns the best sequence as `action_indices` (one index per slot);
+    `actions` holds the indices at level 1 and the token vectors above it, and
+    `durations` the chosen k of every step when the model has durations.
 
     Args:
         model: World model implementing the Costable protocol.
@@ -70,8 +77,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         self.torch_gen = torch.Generator(device=device).manual_seed(seed)
 
         self._n_envs = None
-        self._num_actions = None
-        self._code_dim = None
+        self._slot_sizes = None
         self._config = None
         # One entry per solve(), same layout as GradientSolver.solve_records.
         self.solve_records = []
@@ -86,6 +92,7 @@ class CategoricalCEMSolver(torch.nn.Module):
     ) -> None:
         """Configure the solver with environment specifications."""
         self.level = int(level)
+        block = int(getattr(config, 'action_block', 1))
         if self.level == 1:
             if isinstance(action_space, gym.spaces.MultiDiscrete):
                 num_actions = int(np.max(action_space.nvec))
@@ -95,18 +102,26 @@ class CategoricalCEMSolver(torch.nn.Module):
                 raise TypeError(
                     f'Discrete action space required, got {action_space}.'
                 )
+            slot_sizes = (num_actions,) * block
         else:
-            codebook = self.model.get_action_codebook()
-            if codebook is None:
+            spec = self.model.get_action_spec()
+            if spec is None:
                 raise ValueError(
-                    f'Level {self.level} has no VQ action codebook; CEM needs '
+                    f'Level {self.level} has no VQ action encoder; CEM needs '
                     'discrete actions (use the gradient solver otherwise).'
                 )
-            num_actions, self._code_dim = codebook.shape
+            if block != 1:
+                raise ValueError(
+                    f'VQ levels need action_block 1, got {block}.'
+                )
+            groups, num_codes, _ = spec.codebook.shape
+            slot_sizes = (num_codes,) * groups
+            if spec.durations is not None:
+                slot_sizes += (len(spec.durations),)
         self._action_space = action_space
         self._n_envs = n_envs
         self._config = config
-        self._num_actions = int(num_actions)
+        self._slot_sizes = slot_sizes
 
     @property
     def n_envs(self) -> int:
@@ -115,9 +130,13 @@ class CategoricalCEMSolver(torch.nn.Module):
 
     @property
     def action_dim(self) -> int:
-        """Action size fed to the model, including action_block."""
-        size = self._num_actions if self.level == 1 else self._code_dim
-        return size * self._config.action_block
+        """Size of the action vector fed to the model, incl. action_block."""
+        if self.level == 1:
+            return sum(self._slot_sizes)
+        spec = self.model.get_action_spec()
+        groups, _, group_dim = spec.codebook.shape
+        n_durations = 0 if spec.durations is None else len(spec.durations)
+        return groups * group_dim + n_durations
 
     @property
     def horizon(self) -> int:
@@ -129,25 +148,35 @@ class CategoricalCEMSolver(torch.nn.Module):
         return self.solve(*args, **kwargs)
 
     def _decode(self, indices: torch.Tensor) -> torch.Tensor:
-        """(b, S, H, block) indices -> (b, S, H, block * action size)."""
+        """(..., slots) indices -> (..., action vector) the model consumes."""
         if self.level == 1:
-            return F.one_hot(indices, self._num_actions).float().flatten(-2)
-        codebook = self.model.get_action_codebook().detach()
-        return codebook.to(indices.device).float()[indices].flatten(-2)
+            num_actions = self._slot_sizes[0]
+            return F.one_hot(indices, num_actions).float().flatten(-2)
+        spec = self.model.get_action_spec()
+        codebook = spec.codebook.detach().to(indices.device).float()
+        groups = codebook.shape[0]
+        which = torch.arange(groups, device=indices.device)
+        vector = codebook[which, indices[..., :groups]].flatten(-2)
+        if spec.durations is not None:
+            onehot = F.one_hot(indices[..., groups], len(spec.durations))
+            vector = torch.cat([vector, onehot.float()], dim=-1)
+        return vector
 
     def _update_probs(
         self,
         probs: torch.Tensor,
         samples: torch.Tensor,
         costs: torch.Tensor,
+        valid: torch.Tensor,
     ) -> torch.Tensor:
         """Refit the categorical distributions to the elite samples."""
         elite = costs.topk(self.topk, dim=1, largest=False).indices
         index = elite[:, :, None, None].expand(-1, -1, *samples.shape[2:])
-        elite_samples = samples.gather(1, index)  # (b, k, H, block)
-        freq = F.one_hot(elite_samples, self._num_actions).float().mean(1)
+        elite_samples = samples.gather(1, index)  # (b, k, H, slots)
+        freq = F.one_hot(elite_samples, probs.shape[-1]).float().mean(1)
         probs = self.alpha * freq + (1 - self.alpha) * probs
-        probs = probs.clamp_min(self.min_prob)
+        # classes that a slot does not have stay at zero
+        probs = probs.clamp_min(self.min_prob) * valid
         return probs / probs.sum(-1, keepdim=True)
 
     @torch.inference_mode()
@@ -193,6 +222,11 @@ class CategoricalCEMSolver(torch.nn.Module):
                 eval_budget=eval_budget,
             )
 
+        n_slots, max_classes = len(self._slot_sizes), max(self._slot_sizes)
+        sizes = torch.tensor(self._slot_sizes, device=self.device)
+        valid = torch.arange(max_classes, device=self.device) < sizes[:, None]
+        uniform = valid.float() / valid.sum(-1, keepdim=True)
+
         batch_size = self.batch_size or self.n_envs
         best_actions_list = []
         per_env_time = []
@@ -203,26 +237,24 @@ class CategoricalCEMSolver(torch.nn.Module):
             expanded = expand_info_dict_for_samples(
                 info_dict, start, end, self.num_samples, self.device
             )
-            shape = (bs, planning_horizon, block, self._num_actions)
-            probs = torch.full(
-                shape, 1.0 / self._num_actions, device=self.device
-            )
+            probs = uniform.expand(bs, planning_horizon, -1, -1).clone()
             best = torch.zeros(
-                shape[:-1], dtype=torch.long, device=self.device
+                (bs, planning_horizon, n_slots),
+                dtype=torch.long,
+                device=self.device,
             )
             best_cost = torch.full((bs,), float('inf'), device=self.device)
 
             for it in range(self.n_iters):
-                flat = probs.reshape(-1, self._num_actions)
                 samples = torch.multinomial(
-                    flat,
+                    probs.reshape(-1, max_classes),
                     self.num_samples,
                     replacement=True,
                     generator=self.torch_gen,
-                )  # (bs * H * block, S)
+                )  # (bs * H * slots, S)
                 samples = samples.reshape(
-                    bs, planning_horizon, block, self.num_samples
-                ).permute(0, 3, 1, 2)  # (bs, S, H, block)
+                    bs, planning_horizon, n_slots, self.num_samples
+                ).permute(0, 3, 1, 2)  # (bs, S, H, slots)
                 if (
                     it > 0
                 ):  # keep the incumbent: the best cost never gets worse
@@ -247,16 +279,21 @@ class CategoricalCEMSolver(torch.nn.Module):
                     samples[torch.arange(bs), argmin],
                     best,
                 )
-                probs = self._update_probs(probs, samples, costs)
+                probs = self._update_probs(probs, samples, costs, valid)
 
             best_actions_list.append(best.cpu())
             per_env_time.extend([time.time() - batch_t0] * bs)
 
-        indices = torch.cat(best_actions_list, dim=0)
+        indices = torch.cat(best_actions_list, dim=0)  # (B, H, slots)
         outputs = {'action_indices': indices}
         outputs['actions'] = (
             indices if self.level == 1 else self._decode(indices).cpu()
         )
+        if self.level > 1:
+            spec = self.model.get_action_spec()
+            if spec.durations is not None:
+                table = torch.tensor(spec.durations)
+                outputs['durations'] = table[indices[..., -1]]
         outputs['predictions'] = self._rollout_final_actions(
             info_dict, indices
         )

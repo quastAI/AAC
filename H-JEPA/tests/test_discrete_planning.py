@@ -15,6 +15,7 @@ sys.path.insert(0, str(H_JEPA))
 
 import data as hjepa_data  # noqa: E402
 from stable_worldmodel import PlanConfig  # noqa: E402
+from models.vq import ActionSpec  # noqa: E402
 from stable_worldmodel.solver import CategoricalCEMSolver  # noqa: E402
 
 
@@ -71,12 +72,11 @@ class ToyCost:
 
     level = 1
 
-    def __init__(self, num_actions, block, codebook=False):
+    def __init__(self, num_actions, block):
         self.num_actions, self.block = num_actions, block
-        self.codebook = torch.eye(num_actions) if codebook else None
 
-    def get_action_codebook(self):
-        return self.codebook
+    def get_action_spec(self):
+        return None
 
     def get_cost(self, info, candidates):
         b, s, h, _ = candidates.shape
@@ -137,33 +137,132 @@ def test_expand_info_dict_for_samples():
     assert out['array'].shape == (2, 4) and out['other'] == 'text'
 
 
-def test_cem_plans_codes_above_level_1():
-    n_envs, horizon, num_codes = 2, 4, 6
-    model = ToyCost(num_codes, 1, codebook=True)  # one-hot codes
+class ToySlotCost:
+    """Cost = number of slots that differ from a target (codes, then duration).
+
+    The codebooks are one-hot, so a token vector can be decoded back to its
+    indices.
+    """
+
+    level = 2
+
+    def __init__(self, groups, num_codes, durations=None):
+        self.groups, self.num_codes = groups, num_codes
+        book = torch.eye(num_codes).expand(groups, -1, -1).clone()
+        self.spec = ActionSpec(book, durations)
+
+    def get_action_spec(self):
+        return self.spec
+
+    def get_cost(self, info, candidates):
+        groups, num_codes = self.groups, self.num_codes
+        b, s, h, _ = candidates.shape
+        codes = candidates[..., : groups * num_codes]
+        chosen = [codes.reshape(b, s, h, groups, num_codes).argmax(-1)]
+        if self.spec.durations is not None:
+            chosen.append(
+                candidates[..., groups * num_codes :].argmax(-1, keepdim=True)
+            )
+        chosen = torch.cat(chosen, dim=-1)
+        info['embed_0'] = info['goal_embed_0'] = torch.zeros(1)
+        return (chosen != info['target'][:, :1]).float().sum((-2, -1))
+
+    def rollout(self, info, candidates):
+        b, s, h, _ = candidates.shape
+        info['predicted_embed_0'] = torch.zeros(b, s, h, 3)
+        return info
+
+
+def solve_slots(model, target, horizon, **kwargs):
     solver = CategoricalCEMSolver(
-        model, num_samples=200, n_iters=12, topk=20, seed=0
+        model,
+        **{'num_samples': 300, 'n_iters': 15, 'topk': 30, 'seed': 0, **kwargs},
     )
+    n_envs = target.shape[0]
     solver.configure(
         action_space=gym.spaces.MultiDiscrete([17] * n_envs),  # not used
         n_envs=n_envs,
         config=PlanConfig(horizon=horizon, receding_horizon=1),
         level=2,
     )
-    target = torch.randint(0, num_codes, (n_envs, horizon, 1))
-    out = solver.solve({'target': target}, planning_horizon=horizon)
+    return solver, solver.solve({'target': target}, planning_horizon=horizon)
+
+
+def test_cem_plans_codes_above_level_1():
+    num_codes = 6
+    target = torch.randint(0, num_codes, (2, 4, 1))
+    solver, out = solve_slots(ToySlotCost(1, num_codes), target, 4)
 
     assert torch.equal(out['action_indices'], target)
-    # `actions` are the code vectors the upper-level model consumes
-    assert out['actions'].shape == (n_envs, horizon, num_codes)
+    # `actions` are the token vectors the upper-level model consumes
+    assert out['actions'].shape == (2, 4, num_codes)
     assert torch.equal(out['actions'].argmax(-1), target[..., 0])
+    assert 'durations' not in out
     assert solver.action_dim == num_codes
     assert solver.solve_records[0]['level'] == 2
+
+
+def test_cem_plans_factorized_codes_with_durations():
+    groups, num_codes, durations = 2, 5, (2, 3, 5)
+    generator = torch.Generator().manual_seed(2)
+    target = torch.cat(
+        [
+            torch.randint(0, num_codes, (3, 4, groups), generator=generator),
+            torch.randint(0, len(durations), (3, 4, 1), generator=generator),
+        ],
+        dim=-1,
+    )
+    model = ToySlotCost(groups, num_codes, durations)
+    solver, out = solve_slots(model, target, 4, num_samples=400, n_iters=20)
+
+    # one slot per group, plus one for the duration with its own size
+    assert out['action_indices'].shape == (3, 4, groups + 1)
+    assert torch.equal(out['action_indices'], target)
+    assert torch.equal(
+        out['durations'], torch.tensor(durations)[target[..., -1]]
+    )
+    assert out['actions'].shape == (3, 4, groups * num_codes + len(durations))
+    assert solver.action_dim == groups * num_codes + len(durations)
+
+
+def test_cem_never_samples_a_missing_class():
+    # the duration slot has 3 classes next to 8-class code slots
+    model = ToySlotCost(1, 8, (1, 2, 3))
+    solver = CategoricalCEMSolver(model, num_samples=50, n_iters=2, topk=5)
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17]),
+        n_envs=1,
+        config=PlanConfig(horizon=3, receding_horizon=1),
+        level=2,
+    )
+    seen, cost = [], model.get_cost
+
+    def spy(info, candidates):
+        seen.append(candidates)
+        return cost(info, candidates)
+
+    model.get_cost = spy
+    target = torch.zeros(1, 3, 2, dtype=torch.long)
+    solver.solve({'target': target}, planning_horizon=3)
+    # every duration part is a valid one-hot over the 3 durations
+    assert all((c[..., 8:].sum(-1) == 1).all() for c in seen)
+
+
+def test_cem_vq_levels_need_action_block_1():
+    solver = CategoricalCEMSolver(ToySlotCost(1, 4))
+    with pytest.raises(ValueError, match='action_block'):
+        solver.configure(
+            action_space=gym.spaces.MultiDiscrete([17]),
+            n_envs=1,
+            config=PlanConfig(horizon=2, receding_horizon=1, action_block=2),
+            level=2,
+        )
 
 
 def test_cem_rejects_unsupported_spaces():
     solver = CategoricalCEMSolver(ToyCost(5, 1))
     config = PlanConfig(horizon=2, receding_horizon=1)
-    with pytest.raises(ValueError, match='codebook'):
+    with pytest.raises(ValueError, match='VQ action encoder'):
         solver.configure(
             action_space=gym.spaces.MultiDiscrete([5]),
             n_envs=1,
