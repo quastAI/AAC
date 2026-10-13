@@ -47,12 +47,12 @@ def test_e1_commands_and_dependencies(spec):
     ev = jobs['eval_e1_hjepa_l2_s42_A']
     assert ev.after == ['tasks_A', 'train_e1_hjepa_l2_s42']
     assert 'policy=ckpts/craftax/e1_hjepa_l2/seed42' in ev.command
-    assert 'output.dir=seed42/eval_A_craftax_l2' in ev.command
+    assert 'output.dir=seed42/eval_A_val_craftax_l2' in ev.command
     assert 'load_eval_trajs_path=/data/eval_tasks/A_val.pt' in ev.command
     # tasks A (offsets with progress) and B (full episodes) and a random baseline for each
     assert '--offsets' in jobs['tasks_A'].command and '--mode' in jobs['tasks_B'].command
     base = jobs['eval_random_B']
-    assert 'policy=random' in base.command and 'output.dir=/data/ckpts/craftax/random/eval_B' in base.command
+    assert 'policy=random' in base.command and 'output.dir=/data/ckpts/craftax/random/eval_B_val' in base.command
     # the comparison of a protocol waits for its evaluations and names the baseline
     compare = jobs['compare_E1_A']
     assert set(compare.after) == {n for n in jobs if n.startswith('eval_') and n.endswith('_A')}
@@ -103,7 +103,7 @@ def test_planner_scale_changes_samples_and_iterations_together(spec):
     assert flat == ['solver.num_samples', 'solver.n_iters', 'solver.topk']
     jobs = by_name(jobs_of(spec, 'C1'))
     ev = jobs['eval_c1_x4_s42_A']
-    assert 'output.dir=seed42/eval_A_craftax_l2_x4' in ev.command
+    assert 'output.dir=seed42/eval_A_val_craftax_l2_x4' in ev.command
     assert 'solver.solvers.level1.num_samples=%d' % big['solver.solvers.level1.num_samples'] in ev.command
     assert '--scaling' in jobs['compare_C1_A'].command
 
@@ -182,6 +182,23 @@ def test_final_runs_take_their_tasks_from_the_test_split(spec):
     assert 'eval.dataset_name=craftax_expert_test' in ev.command
     # training still validates on the validation worlds
     assert 'data.dataset.val_name=craftax_expert_val' in jobs['train_e1_hjepa_l2_s42'].command
+
+
+def test_final_and_exploration_results_never_share_a_directory(spec):
+    # a headline run must not skip jobs, or reuse chunks, of the exploration run
+    explore = run.build_jobs(spec, 'E1', [42], home='/data')
+    final = run.build_jobs(spec, 'E1', [42], home='/data', final=True)
+    outputs = lambda jobs: {  # noqa: E731
+        j.name: j.output for j in jobs if j.kind in ('eval', 'compare') and j.output
+    }
+    out_e, out_f = outputs(explore), outputs(final)
+    assert out_e.keys() == out_f.keys()
+    for name in out_e:
+        if name.endswith('_models'):
+            continue  # probes and training reports do not depend on the task split
+        assert out_e[name] != out_f[name], name
+    ev = {j.name: j for j in final}['eval_e1_hjepa_l2_s42_A']
+    assert 'output.dir=seed42/eval_A_test_craftax_l2' in ev.command
 
 
 def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):

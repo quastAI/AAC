@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shlex
@@ -382,6 +383,48 @@ def pop_solve_records(solver) -> list:
     return records
 
 
+def _file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _chunk_signature(cfg: DictConfig, tasks_path: str | Path, num_eval: int, chunk_size: int) -> dict:
+    """What a set of chunk files was computed from: the task file, the eval settings and the config."""
+    return {
+        "tasks_sha256": _file_sha256(tasks_path),
+        "num_eval": int(num_eval),
+        "chunk_size": int(chunk_size),
+        "config_sha256": hashlib.sha256(OmegaConf.to_yaml(cfg).encode()).hexdigest(),
+    }
+
+
+def _check_chunk_signature(chunk_dir: Path, signature: dict) -> None:
+    """Refuse to resume from chunks that were computed for other tasks or settings.
+
+    A chunk is skipped when its file exists, so without this check a changed task file (another split,
+    other offsets) or config would silently return the old results.
+    """
+    path = chunk_dir / "signature.json"
+    if path.exists():
+        old = json.loads(path.read_text())
+        changed = sorted(k for k in signature if old.get(k) != signature[k])
+        if changed:
+            raise RuntimeError(
+                f"{chunk_dir} holds chunks computed with other {', '.join(changed)}; "
+                "use another output.dir or delete the directory to start over"
+            )
+    elif any(chunk_dir.glob("tasks_*.json")):
+        raise RuntimeError(
+            f"{chunk_dir} holds chunks without a signature.json (older run): "
+            "use another output.dir or delete the directory to start over"
+        )
+    else:
+        path.write_text(json.dumps(signature))
+
+
 def _run_chunked_eval(
     cfg: DictConfig,
     chunk_size: int,
@@ -413,6 +456,8 @@ def _run_chunked_eval(
     callables = OmegaConf.to_container(cfg.eval.get("callables"), resolve=True)
     chunk_dir = results_dir / "chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
+    signature = _chunk_signature(cfg, load_eval_trajs_path, n, chunk_size)
+    _check_chunk_signature(chunk_dir, signature)
     chunk_paths = {
         s: chunk_dir / f"tasks_{s:03d}-{min(s + chunk_size, n):03d}.json" for s in range(0, n, chunk_size)
     }
@@ -480,6 +525,7 @@ def _run_chunked_eval(
         ),
         "evaluation_time": sum(c["evaluation_time"] for c in chunks),
         "chunk_size": chunk_size,
+        "tasks_sha256": signature["tasks_sha256"],  # which task file these results are for
     }
     records = [r for c in chunks for r in c.get("planning_records", [])]
     if records:

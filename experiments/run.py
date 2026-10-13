@@ -43,8 +43,9 @@ def _run_dir(home, model, seed) -> str:
     return f"{home}/ckpts/craftax/{model}/seed{seed}"
 
 
-def _eval_dir(home, model, seed, protocol, eval_name, suffix="") -> str:
-    return f"{_run_dir(home, model, seed)}/eval_{protocol}_{eval_name}{suffix}"
+def _eval_dir(home, model, seed, protocol, split, eval_name, suffix="") -> str:
+    # the split is part of the path: exploration (val worlds) and headline (test worlds) results never share a directory
+    return f"{_run_dir(home, model, seed)}/eval_{protocol}_{split}_{eval_name}{suffix}"
 
 
 def scaled_overrides(eval_name: str, scale: float) -> list[str]:
@@ -140,13 +141,13 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
             for p in protocols:
                 t = spec["tasks"][p]
                 suffix = f"_x{run['planner_scale']}" if "planner_scale" in run else ""
-                directory = _eval_dir(home, model, seed, p, run["eval"], suffix)
+                directory = _eval_dir(home, model, seed, p, split, run["eval"], suffix)
                 cmd = [python, "eval.py", "--config-name", run["eval"], f"policy=ckpts/craftax/{model}/seed{seed}",
                        f"load_eval_trajs_path={task_jobs[p].output}", f"eval.num_eval={t['num_tasks']}",
                        f"eval.goal_offset_steps={t['eval_budget']}", f"eval.eval_budget={t['eval_budget']}",
                        f"eval.chunk_size={st['chunk_size']}", f"eval.dataset_name={task_ds}",
                        f"planning_metrics.support_bank_dataset={train_ds}",
-                       f"output.dir=seed{seed}/eval_{p}_{run['eval']}{suffix}"]  # fmt: skip
+                       f"output.dir=seed{seed}/eval_{p}_{split}_{run['eval']}{suffix}"]  # fmt: skip
                 if "planner_scale" in run:
                     cmd += scaled_overrides(run["eval"], float(run["planner_scale"]))
                 after = [task_jobs[p].name] + ([train_name] if train_name else [])
@@ -157,7 +158,7 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
     if exp.get("baseline"):
         for p in protocols:
             t = spec["tasks"][p]
-            directory = f"{home}/ckpts/craftax/random/eval_{p}"
+            directory = f"{home}/ckpts/craftax/random/eval_{p}_{split}"
             cmd = [python, "eval.py", "--config-name", "craftax_flat", "policy=random", f"load_eval_trajs_path={task_jobs[p].output}",
                    f"eval.num_eval={t['num_tasks']}", f"eval.goal_offset_steps={t['eval_budget']}",
                    f"eval.eval_budget={t['eval_budget']}", f"eval.chunk_size={st['chunk_size']}",
@@ -175,7 +176,7 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
 
     flag = "--scaling" if exp_id == "C1" else "--planning"
     for p, dirs in eval_dirs.items():  # one comparison per protocol: the baseline differs between task sets
-        out = f"{home}/reports/{exp_id}_{p}.md"
+        out = f"{home}/reports/{exp_id}_{p}_{split}.md"
         cmd = [python, str(ROOT / "analysis" / "compare_runs.py"), "--out", out, flag, *dirs]
         if any(d.startswith("random=") for d in dirs):
             cmd += ["--baseline", "random"]
