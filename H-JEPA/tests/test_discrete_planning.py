@@ -149,7 +149,8 @@ class ToySlotCost:
     def __init__(self, groups, num_codes, durations=None):
         self.groups, self.num_codes = groups, num_codes
         book = torch.eye(num_codes).expand(groups, -1, -1).clone()
-        self.spec = ActionSpec(book, durations)
+        default = None if durations is None else durations[0]
+        self.spec = ActionSpec(book, durations, default)
 
     def get_action_spec(self):
         return self.spec
@@ -213,7 +214,9 @@ def test_cem_plans_factorized_codes_with_durations():
         dim=-1,
     )
     model = ToySlotCost(groups, num_codes, durations)
-    solver, out = solve_slots(model, target, 4, num_samples=400, n_iters=20)
+    solver, out = solve_slots(
+        model, target, 4, num_samples=400, n_iters=20, allowed_durations='all'
+    )
 
     # one slot per group, plus one for the duration with its own size
     assert out['action_indices'].shape == (3, 4, groups + 1)
@@ -225,10 +228,64 @@ def test_cem_plans_factorized_codes_with_durations():
     assert solver.action_dim == groups * num_codes + len(durations)
 
 
+def duration_target(durations, n_envs=2, horizon=3):
+    """Target indices (1 code group) with a random duration class per step."""
+    generator = torch.Generator().manual_seed(4)
+    return torch.cat(
+        [
+            torch.randint(0, 5, (n_envs, horizon, 1), generator=generator),
+            torch.randint(
+                0, len(durations), (n_envs, horizon, 1), generator=generator
+            ),
+        ],
+        dim=-1,
+    )
+
+
+def test_cem_pins_the_duration_by_default():
+    durations = (2, 3, 5)
+    target = duration_target(durations)
+    assert (target[..., -1] != 0).any()  # the target asks for other durations
+    solver, out = solve_slots(
+        ToySlotCost(1, 5, durations), target, 3, num_samples=100
+    )
+    # safe default: every step keeps the default duration, whatever the cost
+    assert (out['durations'] == durations[0]).all()
+    assert (out['action_indices'][..., -1] == 0).all()
+    assert solver.solve_records[0]['allowed_durations'] == 'default'
+
+
+def test_cem_restricts_durations_to_a_subset():
+    durations = (2, 3, 5)
+    target = duration_target(durations)
+    target[..., -1] = 2  # asks for the longest jump, which is not allowed
+    _, out = solve_slots(
+        ToySlotCost(1, 5, durations),
+        target,
+        3,
+        num_samples=100,
+        allowed_durations=[2, 3],
+    )
+    assert set(out['durations'].flatten().tolist()) <= {2, 3}
+
+
+def test_cem_rejects_bad_allowed_durations():
+    for bad in ([7], []):
+        with pytest.raises(ValueError, match='allowed_durations'):
+            solve_slots(
+                ToySlotCost(1, 5, (2, 3)),
+                torch.zeros(1, 2, 2, dtype=torch.long),
+                2,
+                allowed_durations=bad,
+            )
+
+
 def test_cem_never_samples_a_missing_class():
     # the duration slot has 3 classes next to 8-class code slots
     model = ToySlotCost(1, 8, (1, 2, 3))
-    solver = CategoricalCEMSolver(model, num_samples=50, n_iters=2, topk=5)
+    solver = CategoricalCEMSolver(
+        model, num_samples=50, n_iters=2, topk=5, allowed_durations='all'
+    )
     solver.configure(
         action_space=gym.spaces.MultiDiscrete([17]),
         n_envs=1,

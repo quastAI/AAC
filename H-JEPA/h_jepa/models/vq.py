@@ -17,10 +17,12 @@ class ActionSpec(NamedTuple):
     codebook: (groups, num_codes, group_dim) code vectors.
     durations: allowed step durations k, or None when the duration is not part
         of the action token.
+    default_duration: the duration of a fixed-stride step (one of durations).
     """
 
     codebook: torch.Tensor
     durations: tuple[int, ...] | None
+    default_duration: int | None = None
 
 
 class VQActionEncoder(nn.Module):
@@ -107,7 +109,7 @@ class VQActionEncoder(nn.Module):
         self._aux = None
 
     def action_spec(self) -> ActionSpec:
-        return ActionSpec(self.codebook, self.durations)
+        return ActionSpec(self.codebook, self.durations, self.default_duration)
 
     def forward(self, inputs, padding_mask=None, duration=None):
         z = self.encoder(inputs, padding_mask)  # (B, T, code_dim)

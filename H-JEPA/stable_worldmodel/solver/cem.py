@@ -37,6 +37,11 @@ class CategoricalCEMSolver(torch.nn.Module):
     `actions` holds the indices at level 1 and the token vectors above it, and
     `durations` the chosen k of every step when the model has durations.
 
+    `allowed_durations` limits what the planner may choose for k. A free k lets
+    the planner pick long jumps through poorly modelled territory, so the safe
+    default pins every step to the model's default duration (the fixed stride).
+    'all' makes k a free choice; a list of ints allows that subset.
+
     Args:
         model: World model implementing the Costable protocol.
         num_samples: Action sequences sampled per iteration and environment.
@@ -45,6 +50,8 @@ class CategoricalCEMSolver(torch.nn.Module):
         batch_size: Number of environments processed in parallel.
         alpha: Weight of the elite frequencies in the distribution update.
         min_prob: Probability floor, so no action is ruled out for good.
+        allowed_durations: 'default' (pin k to the default duration), 'all',
+            or a list of allowed durations. Only used by models with durations.
         device: Device for tensor computations.
         seed: Random seed for reproducibility.
     """
@@ -58,6 +65,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         batch_size: int | None = None,
         alpha: float = 0.5,
         min_prob: float = 0.01,
+        allowed_durations: str | list[int] = 'default',
         device: str | torch.device = 'cpu',
         seed: int = 1234,
     ) -> None:
@@ -73,11 +81,13 @@ class CategoricalCEMSolver(torch.nn.Module):
         self.batch_size = batch_size
         self.alpha = float(alpha)
         self.min_prob = float(min_prob)
+        self.allowed_durations = allowed_durations
         self.device = device
         self.torch_gen = torch.Generator(device=device).manual_seed(seed)
 
         self._n_envs = None
         self._slot_sizes = None
+        self._duration_classes = None  # allowed classes of the duration slot
         self._config = None
         # One entry per solve(), same layout as GradientSolver.solve_records.
         self.solve_records = []
@@ -118,10 +128,29 @@ class CategoricalCEMSolver(torch.nn.Module):
             slot_sizes = (num_codes,) * groups
             if spec.durations is not None:
                 slot_sizes += (len(spec.durations),)
+                self._duration_classes = self._resolve_durations(spec)
         self._action_space = action_space
         self._n_envs = n_envs
         self._config = config
         self._slot_sizes = slot_sizes
+
+    def _resolve_durations(self, spec) -> list[int]:
+        """Classes of the duration slot the planner may choose from."""
+        mode = self.allowed_durations
+        if mode == 'all':
+            return list(range(len(spec.durations)))
+        if mode == 'default':
+            if spec.default_duration is None:
+                raise ValueError(
+                    'The model has no default duration to pin k to.'
+                )
+            mode = [spec.default_duration]
+        unknown = [k for k in mode if k not in spec.durations]
+        if unknown or not mode:
+            raise ValueError(
+                f'allowed_durations {mode} not within {spec.durations}'
+            )
+        return [spec.durations.index(k) for k in mode]
 
     @property
     def n_envs(self) -> int:
@@ -225,6 +254,12 @@ class CategoricalCEMSolver(torch.nn.Module):
         n_slots, max_classes = len(self._slot_sizes), max(self._slot_sizes)
         sizes = torch.tensor(self._slot_sizes, device=self.device)
         valid = torch.arange(max_classes, device=self.device) < sizes[:, None]
+        if self._duration_classes is not None:  # the duration is the last slot
+            allowed = torch.zeros(
+                max_classes, dtype=torch.bool, device=self.device
+            )
+            allowed[self._duration_classes] = True
+            valid[-1] &= allowed
         uniform = valid.float() / valid.sum(-1, keepdim=True)
 
         batch_size = self.batch_size or self.n_envs
@@ -305,6 +340,7 @@ class CategoricalCEMSolver(torch.nn.Module):
                 'backward': False,  # forward passes only, unlike GD
                 'horizon': int(planning_horizon),
                 'num_samples': int(self.num_samples),
+                'allowed_durations': self.allowed_durations,
                 'n_iters': [self.n_iters] * self.n_envs,
                 'wall_clock': end_time - start_time,
                 'wall_clock_per_env': per_env_time,
