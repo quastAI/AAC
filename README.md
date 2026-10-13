@@ -94,6 +94,48 @@ The two code folders are separate Python projects with their own `pyproject.toml
 
 Pipeline: train expert → collect and filter episodes → train world models → plan and evaluate → probe. Run commands are added here as each stage is implemented.
 
+## Stage 1: expert and episode collection
+
+Environment for the JAX side (the pins matter: `jax<=0.4.38` needs `flax<=0.10.3`):
+
+```bash
+cd purejaxql && pip install -e ".[jax_envs]"
+```
+
+Train the expert on `Craftax-Classic-Symbolic-v1`. This writes `<SAVE_PATH>/Craftax-Classic-Symbolic-v1/pqn_rnn_..._vmap0.safetensors` (params and BatchRenorm statistics) and the matching `_config.yaml`:
+
+```bash
+python purejaxql/pqn_rnn_craftax.py +alg=pqn_rnn_craftax_classic
+```
+
+Collect episodes. The collector rolls out the expert, keeps the episodes that reach diamond (achievement 19), and renders pixels from the same states by replaying them:
+
+```bash
+python scripts/collect_craftax_episodes.py --out data/expert.h5 --checkpoint models/.../..._vmap0.safetensors \
+    --num-episodes 1000 --seed-start 0
+python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-require-diamond \
+    --num-episodes 1000 --seed-start 5000000        # uniform random, no checkpoint
+```
+
+Defaults: episodes stop at the diamond (`--no-stop-at-diamond` keeps full episodes, `--tail-steps` keeps a few steps after it). `--eps` between 0 and 1 gives noised-expert episodes. Running again on an existing file appends and skips world seeds already in it.
+
+**Data format.** One flat HDF5 file in the layout of H-JEPA's `HDF5Dataset` (`ep_len`, `ep_offset`, one array per column). Per episode there are L+1 frames and L actions, and `action[t]` belongs to frame `t` (the last one is NaN).
+
+| Column | Shape, dtype | Content |
+|---|---|---|
+| `pixels` | (N, 63, 63, 3) uint8 | rendered frame |
+| `state` | (N, 1345) float32 | symbolic observation |
+| `action` | (N, 1) float32 | action index 0-16 |
+| `reward` | (N,) float32 | reward of the transition into this frame |
+| `achievements` | (N, 22) uint8 | cumulative flags in Craftax-Classic order |
+| `step_idx`, `ep_idx`, `world_seed`, `source` | (N,) int | `source`: 0 expert, 1 noised expert, 2 random |
+
+**Replayable episodes.** An episode is fully determined by `world_seed` and its actions: with `reset_key, step_key, _ = split(PRNGKey(world_seed), 3)` the reset uses `reset_key` and the transition at step `t` uses `fold_in(step_key, t)`. The collector checks this on every kept episode, and the planning environment must follow the same convention to start from a dataset state.
+
+**Seed ranges.** World seeds are the split: use disjoint ranges for training, validation and test data, so that probing and planning tasks use held-out worlds. The ranges are not fixed yet.
+
+Tests: `pytest purejaxql/tests`.
+
 ## Compute and roadmap
 
 About 15 A100-hours per month (~180 in total). One seed for exploration, three seeds only for headline results. We time one training run and one planning evaluation first, then size the experiments from those numbers.
