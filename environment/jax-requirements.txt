@@ -1,0 +1,5 @@
+# JAX side (purejaxql, the collector, analysis, experiments). Python >= 3.10.
+# Tests: pytest purejaxql/tests analysis/tests experiments/tests
+-e ./purejaxql[jax_envs]   # jax 0.4.38 / jaxlib 0.4.38, flax <= 0.10.3, craftax 1.6.1, h5py (see its pyproject.toml)
+pytest
+pyyaml

@@ -1,0 +1,28 @@
+# CPU tests of both stacks. NOTE: written without being able to run it (no runner access when it was
+# written): the first run on GitHub may need small fixes, for example to the dependency installation.
+name: tests
+on:
+  push: {branches: [main]}
+  pull_request:
+
+jobs:
+  jax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r environment/jax-requirements.txt
+      - run: pytest purejaxql/tests analysis/tests experiments/tests -q
+
+  hjepa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r environment/hjepa-requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+      - run: pytest tests -q
+        working-directory: H-JEPA
+        env: {PYTHONPATH: .}

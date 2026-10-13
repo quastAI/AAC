@@ -1,0 +1,33 @@
+# PyTorch side (H-JEPA). The project pins Python 3.11; the tests also ran on 3.12.
+# CPU torch for CI/laptops:  pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu
+# Tests: cd H-JEPA && PYTHONPATH=. pytest tests
+torch==2.7.1
+torchvision==0.22.1
+gymnasium==1.2.3
+numpy
+loguru
+tabulate
+einops
+h5py
+scipy
+hdf5plugin
+tqdm
+typer
+rich
+pillow
+pytest
+# Craftax-Classic environment (the `env` extra of H-JEPA): jax 0.4.38 with flax <= 0.10.3
+craftax==1.6.1
+jax==0.4.38
+jaxlib==0.4.38
+flax<=0.10.3
+# training and evaluation (the `train` extra)
+omegaconf
+hydra-core
+transformers>=4.50.0
+stable-pretraining==0.1.7
+datasets>=4
+lightning>=2.5
+torchmetrics
+scikit-learn
+matplotlib

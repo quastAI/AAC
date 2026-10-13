@@ -1,0 +1,107 @@
+# The Craftax experiments (README table). `run.py` turns this into commands.
+#
+# A run trains `config` as `name` (unless `train: false` and `model` names an existing run),
+# then is evaluated with the evaluation config `eval` on the task sets of the experiment's
+# protocols. Overrides are Hydra overrides of the training config. Seeds come from the
+# command line (exploration: one seed; headline results: three).
+#
+# Everything marked placeholder is to be set from the data analysis and the first runs.
+
+settings:
+  seeds_explore: [42]
+  seeds_final: [42, 43, 44]
+  train_dataset: craftax_expert_train  # placeholder names of the collector's output
+  val_dataset: craftax_expert_val
+  tasks_dir: eval_tasks  # under $HJEPA_HOME
+  chunk_size: 10  # evaluation tasks per resumable chunk
+
+# Task sets (eval_tasks.py). The budget is in environment steps. Placeholders: the offsets,
+# the number of tasks and the budgets follow from the goal-test decision and the timing run.
+tasks:
+  A: {mode: offset, offsets: [25, 50, 100, 200], num_tasks: 200, eval_budget: 400}
+  B: {mode: episode, num_tasks: 100, eval_budget: 3000}
+
+experiments:
+  D0:
+    title: Data analysis (clip counts, event durations, time scales, chunk diversity)
+    analysis: true
+
+  E1:
+    title: LeWM vs HWM vs H-JEPA at matched depth
+    rq: [1]
+    protocols: [A, B]
+    baseline: true  # a random policy on the same tasks
+    runs:
+      - {name: e1_lewm, config: craftax_lewm, eval: craftax_flat}
+      - {name: e1_hwm_l2, config: craftax_hwm_l2, eval: craftax_l2}
+      - {name: e1_hjepa_l2, config: craftax_hjepa_l2, eval: craftax_l2}
+
+  E2:
+    title: Depth, 2 vs 3 levels (set the strides from D0 with --override level2.stride=.. level3.stride=..)
+    rq: [1]
+    protocols: [A, B]
+    baseline: true
+    runs:
+      - {name: e1_hjepa_l2, train: false, model: e1_hjepa_l2, eval: craftax_l2}
+      - {name: e2_hjepa_l3, config: craftax_hjepa_l3, eval: craftax_l3}
+      - {name: e2_hwm_l3, config: craftax_hwm_l3, eval: craftax_l3, optional: true}
+
+  E3:
+    title: Rollout loss on/off, set per model (off is the E1 run with rollout_n 1)
+    rq: [1, 2]
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: e3_lewm_rollout4, config: craftax_lewm, eval: craftax_flat, overrides: [level1.wm.rollout_n=4]}
+      - name: e3_hjepa_l2_rollout4
+        config: craftax_hjepa_l2
+        eval: craftax_l2
+        overrides: [level1.wm.rollout_n=4, level2.wm.rollout_n=4]
+
+  E4:
+    title: Per-level probes (larger probe sets than the end of training), frequency gap, cost geometry
+    rq: [2]
+    probe: [e1_lewm, e1_hwm_l2, e1_hjepa_l2, e2_hjepa_l3]
+
+  E5:
+    title: IDM on/off, set per model (on is the E1 run; LeWM first, then H-JEPA, HWM if the budget allows)
+    rq: [1, 2]
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: e5_lewm_noidm, config: craftax_lewm, eval: craftax_flat, overrides: [level1.idm_coeff=0]}
+      - name: e5_hjepa_l2_noidm
+        config: craftax_hjepa_l2
+        eval: craftax_l2
+        overrides: [level1.idm_coeff=0, level2.idm_coeff=0]
+      - name: e5_hwm_l2_noidm
+        config: craftax_hwm_l2
+        eval: craftax_l2
+        overrides: [level1.idm_coeff=0, level2.idm_coeff=0]
+        optional: true
+
+  E6:
+    title: Cost only, level-1 planning with the cost in the level-2 latent (evaluation of E1 models)
+    rq: [1]
+    protocols: [A]
+    runs:
+      - {name: e6_hjepa_l2_project, train: false, model: e1_hjepa_l2, eval: craftax_l2_project}
+      - {name: e6_hwm_l2_project, train: false, model: e1_hwm_l2, eval: craftax_l2_project}
+
+  E7:
+    title: Variable band vs fixed stride, including the band width
+    rq: [3]
+    blocked: the irregular-spacing dataset sampler, passing action_duration through the hierarchical encode and the hierarchical solver's fixed-stride horizon coupling are not built
+
+  E8:
+    title: Learned jumps vs fixed vs band
+    rq: [4]
+    blocked: learned jumps are not built
+
+  C1:
+    title: Planner compute scaling of the E1 H-JEPA model (success or progress falling with compute means exploitation)
+    protocols: [A]
+    runs:
+      - {name: c1_x0.25, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 0.25}
+      - {name: c1_x1, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 1}
+      - {name: c1_x4, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 4}

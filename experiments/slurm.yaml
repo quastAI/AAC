@@ -1,0 +1,16 @@
+# Cluster settings for `run.py run --mode slurm`. Copy to slurm.local.yaml (gitignored) and fill in.
+venv: null  # a virtualenv; its bin/activate is sourced in every job
+partition: null
+account: null
+qos: null
+gpus: 1
+cpus_per_task: 8
+mem: 64G
+time:  # wall-clock limit per kind of job
+  train: "24:00:00"
+  eval: "12:00:00"
+  probe: "02:00:00"
+  tasks: "01:00:00"
+  analysis: "01:00:00"
+  compare: "00:30:00"
+extra: []  # more lines for the top of every script, e.g. "module load cuda"

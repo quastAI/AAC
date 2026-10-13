@@ -35,7 +35,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 - **Action tokens.** Level 1: one-hot of the 17 actions. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (band of horizons, E7).
 - **Losses per level.** Next-latent MSE, SIGReg on the latents (not above level 1 in HWM), an inverse-dynamics cross-entropy (action index at level 1, code indices above), and the VQ commitment loss above level 1.
 - **Planning.** Top-down CEM over the discrete tokens of every level, forward passes only. The top level minimises the latent distance to the goal frame, its predicted latents become the subgoals of the level below, and level 1 outputs environment actions (receding horizon).
-- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (proposals, trust regions, learned actors). Diagnostics planned from the start: exploitation gap (predicted vs realised cost, by replaying plans in the simulator), success vs planner compute, and a support metric.
+- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (proposals, trust regions, learned actors). The diagnostics for it exist from the start (see Diagnostics): plans replayed in the simulator against the model's prediction and against random plans, success against planner compute (experiment C1), and the distance of predicted latents to the data.
 
 ## Setup
 
@@ -57,8 +57,10 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 | Protocol | Definition | Metric |
 |---|---|---|
-| **A. Offset goals** | Start and goal frames from held-out expert trajectories at fixed offsets (values to be fixed) | Success under a goal test defined in advance on the symbolic state |
-| **B. Full episodes** | From reset, with goal frames taken from an expert rollout in the same world seed | Achievement rates by achievement depth, and diamond rate |
+| **A. Offset goals** | Start and goal frames from held-out expert trajectories, one task per world seed, only pairs with progress between start and goal (fixed offsets, or the d-th next achievement) | Success and progress under the goal test below, against a random policy on the same tasks |
+| **B. Full episodes** | From reset to the frame where the expert unlocks the diamond in the same world seed, so the whole chain is required (the final goal only; key states are not built) | Progress by achievement depth, and the diamond rate |
+
+**Goal test.** A task's required set is the achievements the goal frame has and the start frame lacks. Success means all of them are unlocked, in any order and by any route; progress is the share unlocked. The planner never sees this: it minimises the latent distance to the goal frame (in the projected embedding space that the predictor and SIGReg use; between levels, predictions are encoded up to the upper latent). The test only judges the result. The final definition is open (see Open decisions).
 
 Every reported success number comes with the planner compute used. The planner is goal-conditioned and reward-free, so results are phrased as "reaches X% of the expert's achievement rate given goal frames", not "beats the expert".
 
@@ -86,9 +88,10 @@ AAC/
   H-JEPA/        world models, planning, Craftax environment (PyTorch)
   purejaxql/     PQN-RNN expert and episode collector (JAX)
   papers/        reference papers (PDFs are local, see papers/README.md)
+  analysis/      dataset statistics and run comparison (numpy and h5py only)
+  experiments/   the experiment table as a spec, and a runner (print, local, SLURM)
+  environment/   install lists and reference freezes of the two environments
   CLAUDE.md      working notes for Claude Code
-  experiments/   (planned) one launcher per experiment E1-E8
-  analysis/      (planned) clip counts, probes, plots
 ```
 
 The two code folders are separate Python projects (JAX and PyTorch do not share an environment). They only meet in the HDF5 episode file below.
@@ -123,6 +126,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 | `reward` | (N,) float32 | reward of the transition into this frame |
 | `achievements` | (N, 22) uint8 | cumulative flags, Craftax-Classic order |
 | `full_state` | (N, 20952) uint8 | snapshot of the complete env state (about 1.5 KB per frame on disk) |
+| `inventory` (12), `vitals` (4), `facing`, `daylight`, `position` (2), `mobs_in_view` (4) | (N, k) small ints | symbolic state for probing and data analysis: item counts, health/food/drink/energy, direction 1-4, light, player row/col, zombies/cows/skeletons/arrows in the 7x9 view |
 | `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random |
 
 - **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
@@ -144,19 +148,22 @@ callables:
   args: {full_state: {value: goal_full_state}}
 ```
 
-- The goal test is a placeholder: all achievements and inventory counts of the goal frame are met. A goal without progress over the start is met after one step, so evaluation tasks must have progress between start and goal. The final test for protocol A is open.
+- Goal test `new_achievements` (default): all achievements new in the goal relative to the start are unlocked. A goal without progress never succeeds. `info` has `goal_required` and `goal_progress`. The older `achievements_inventory` test is selectable (`goal_test=` of the env).
 
 ### Training and evaluation (H-JEPA)
 
 ```bash
 cd H-JEPA/h_jepa
 python main_hjepa.py --config-name craftax_lewm        # or craftax_hjepa_l2/l3, craftax_hwm_l2/l3
-# eval tasks are sampled once from a dataset, then reused:
-python eval.py --config-name craftax_flat policy=random dump_eval_trajs_path=<tasks.pt>
-python eval.py --config-name craftax_flat policy=<run> load_eval_trajs_path=<tasks.pt>   # craftax_l2/l3 for hierarchies
+python eval_tasks.py --dataset craftax_expert_val --mode offset --offsets 25 50 100 --num-tasks 200 --eval-budget 400 --out tasks.pt
+python eval.py --config-name craftax_flat policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
+python eval.py --config-name craftax_l2 policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...                    # craftax_flat/l3/l2_project
+python probe_eval.py --run <run dir> --train-dataset X --val-dataset Y                                                         # probes of every level
+python time_run.py --config-name craftax_hjepa_l2 --eval-config-name craftax_l2                                               # step and solve timing
+python ../../experiments/run.py plan E1                                                                                       # the whole experiment
 ```
 
-Configs are in `h_jepa/config/{train,eval}`. Hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`.
+Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed. Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built) and a compute-scaling probe C1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
 
 ### Design notes
 
@@ -168,9 +175,23 @@ Configs are in `h_jepa/config/{train,eval}`. Hyperparameters are the Push-T ones
 - **Planner.** `stable_worldmodel.solver.CategoricalCEMSolver`, same interface as `GradientSolver`, logs `solve_records` with `backward: false`. Level 1 plans `action_block` slots of 17 actions; level N plans one slot per code group (plus one for k) and passes the code vectors to the model (`get_action_spec`); levels above 1 need `action_block: 1`. `allowed_durations`: `default` (the safe default: k pinned to the stride), `all`, or a list.
 - **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride comes from the data (E2). The level-1 horizon must lie in [stride, 2 × stride).
 
+### Diagnostics
+
+Training, planning and probing each write a report that names collapses and other failures. The thresholds are heuristics set before the first run (`health.Thresholds`); adjust them with real numbers.
+
+| Stage | When | What | Where |
+|---|---|---|---|
+| Training | live every 50 steps | per level: effective rank, dead dimensions, latent change per step, predictor vs copy-last-latent and vs shuffled actions, codebook perplexity and usage, IDM accuracy, raw gradient norms, loss spikes | `health/*` in the logger, findings printed when they first appear |
+| Training | every epoch, long validation clips | adds open-loop drift (planning history 1 and training history), cost geometry (latent distance vs time gap), IDM on held-out worlds | `health_val/*`, `health/epoch_*.json` |
+| Training | at the end | all of it, findings, optional probing | `health/report.md`, `summary.json`, `probe_report.md` |
+| Planning | per task and replanning | progress, latent distance to the goal per level, CEM improvement and entropy, FLOPs, executed-action diversity, subgoal tracking; plan diagnostics replay the chosen plan in a cloned simulator (prediction error vs random plans, optimism, cost ranking, distance to the data) | `planning_report.md`, `planning_health.json`, `planning_records.json` |
+| Probing | at the end, or `probe_eval.py` | ridge probes from each level to fast (position, facing, mobs), medium (vitals) and slow (inventory, achievements, daylight) state on held-out worlds, with an untrained encoder as control | `probe_report.md` |
+
+Findings are `critical` (collapse or a failure that makes the model unusable), `warn`, or `info`, each with a hint. Failure signals beyond collapse include: predictor not better than copying the last latent, actions ignored, rollout drift beyond copy, latent distance that saturates after a few steps, IDM at chance, plans predicted worse than random plans (exploitation), predicted progress that reality does not deliver, and probes no better than an untrained encoder. `analysis/dataset_stats.py` (clip counts per depth and stride, event durations, time scales, chunk diversity) and `analysis/compare_runs.py` (planning against the random baseline, compute scaling, training and probing across runs) work on the written files. `time_run.py` times one training step and one solve.
+
 ### Tests
 
-`pytest purejaxql/tests` (JAX environment) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 46 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
+`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 96 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
 
 ## Compute and roadmap
 
@@ -186,8 +207,8 @@ About 15 A100-hours per month (~180 in total). One seed for exploration, three s
 
 - Planner: proposals, trust region, learned actors (stay with discrete CEM until decided)
 - Expert / random data ratio
-- Offset values and goal test for protocol A
-- Goal sequence for protocol B (final goal only vs key states)
+- Goal test and offsets for protocol A, and whether to ignore achievements a random agent gets by itself
+- Goal sequence for protocol B (the final goal only is built; key states need goal switching in the policy)
 - Level-1 step size (1 env step vs a few with concatenated actions)
 - Band ranges for E7, and whether the planner may choose k freely
 
