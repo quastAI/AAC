@@ -16,6 +16,13 @@ Columns (N = total frames):
     reward        (N,)            float32  reward of the transition into this frame (0 in frame 0)
     achievements  (N, 22)         uint8    cumulative flags, Craftax-Classic Achievement order
     full_state    (N, 20952)      uint8    snapshot of the complete env state (see pack_state)
+    inventory     (N, 12)         int16    wood, stone, coal, iron, diamond, sapling, then
+                                           wood/stone/iron pickaxe, wood/stone/iron sword
+    vitals        (N, 4)          int8     health, food, drink, energy
+    facing        (N, 1)          int8     player direction, 1 left, 2 right, 3 up, 4 down
+    daylight      (N, 1)          float32  light level
+    position      (N, 2)          int16    player (row, col) on the 64x64 map
+    mobs_in_view  (N, 4)          int8     zombies, cows, skeletons, arrows inside the 7x9 view
     step_idx      (N,)            int32
     ep_idx        (N,)            int32
     seed          (N,)            int64    world seed of the episode
@@ -50,7 +57,7 @@ import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
 
-from craftax.craftax_classic.constants import BLOCK_PIXEL_SIZE_AGENT, Achievement
+from craftax.craftax_classic.constants import BLOCK_PIXEL_SIZE_AGENT, OBS_DIM, Achievement
 from craftax.craftax_classic.renderer import make_craftax_pixel_renderer
 from craftax.craftax_env import make_craftax_env_from_name
 
@@ -186,13 +193,36 @@ def pack_state(state):
     return jnp.concatenate(parts)
 
 
+def derived_columns(state):
+    """Symbolic quantities of a state for probing and data analysis (all small)."""
+    inventory = jnp.stack(jax.tree_util.tree_leaves(state.inventory)).astype(jnp.int16)
+    vitals = jnp.stack(
+        [state.player_health, state.player_food, state.player_drink, state.player_energy]
+    ).astype(jnp.int8)
+
+    def in_view(mobs):
+        delta = mobs.position - state.player_position
+        inside = (jnp.abs(delta[:, 0]) <= OBS_DIM[0] // 2) & (jnp.abs(delta[:, 1]) <= OBS_DIM[1] // 2)
+        return (mobs.mask & inside).sum()
+
+    mobs = jnp.stack([in_view(m) for m in (state.zombies, state.cows, state.skeletons, state.arrows)])
+    return (
+        inventory,
+        vitals,
+        state.player_direction.astype(jnp.int8)[None],
+        state.light_level.astype(jnp.float32)[None],
+        state.player_position.astype(jnp.int16),
+        mobs.astype(jnp.int8),
+    )
+
+
 def make_replay(env, env_params):
     """Re-simulate one episode from (seed, actions) and render pixels from its states."""
     render = make_craftax_pixel_renderer(BLOCK_PIXEL_SIZE_AGENT)
 
     def frame(state):
         pixels = jnp.clip(jnp.round(render(state)), 0, 255).astype(jnp.uint8)
-        return pixels, state.achievements.astype(jnp.uint8), pack_state(state)
+        return (pixels, state.achievements.astype(jnp.uint8), pack_state(state), *derived_columns(state))
 
     @jax.jit
     def reset(seed):
@@ -214,20 +244,19 @@ def make_replay(env, env_params):
 
     def replay(seed, actions):
         length = len(actions)
-        obs0, state, step_key, pix0, ach0, full0 = reset(seed)
+        obs0, state, step_key, *frame0 = reset(seed)
         padded = np.zeros(-(-length // REPLAY_CHUNK) * REPLAY_CHUNK, dtype=np.int32)
         padded[:length] = actions
-        first = (obs0, np.zeros(1, np.float32), pix0, ach0, full0)
+        first = (obs0, np.zeros(1, np.float32), *frame0)
         columns = [[np.asarray(x)[None]] if i != 1 else [x] for i, x in enumerate(first)]
         for t0 in range(0, len(padded), REPLAY_CHUNK):
             state, out = run_chunk(state, step_key, t0, jnp.asarray(padded[t0 : t0 + REPLAY_CHUNK]))
             for acc, x in zip(columns, out):
                 acc.append(np.asarray(x))
-        obs, reward, pixels, ach, full = (np.concatenate(c)[: length + 1] for c in columns)
-        return dict(
-            pixels=pixels, state=obs.astype(np.float32), reward=reward.astype(np.float32),
-            achievements=ach, full_state=full,
-        )  # fmt: skip
+        obs, reward, *rest = (np.concatenate(c)[: length + 1] for c in columns)
+        names = ("pixels", "achievements", "full_state", "inventory", "vitals", "facing",
+                 "daylight", "position", "mobs_in_view")  # fmt: skip
+        return dict(state=obs.astype(np.float32), reward=reward.astype(np.float32), **dict(zip(names, rest)))
 
     return replay
 
@@ -303,6 +332,12 @@ def build_episode(seed, actions, rendered, source):
         reward=rendered["reward"],
         achievements=rendered["achievements"],
         full_state=rendered["full_state"],
+        inventory=rendered["inventory"],
+        vitals=rendered["vitals"],
+        facing=rendered["facing"],
+        daylight=rendered["daylight"],
+        position=rendered["position"],
+        mobs_in_view=rendered["mobs_in_view"],
         step_idx=np.arange(length + 1, dtype=np.int32),
         seed=np.full(length + 1, seed, dtype=np.int64),
         source=np.full(length + 1, source, dtype=np.int8),

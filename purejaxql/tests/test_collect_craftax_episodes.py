@@ -41,6 +41,15 @@ def test_layout_and_replayability(collect, monkeypatch, tmp_path):
     assert a["state"].shape == (n, 1345)
     assert a["achievements"].shape == (n, 22)
     assert a["full_state"].shape == (n, 20952) and a["full_state"].dtype == np.uint8
+    for name, shape in dict(inventory=(n, 12), vitals=(n, 4), facing=(n, 1), daylight=(n, 1),
+                            position=(n, 2), mobs_in_view=(n, 4)).items():  # fmt: skip
+        assert a[name].shape == shape, name
+    # a new world starts with an empty inventory, full vitals, and the player on the map
+    first = a["ep_offset"][:]
+    assert (a["inventory"][first] == 0).all() and (a["vitals"][first] == 9).all()
+    assert ((a["position"][:] >= 0) & (a["position"][:] < 64)).all()
+    assert set(np.unique(a["facing"][:])) <= {1, 2, 3, 4}
+    assert (a["mobs_in_view"][:] >= 0).all()
     assert list(a["ep_offset"][:]) == list(np.cumsum(np.r_[0, a["ep_len"][:-1]]))
 
     # One NaN action per episode, in its last frame; the others are valid indices.

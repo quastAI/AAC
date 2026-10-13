@@ -22,6 +22,7 @@ from utils import (
     ResumeCheckpoint,
 )
 from final_probing_decoding_eval import FinalProbingDecodingEvalCallback
+from training_monitor import TrainingHealthCallback, build_health_loader
 from data import (
     Compose,
     build_normalizer_artifact,
@@ -298,6 +299,30 @@ def run(cfg):
         ),
     )
 
+    health_callbacks = []
+    health_cfg = cfg.get("health", None)
+    if health_cfg is not None and health_cfg.enabled:
+        health_loader, frames = build_health_loader(
+            cfg,
+            cache_dir,
+            transform,
+            frames=int(health_cfg.long_clip_frames),
+            batch_size=int(health_cfg.clip_batch_size),
+            max_clips=int(health_cfg.max_clips),
+        )
+        if health_loader is None:
+            logging.warning("health: no validation clips; per-epoch drift and geometry metrics are off")
+        else:
+            logging.info(f"health: evaluating on validation clips of {frames} level-1 frames")
+        health_callbacks.append(
+            TrainingHealthCallback(
+                cfg,
+                run_dir,
+                health_loader=health_loader,
+                normalize_fn=_normalize_uint8_images_on_device,
+            )
+        )
+
     resume_file = run_dir / "lightning_resume" / "last.ckpt"
     resume_every = cfg.get("resume_every_n_steps", 2000)
     resume_callbacks = [ResumeCheckpoint(resume_file, resume_every)] if resume_every else []
@@ -307,6 +332,7 @@ def run(cfg):
         **cfg.trainer,
         callbacks=[
         *resume_callbacks,
+        *health_callbacks,
         debug_cleanup_callback,
         object_dump_callback,
         planning_eval_callback,

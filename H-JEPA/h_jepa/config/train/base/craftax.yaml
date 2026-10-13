@@ -67,6 +67,19 @@ final_probing_decoding_eval:
   enabled: false  # needs a craftax probing config (E4)
   config_name: ???
   output_subdir: final_probing_decoding_eval
+health:  # collapse and failure monitor, see health.py and training_monitor.py
+  enabled: true
+  live_every: 50  # steps between live metrics from the training batch
+  warmup_steps: 200  # no findings before this step (the predictor starts as a copy)
+  epoch_batches: 8  # validation batches per epoch evaluation
+  final_batches: 32  # ... at the end of training
+  long_clip_frames: 129  # level-1 frames per validation clip (drift, cost geometry)
+  clip_batch_size: 16
+  max_clips: 512
+  drift_horizon: 8  # open-loop rollout steps per level
+  plan_history: 1  # context frames the planner uses in its rollouts
+  stop_after_critical_epochs: 0  # stop after this many epochs with a critical finding (0 = never)
+  thresholds: {}  # overrides of health.Thresholds
 level1:
   lr: 5.0e-05
   idm_coeff: 0.1  # cross-entropy on the action(s) of each step (E5: set per model)
