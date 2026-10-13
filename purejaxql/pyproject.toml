@@ -26,7 +26,7 @@ classifiers = [
 dependencies = [
     "jax>=0.4.16,<=0.4.38",
     "jaxlib>=0.4.16,<=0.4.38",
-    "flax>=0.7.4",
+    "flax>=0.7.4,<=0.10.3",  # 0.10.4+ needs a newer jax than the pin above
     "chex>=0.1.84",
     "optax>=0.1.7",
     "safetensors>=0.4.2",
@@ -48,6 +48,7 @@ dependencies = [
 
 jax_envs = [
     "craftax>=1.4.2",
+    "h5py",
     "gymnax==0.0.6",
     "playground>=0.0.4",
     "warp-lang",
