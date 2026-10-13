@@ -524,8 +524,10 @@ def make_train(config):
                 new_action = jax.vmap(eps_greedy_exploration)(
                     jax.random.split(rng_a, config["TEST_NUM_ENVS"]), q_vals, eps
                 )
+                # a fresh key per step: the constant reset key `_rng` made every step draw the
+                # same randomness, and the same pool of worlds on every auto-reset
                 new_obs, new_env_state, reward, new_done, info = test_env.step(
-                    _rng, env_state, new_action, env_params
+                    rng_s, env_state, new_action, env_params
                 )
                 step_state = (new_hs, new_obs, new_done, new_action, new_env_state, rng)
                 return step_state, info

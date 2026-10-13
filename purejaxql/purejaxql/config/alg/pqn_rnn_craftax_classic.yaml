@@ -33,7 +33,7 @@ OPTIMISTIC_RESET_RATIO: 16
 LOG_ACHIEVEMENTS: True # per-achievement success rates; diamond is Achievements/collect_diamond
 
 # evaluation
-TEST_DURING_TRAINING: True # greedy rollouts to track the diamond rate
+TEST_DURING_TRAINING: True # greedy rollouts to track the diamond rate (only visible with WANDB_MODE=online)
 TEST_INTERVAL: 0.05 # in terms of total updates (20 evals, ~5% extra env steps)
 TEST_NUM_ENVS: 256
 TEST_NUM_STEPS: 10000 # = Craftax-Classic max episode length
