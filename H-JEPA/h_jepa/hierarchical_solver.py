@@ -14,8 +14,28 @@ from torch import nn
 from stable_worldmodel.solver.solver import (
     num_planning_calls,
     planning_call_index,
-    decreasing_horizon_schedule,
+    horizon_schedule,
 )
+
+
+def check_subgoal_horizon(
+    *, level: int, num_subgoals: int, planning_horizon: int, stride: int
+) -> None:
+    """The horizon of a level that follows the plan of the level above must match its subgoals.
+
+    The level-N rollout of `planning_horizon` steps is encoded up at the upper stride; after
+    dropping the context frame, floor(planning_horizon / stride) frames remain to compare with
+    the subgoals. With one subgoal the horizon must therefore lie in [stride, 2 * stride): a
+    longer one compares the last frame with a subgoal of an earlier time without any error, a
+    shorter one leaves no frame to compare, so every cost is the same and the search is random.
+    """
+    expected = planning_horizon // stride
+    if num_subgoals != expected:
+        raise ValueError(
+            f"Level {level}: {num_subgoals} subgoals, but upper temporal_stride={stride} with "
+            f"planning_horizon={planning_horizon} leaves {expected} frames to compare "
+            f"(a single subgoal needs a horizon in [{stride}, {2 * stride}))"
+        )
 
 
 def build_hierarchical_solver(cfg: Any, model: Any) -> "HierarchicalSolver":
@@ -184,23 +204,13 @@ class HierarchicalSolver:
                 level_info['goal_action'] = next_action
                 level_info['goal_embed_0_in_upper_space'] = True
 
-            # num_subgoals, upper JEPA stride, and planning_horizon are coupled:
-            # after stride-subsampling the level-N rollout (T+1 frames → ceil((T+1)/stride))
-            # and dropping the context frame, exactly ceil((T+1)/stride)-1 frames remain to
-            # compare against the subgoals. If num_subgoals doesn't match, criterion's
-            # expand_as either crashes or — if cost_last_n accidentally equals num_subgoals —
-            # silently compares the wrong temporal positions.
-            goal_emb = level_info.get('goal_embed_0')
-            if (
-                level_info.get('goal_embed_0_in_upper_space', False)
-                and torch.is_tensor(goal_emb)
-                and goal_emb.shape[-2] > 1
-            ):
-                _stride = self.level_solvers[level].model.upper_models[0].temporal_stride
-                _expected = (planning_horizon + _stride) // _stride - 1
-                assert goal_emb.shape[-2] == _expected, (
-                    f'Level {level}: {goal_emb.shape[-2]} subgoals but upper temporal_stride={_stride} '
-                    f'with planning_horizon={planning_horizon} expects {_expected}'
+            if subgoal_latents is not None:
+                # following the plan of the level above: the horizon must fit the subgoals
+                check_subgoal_horizon(
+                    level=level,
+                    num_subgoals=level_info['goal_embed_0'].shape[-2],
+                    planning_horizon=planning_horizon,
+                    stride=self.level_models[level].temporal_stride,
                 )
 
             result = self.level_solvers[level].solve(
@@ -262,9 +272,17 @@ class HierarchicalSolver:
             level_cfg = self._level_plan_config(level)
             horizon = level_cfg.horizon
             if level == highest_level:
-                schedules[level] = decreasing_horizon_schedule(
+                schedules[level] = horizon_schedule(
+                    level_cfg.horizon_schedule,
                     num_calls=calls,
                     configured_horizon=horizon,
+                )
+                continue
+
+            if level_cfg.horizon_schedule == 'fixed':
+                # the configured horizon on every call; the subgoal check ties it to the stride
+                schedules[level] = horizon_schedule(
+                    'fixed', num_calls=calls, configured_horizon=horizon
                 )
                 continue
 
@@ -276,7 +294,8 @@ class HierarchicalSolver:
                 schedules[level] = [pre_decay_horizon] * calls
                 continue
 
-            tail = decreasing_horizon_schedule(
+            tail = horizon_schedule(
+                level_cfg.horizon_schedule,
                 num_calls=calls - tail_start,
                 configured_horizon=horizon,
             )

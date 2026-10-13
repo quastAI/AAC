@@ -33,6 +33,7 @@ def _build_hierarchical_plan_config(cfg: DictConfig) -> swm.HierarchicalPlanConf
             horizon_one_goal_cost_space=str(
                 level_cfg.get('horizon_one_goal_cost_space', 'lower')
             ),
+            horizon_schedule=str(level_cfg.get('horizon_schedule', 'decreasing')),
         )
 
     num_levels = sum(1 for key in hp_cfg if str(key).startswith('level'))
@@ -57,4 +58,5 @@ def _build_policy_plan_config(
         action_dim=_optional_int(plan_cfg.get('action_dim', None)),
         pre_decay_horizon=_optional_int(plan_cfg.get('pre_decay_horizon', None)),
         cost_last_n=int(plan_cfg.get('cost_last_n', 1)),
+        horizon_schedule=str(plan_cfg.get('horizon_schedule', 'decreasing')),
     )

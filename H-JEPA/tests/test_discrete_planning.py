@@ -320,7 +320,7 @@ def test_cem_converges_whatever_the_number_of_classes(classes):
         probs = solver._update_probs(probs, samples, costs, valid)
     assert torch.allclose(probs.sum(-1), torch.ones(1, 2, slots))
     assert probs[..., 5].min() > 0.88
-    assert (probs[:, :, 2, classes // 2 :] == 0).all()  # missing classes stay 0
+    assert (probs[:, :, 2, classes // 2 :] == 0).all()  # absent classes
 
 
 def test_cem_vq_levels_need_action_block_1():

@@ -208,7 +208,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         elite_samples = samples.gather(1, index)  # (b, k, H, slots)
         freq = F.one_hot(elite_samples, probs.shape[-1]).float().mean(1)
         probs = self.alpha * freq + (1 - self.alpha) * probs
-        # mix in uniform mass over the classes a slot has; the others stay at zero
+        # mix in uniform mass over a slot's classes; the others stay at zero
         uniform = valid.float() / valid.sum(-1, keepdim=True).clamp_min(1)
         probs = (1 - self.min_prob) * probs + self.min_prob * uniform
         return probs / probs.sum(-1, keepdim=True)
@@ -267,6 +267,9 @@ class CategoricalCEMSolver(torch.nn.Module):
                 replanning_interval=int(self._config.receding_horizon) * block,
                 steps_taken=steps_taken,
                 eval_budget=eval_budget,
+                schedule=getattr(
+                    self._config, 'horizon_schedule', 'decreasing'
+                ),
             )
 
         n_slots, max_classes = len(self._slot_sizes), max(self._slot_sizes)

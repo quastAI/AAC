@@ -173,7 +173,7 @@ Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progre
 - **IDM.** On at every level (`idm_coeff: 0.1`, placeholder; E5 sets it per model). Cross-entropy over the action index (level 1, one slot per frameskip step) or the code indices (above, one classification per group). Logs `idm_accuracy_loss_levelN` (chance 1/17, 1/64).
 - **Collapse monitors.** `vq_perplexity_loss_levelN` (effective codes in use, 1 = collapsed) and `vq_usage_loss_levelN`. The first validation pass shows perplexity 1: the codebook is initialised on the first training forward.
 - **Planner.** `stable_worldmodel.solver.CategoricalCEMSolver`, same interface as `GradientSolver`, logs `solve_records` with `backward: false`. Level 1 plans `action_block` slots of 17 actions; level N plans one slot per code group (plus one for k) and passes the code vectors to the model (`get_action_spec`); levels above 1 need `action_block: 1`. `allowed_durations`: `default` (the safe default: k pinned to the stride), `all`, or a list.
-- **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride comes from the data (E2). The level-1 horizon must lie in [stride, 2 × stride).
+- **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride comes from the data (E2). The level-1 horizon must lie in [stride, 2 × stride) (checked); horizons are fixed over the episode (`horizon_schedule: fixed`).
 
 ### Diagnostics
 

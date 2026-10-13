@@ -32,6 +32,7 @@ solver:
   seed: ${seed}
 plan_config:
   horizon: 10
+  horizon_schedule: fixed
   receding_horizon: 5
   action_block: 1
   cost_last_n: 1

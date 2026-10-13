@@ -28,6 +28,8 @@ class PlanConfig:
         horizon_one_goal_cost_space: For skipped upper levels with horizon 1,
             choose lower-level goal cost space: 'lower' keeps current behavior,
             'upper' projects lower predictions to the actual upper-level goal.
+        horizon_schedule: 'decreasing' (the horizon shrinks over the eval
+            budget) or 'fixed' (the configured horizon on every call).
     """
 
     horizon: int
@@ -40,6 +42,7 @@ class PlanConfig:
     intermediate_cost_weight: float = 1.0
     action_cost_weight: float = 0.0
     horizon_one_goal_cost_space: str = 'lower'
+    horizon_schedule: str = 'decreasing'
 
 
 @dataclass(frozen=True)

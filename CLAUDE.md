@@ -49,7 +49,7 @@ E7 code (irregular-spacing sampler, `action_duration` through the hierarchical e
 ## Pitfalls seen
 
 - The expert checkpoint must contain BatchRenorm `batch_stats` (the training script saves them now); older checkpoints cannot be used.
-- `HierarchicalSolver` asserts level-1 horizon in [stride, 2 x stride); `receding_horizon` counts level-1 steps.
+- A level that follows the plan of the one above must have a horizon in [stride, 2 x stride) with one subgoal (`check_subgoal_horizon` raises otherwise); change a stride and the lower horizons with it. The Craftax eval configs use `horizon_schedule: fixed` (the Push-T `decreasing` default shrinks the horizon over the budget and skips upper levels late). `receding_horizon` counts level-1 steps.
 - Evaluation needs a task file (`eval_tasks.py`) passed as `load_eval_trajs_path`; `eval.chunk_size` must be null without it. `output.dir` is relative to the parent of the policy directory (or absolute for `policy=random`).
 - Tasks are one per world seed (the evaluation asserts distinct seeds). Random agents solve some tasks (wake_up, drink, sapling): always compare with the random baseline. Smoke runs on untrained models only check plumbing.
 - Probe scores below zero mean too few samples for the latent dimension (`PROBE_FEW_SAMPLES`).

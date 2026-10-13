@@ -43,12 +43,13 @@ hierarchical_plan_config:
   receding_horizon: 2
   level1:
     horizon: 4
-    pre_decay_horizon: 4
+    horizon_schedule: fixed
     action_block: 1
     cost_last_n: 1
     action_cost_weight: 0.0
   level2:
     horizon: 4
+    horizon_schedule: fixed
     action_block: 1
     action_dim: 16
     cost_last_n: 1

@@ -133,15 +133,49 @@ def decreasing_horizon_schedule(
     return schedule
 
 
+HORIZON_SCHEDULES = ('decreasing', 'fixed')
+
+
+def horizon_schedule(
+    kind: str,
+    *,
+    num_calls: int,
+    configured_horizon: int,
+) -> list[int]:
+    """Per-call horizons: 'decreasing' (see above) or 'fixed' (the configured horizon on every call).
+
+    The decreasing schedule assumes the goal is reached exactly at the end of the
+    eval budget and shrinks the horizon towards 1 on the way. With goals that are
+    much nearer than the budget it makes the planner short-sighted for the rest of
+    the episode, so 'fixed' keeps the lookahead the model was sized for.
+    """
+    if kind not in HORIZON_SCHEDULES:
+        raise ValueError(
+            f'horizon_schedule must be one of {HORIZON_SCHEDULES}, got {kind!r}.'
+        )
+    if kind == 'fixed':
+        if int(num_calls) <= 0 or int(configured_horizon) <= 0:
+            raise ValueError(
+                'Number of planning calls and horizon must be positive, got '
+                f'{num_calls} and {configured_horizon}.'
+            )
+        return [int(configured_horizon)] * int(num_calls)
+    return decreasing_horizon_schedule(
+        num_calls=num_calls, configured_horizon=configured_horizon
+    )
+
+
 def get_planning_horizon(
     *,
     configured_horizon: int,
     replanning_interval: int,
     steps_taken: int | None = None,
     eval_budget: int,
+    schedule: str = 'decreasing',
 ) -> int:
-    """Return this call's horizon from the decreasing schedule over the eval budget."""
-    schedule = decreasing_horizon_schedule(
+    """Return this call's horizon from the schedule over the eval budget."""
+    schedule = horizon_schedule(
+        schedule,
         num_calls=num_planning_calls(
             eval_budget=int(eval_budget),
             replanning_interval=int(replanning_interval),
