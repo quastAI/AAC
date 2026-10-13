@@ -49,7 +49,11 @@ class CategoricalCEMSolver(torch.nn.Module):
         topk: Number of elite sequences used to refit the distributions.
         batch_size: Number of environments processed in parallel.
         alpha: Weight of the elite frequencies in the distribution update.
-        min_prob: Probability floor, so no action is ruled out for good.
+        min_prob: Probability mass of each slot that is spread uniformly over
+            its classes, so no class is ruled out for good. A mass, not a
+            per-class floor: a per-class floor grows with the number of classes
+            (0.01 per class caps a 64-code slot at 0.55), so large slots never
+            converged.
         allowed_durations: 'default' (pin k to the default duration), 'all',
             or a list of allowed durations. Only used by models with durations.
         device: Device for tensor computations.
@@ -64,7 +68,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         topk: int = 30,
         batch_size: int | None = None,
         alpha: float = 0.5,
-        min_prob: float = 0.01,
+        min_prob: float = 0.05,
         allowed_durations: str | list[int] = 'default',
         device: str | torch.device = 'cpu',
         seed: int = 1234,
@@ -204,8 +208,9 @@ class CategoricalCEMSolver(torch.nn.Module):
         elite_samples = samples.gather(1, index)  # (b, k, H, slots)
         freq = F.one_hot(elite_samples, probs.shape[-1]).float().mean(1)
         probs = self.alpha * freq + (1 - self.alpha) * probs
-        # classes that a slot does not have stay at zero
-        probs = probs.clamp_min(self.min_prob) * valid
+        # mix in uniform mass over the classes a slot has; the others stay at zero
+        uniform = valid.float() / valid.sum(-1, keepdim=True).clamp_min(1)
+        probs = (1 - self.min_prob) * probs + self.min_prob * uniform
         return probs / probs.sum(-1, keepdim=True)
 
     @staticmethod

@@ -305,6 +305,24 @@ def test_cem_never_samples_a_missing_class():
     assert all((c[..., 8:].sum(-1) == 1).all() for c in seen)
 
 
+@pytest.mark.parametrize('classes', [17, 64, 128])
+def test_cem_converges_whatever_the_number_of_classes(classes):
+    # a per-class probability floor capped big slots (0.01 per class: 0.55 at
+    # 64 classes), so the elite plan was almost never sampled again
+    solver = CategoricalCEMSolver(ToyCost(5, 1), num_samples=30, topk=10)
+    slots = 3
+    valid = torch.ones(slots, classes, dtype=torch.bool)
+    valid[2, classes // 2 :] = False  # a slot with fewer classes
+    probs = (valid.float() / valid.sum(-1, keepdim=True)).expand(1, 2, -1, -1)
+    samples = torch.full((1, 30, 2, slots), 5)
+    costs = torch.rand(1, 30)
+    for _ in range(40):
+        probs = solver._update_probs(probs, samples, costs, valid)
+    assert torch.allclose(probs.sum(-1), torch.ones(1, 2, slots))
+    assert probs[..., 5].min() > 0.88
+    assert (probs[:, :, 2, classes // 2 :] == 0).all()  # missing classes stay 0
+
+
 def test_cem_vq_levels_need_action_block_1():
     solver = CategoricalCEMSolver(ToySlotCost(1, 4))
     with pytest.raises(ValueError, match='action_block'):
