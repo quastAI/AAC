@@ -215,6 +215,9 @@ def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):
         assert noised.after == [expert.name] and rand.after == [noised.name]
         starts = [int(j.command[j.command.index('--seed-start') + 1]) for j in (expert, noised, rand)]
         assert starts == [c['seed_start'][split], c['seed_start'][split] + 500_000, c['seed_start'][split] + 750_000]
+        # every run stops where the next range begins, the last one at the end of the split's 1M seeds
+        ends = [int(j.command[j.command.index('--seed-end') + 1]) for j in (expert, noised, rand)]
+        assert ends == starts[1:] + [c['seed_start'][split] + 1_000_000]
         assert '--no-require-diamond' not in expert.command and '--no-require-diamond' in noised.command
         assert '--checkpoint' not in rand.command and rand.command[rand.command.index('--eps') + 1] == '1.0'
     ranges = [c['seed_start'][s] for s in ('train', 'val', 'test')]

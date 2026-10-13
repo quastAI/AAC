@@ -78,10 +78,12 @@ def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str =
         start = int(c["seed_start"][split])
         base = [python, script, "--out", out]
         steps = [
-            ("expert", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--num-episodes", str(n_expert), "--seed-start", str(start)], n_expert),
+            ("expert", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--num-episodes", str(n_expert),
+                        "--seed-start", str(start), "--seed-end", str(start + 500_000)], n_expert),
             ("noised", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--eps", str(c["noise_eps"]), "--no-require-diamond",
-                        "--num-episodes", str(n_noised), "--seed-start", str(start + 500_000)], n_noised),
-            ("random", [*base, "--eps", "1.0", "--no-require-diamond", "--num-episodes", str(n_random), "--seed-start", str(start + 750_000)], n_random),
+                        "--num-episodes", str(n_noised), "--seed-start", str(start + 500_000), "--seed-end", str(start + 750_000)], n_noised),
+            ("random", [*base, "--eps", "1.0", "--no-require-diamond", "--num-episodes", str(n_random),
+                        "--seed-start", str(start + 750_000), "--seed-end", str(start + 1_000_000)], n_random),
         ]  # fmt: skip
         previous = None
         for name, command, count in steps:

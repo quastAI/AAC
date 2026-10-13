@@ -396,6 +396,9 @@ def parse_args():
     p.add_argument("--config", help="expert config yaml (default: derived from the checkpoint name)")
     p.add_argument("--num-episodes", type=int, required=True, help="episodes to add to the file")
     p.add_argument("--seed-start", type=int, required=True, help="first world seed; seeds already in the file are skipped")
+    p.add_argument("--seed-end", type=int, default=None,
+                   help="stop before this seed (exclusive): the end of the range of this split and source, "
+                        "so a low diamond rate cannot run into the seeds of another split")  # fmt: skip
     p.add_argument("--eps", type=float, default=0.0, help="epsilon-greedy noise: 0 expert, 1 uniform random")
     p.add_argument("--num-envs", type=int, default=64, help="episodes simulated in parallel")
     p.add_argument("--max-steps", type=int, default=10000, help="episode horizon (Craftax-Classic limit is 10000)")
@@ -425,7 +428,8 @@ def main():
     writer = EpisodeWriter(args.out)
     skip, seed, kept, tried, t0 = writer.existing_seeds(), args.seed_start, 0, 0, time.time()
 
-    while kept < args.num_episodes:
+    exhausted = False
+    while kept < args.num_episodes and not exhausted:
         seeds = []
         while len(seeds) < args.num_envs:
             if seed not in skip:
@@ -433,6 +437,9 @@ def main():
             seed += 1
         result = rollout(np.array(seeds, dtype=np.int32), args.max_steps, args.stop_at_diamond, args.tail_steps)
         keep = result["has_diamond"] if args.require_diamond else np.ones(len(seeds), dtype=bool)
+        if args.seed_end is not None:  # the batch is full-size: seeds past the range are simulated but dropped
+            keep = keep & (np.asarray(seeds) < args.seed_end)
+            exhausted = seed >= args.seed_end
         tried += len(seeds)
         for i in np.flatnonzero(keep)[: args.num_episodes - kept]:
             length = int(result["length"][i])
@@ -447,6 +454,8 @@ def main():
             f"mean length {result['length'].mean():.0f} | next seed {seed}",
             flush=True,
         )
+    if kept < args.num_episodes:
+        print(f"WARNING: seeds [{args.seed_start}, {args.seed_end}) are used up: kept {kept} of {args.num_episodes}")
     total = writer.num_episodes
     writer.close()
     print(f"Wrote {kept} episodes to {args.out} ({total} in file)")

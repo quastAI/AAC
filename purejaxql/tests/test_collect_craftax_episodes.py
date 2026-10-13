@@ -124,3 +124,11 @@ def test_replay_check_sees_a_diverging_path_without_reward_change(collect):
         broken[key][3] = change  # rewards and achievements still agree
         with pytest.raises(RuntimeError, match="not deterministic"):
             collect.check_replay(7, length, rendered, broken, 0)
+
+
+def test_seed_end_stops_at_the_end_of_the_range(collect, monkeypatch, tmp_path, capsys):
+    # a low diamond rate must not run into the seeds of another split
+    kwargs = dict(num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
+    f = run(collect, monkeypatch, tmp_path / "r.h5", seed_end=3, **kwargs)  # asks for 4 episodes
+    assert f["seed"][f["ep_offset"][:]].tolist() == [0, 1, 2]
+    assert "used up" in capsys.readouterr().out
