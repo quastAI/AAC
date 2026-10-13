@@ -173,6 +173,8 @@ class HierarchicalSolver:
                 level_info['goal_embed_0_in_upper_space'] = goal_level > level
                 level_info['dense_upper_goal_projection'] = goal_level > level
                 this_level_anchored = True
+                # the dataset's action at the goal frame is not a target of this level
+                level_info.pop('goal_action', None)
             else:
                 # The level above planned: follow its plan. The goal is its first predicted
                 # latent (the next waypoint), compared in the upper level's latent space after

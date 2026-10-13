@@ -157,6 +157,27 @@ def test_vq_reseed_rate_shows_codes_that_keep_dying():
     assert healthy.reseed_rate == 0
 
 
+class ChunkLimitedEncoder(MeanEncoder):
+    max_chunk = 5
+
+
+def test_durations_beyond_the_encoder_chunk_length_are_refused():
+    # the sequence encoder has one position embedding per chunk step
+    VQActionEncoder(
+        ChunkLimitedEncoder(),
+        num_codes=8,
+        durations=(2, 5),
+        default_duration=2,
+    )
+    with pytest.raises(ValueError, match='max_chunk'):
+        VQActionEncoder(
+            ChunkLimitedEncoder(),
+            num_codes=8,
+            durations=(2, 8),
+            default_duration=2,
+        )
+
+
 def test_vq_duration_token():
     vq = make_vq(groups=2, durations=(2, 4, 8), default_duration=4)
     assert vq.token_dim == 4 + 3
@@ -366,6 +387,7 @@ def test_hierarchical_cem_plans_with_codes():
 BAND = [
     '+level2.action_encoder.vq.durations=[2,4,8]',
     '+level2.action_encoder.vq.default_duration=4',
+    'level2.action_encoder.max_chunk=8',  # chunks of up to max(durations) steps
 ]
 
 

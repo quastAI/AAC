@@ -97,6 +97,12 @@ class VQActionEncoder(nn.Module):
                 raise ValueError(
                     f"default_duration={default_duration} must be one of {self.durations}"
                 )
+        max_chunk = getattr(encoder, "max_chunk", None)
+        if self.durations is not None and max_chunk is not None and max(self.durations) > max_chunk:
+            raise ValueError(
+                f"the action encoder takes chunks of up to {max_chunk} steps, but durations go up to "
+                f"{max(self.durations)}: set action_encoder.max_chunk to at least that"
+            )
         # size of the action token the predictor's action embedder receives
         self.token_dim = self.code_dim + (0 if self.durations is None else len(self.durations))
 

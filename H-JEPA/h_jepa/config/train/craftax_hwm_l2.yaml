@@ -45,6 +45,7 @@ level2:
       commitment: 0.25
       dead_threshold: 1.0
       # Band of step durations (E7): the action token then also carries k.
+      # Needs action_encoder.max_chunk >= max(durations) (checked).
       # durations: [2, 3, 4, 5, 6, 7, 8]
       # default_duration: ${level2.stride}
   action_embed:

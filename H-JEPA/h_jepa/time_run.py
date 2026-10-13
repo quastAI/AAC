@@ -77,10 +77,14 @@ def time_training(cfg, batch_size: int, steps: int, warmup: int, device) -> dict
     frames = required_frames(cfg)
     size = int(cfg.img_size)
     num_actions = cfg.level1.wm.get("num_actions")
+    frameskip = int(cfg.data.dataset.level1.frameskip)
     batch = {
         "pixels_level1": torch.randn(batch_size, frames, 3, size, size, device=device),
         "action_level1": (
-            torch.nn.functional.one_hot(torch.randint(0, int(num_actions), (batch_size, frames), device=device), int(num_actions)).float()
+            # one one-hot per frameskip step, concatenated: (batch, frames, frameskip * num_actions)
+            torch.nn.functional.one_hot(
+                torch.randint(0, int(num_actions), (batch_size, frames, frameskip), device=device), int(num_actions)
+            ).float().flatten(-2)
             if num_actions
             else torch.randn(batch_size, frames, int(cfg.level1.wm.action_dim) * int(cfg.data.dataset.level1.frameskip), device=device)
         ),

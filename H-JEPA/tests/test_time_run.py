@@ -70,3 +70,13 @@ def test_timings_run_on_cpu():
     assert p['tflops_per_task'] == pytest.approx(
         p['tflops_per_solve'] / 2 * p['solves_per_task']
     )
+
+
+def test_training_timing_with_frameskip_above_one():
+    # level-1 actions are one one-hot per frameskip step, concatenated
+    cfg = time_run.compose('train', 'craftax_lewm')
+    cfg.data.dataset.level1.frameskip = 2
+    t = time_run.time_training(
+        cfg, batch_size=2, steps=1, warmup=0, device=torch.device('cpu')
+    )
+    assert t['step_seconds'] > 0

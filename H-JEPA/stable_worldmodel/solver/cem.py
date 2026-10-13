@@ -85,7 +85,12 @@ class CategoricalCEMSolver(torch.nn.Module):
         self.batch_size = batch_size
         self.alpha = float(alpha)
         self.min_prob = float(min_prob)
-        self.allowed_durations = allowed_durations
+        # a list from a Hydra config is a ListConfig: keep plain values (it ends up in JSON records)
+        self.allowed_durations = (
+            allowed_durations
+            if isinstance(allowed_durations, str)
+            else [int(k) for k in allowed_durations]
+        )
         self.device = device
         self.torch_gen = torch.Generator(device=device).manual_seed(seed)
 

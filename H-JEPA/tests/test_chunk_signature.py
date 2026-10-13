@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / 'h_jepa'))
 from planning_eval import (  # noqa: E402
     _check_chunk_signature,
     _chunk_signature,
+    resolve_results_dir,
 )
 
 
@@ -69,3 +70,12 @@ def test_chunks_without_signature_are_refused(tasks, tmp_path):
     (chunks / 'tasks_000-005.json').write_text('{}')
     with pytest.raises(RuntimeError, match='without a signature'):
         _check_chunk_signature(chunks, signature(tasks))
+
+
+def test_random_baseline_needs_an_output_directory(tmp_path):
+    # there is no policy directory to put its results next to
+    cfg = OmegaConf.create({'policy': 'random', 'output': {'dir': None}})
+    with pytest.raises(ValueError, match='output.dir'):
+        resolve_results_dir(cfg)
+    cfg.output.dir = str(tmp_path / 'random')
+    assert resolve_results_dir(cfg) == tmp_path / 'random'

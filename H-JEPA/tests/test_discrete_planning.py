@@ -269,6 +269,19 @@ def test_cem_restricts_durations_to_a_subset():
     assert set(out['durations'].flatten().tolist()) <= {2, 3}
 
 
+def test_cem_keeps_a_configured_duration_list_plain():
+    # a list from a Hydra config is a ListConfig; it is written to JSON records
+    import json
+
+    solver = CategoricalCEMSolver(
+        ToyCost(5, 1), allowed_durations=OmegaConf.create([2, 4])
+    )
+    assert solver.allowed_durations == [2, 4]
+    assert type(solver.allowed_durations) is list
+    json.dumps(solver.allowed_durations)
+    assert CategoricalCEMSolver(ToyCost(5, 1)).allowed_durations == 'default'
+
+
 def test_cem_rejects_bad_allowed_durations():
     for bad in ([7], []):
         with pytest.raises(ValueError, match='allowed_durations'):

@@ -107,7 +107,9 @@ def resolve_results_dir(
 
     output_dir = cfg.output.get("dir", None)
     if cfg.policy in (None, "random"):
-        return Path(__file__).parent if output_dir is None else Path(output_dir)
+        if output_dir is None:  # there is no policy directory to put the results next to
+            raise ValueError("policy=random needs output.dir (an absolute path)")
+        return Path(output_dir)
     return Path(swm.data.utils.get_cache_dir(), cfg.policy).parent / (output_dir or "")
 
 
