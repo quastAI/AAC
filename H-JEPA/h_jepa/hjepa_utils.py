@@ -305,8 +305,9 @@ def create_world_model(cfg):
             action_embed = torch.nn.Identity()
         else:
             if level == 1:
-                action_embed_kwargs["input_dim"] = (
-                    cfg.data.dataset.level1.frameskip * cfg.level1.wm.action_dim
+                # discrete actions enter as one-hot vectors of num_actions entries
+                action_embed_kwargs["input_dim"] = cfg.data.dataset.level1.frameskip * int(
+                    cfg.level1.wm.get("num_actions") or cfg.level1.wm.action_dim
                 )
             action_embed_kwargs["emb_dim"] = embed_dim
             action_embed = Embedder(**action_embed_kwargs)

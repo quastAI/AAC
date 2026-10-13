@@ -2,6 +2,7 @@ import math
 from typing import Any, Protocol, runtime_checkable
 
 import gymnasium as gym
+import numpy as np
 import torch
 
 
@@ -31,6 +32,34 @@ class Costable(Protocol):
             A tensor of cost values for each action candidate.
         """
         ...
+
+
+def expand_info_dict_for_samples(
+    info_dict: dict,
+    start_idx: int,
+    end_idx: int,
+    num_samples: int,
+    device: str | torch.device,
+) -> dict:
+    """Slice the env batch and add the sample axis expected by world models."""
+    current_bs = end_idx - start_idx
+    expanded_infos = {}
+
+    for k, v in info_dict.items():
+        if torch.is_tensor(v):
+            v_batch = v[start_idx:end_idx].to(device)
+            v_batch = v_batch.unsqueeze(1).expand(
+                current_bs, num_samples, *v_batch.shape[1:]
+            )
+        elif isinstance(v, np.ndarray):
+            v_batch = v[start_idx:end_idx]
+            v_batch = np.repeat(v_batch[:, None, ...], num_samples, axis=1)
+        else:
+            v_batch = v
+
+        expanded_infos[k] = v_batch
+
+    return expanded_infos
 
 
 def num_planning_calls(*, eval_budget: int, replanning_interval: int) -> int:

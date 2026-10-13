@@ -25,8 +25,8 @@ from final_probing_decoding_eval import FinalProbingDecodingEvalCallback
 from data import (
     Compose,
     build_normalizer_artifact,
+    build_column_transforms,
     build_hdf5_dataset,
-    get_column_normalizer,
     save_normalizer_artifact,
 )
 
@@ -173,12 +173,7 @@ def run(cfg):
     val_dataset = build_hdf5_dataset(val_dataset_cfg, cache_dir=cache_dir)
 
     # Stored images already match img_size; uint8 pixels are normalized on device.
-    extra_transforms = [
-        get_column_normalizer(train_dataset, col, col)
-        for col in cfg.data.dataset.keys_to_load
-        if not col.startswith("pixels")
-    ]
-    transform = Compose(*extra_transforms)
+    transform = Compose(*build_column_transforms(cfg, train_dataset))
     train_dataset.transform = transform
     val_dataset.transform = transform
 

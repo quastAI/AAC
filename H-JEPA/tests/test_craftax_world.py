@@ -6,9 +6,6 @@ the recorded frames, which covers the `seed` column, the `_set_state` and
 `_set_goal_state` callables and the frame handling of World.
 """
 
-from pathlib import Path
-
-import h5py
 import numpy as np
 import pytest
 
@@ -19,42 +16,7 @@ import stable_worldmodel as swm  # noqa: E402
 from stable_worldmodel.policy import BasePolicy  # noqa: E402
 
 
-FIXTURE = Path(__file__).parent / 'data' / 'craftax_classic_episode.npz'
 START, OFFSET = 10, 30
-
-
-@pytest.fixture(scope='module')
-def episode():
-    return dict(np.load(FIXTURE))
-
-
-@pytest.fixture()
-def dataset(episode, tmp_path):
-    n = len(episode['pixels'])
-    action = np.full((n, 1), np.nan, dtype=np.float32)
-    action[:-1, 0] = episode['actions']
-    columns = dict(
-        pixels=episode['pixels'],
-        state=episode['state'],
-        full_state=episode['full_state'],
-        achievements=episode['achievements'],
-        reward=episode['reward'],
-        action=action,
-        step_idx=np.arange(n, dtype=np.int32),
-        ep_idx=np.zeros(n, dtype=np.int32),
-        seed=np.full(n, episode['seed'], dtype=np.int64),
-        source=np.full(n, 2, dtype=np.int8),
-    )
-    with h5py.File(tmp_path / 'craftax.h5', 'w') as f:
-        for key, value in columns.items():
-            f.create_dataset(key, data=value)
-        f.create_dataset('ep_offset', data=np.array([0], dtype=np.int64))
-        f.create_dataset('ep_len', data=np.array([n], dtype=np.int32))
-    return swm.data.HDF5Dataset(
-        'craftax',
-        cache_dir=tmp_path,
-        level1=dict(frameskip=1, num_steps=1),
-    )
 
 
 class ReplayPolicy(BasePolicy):

@@ -33,6 +33,48 @@ class Compose:
         return sample
 
 
+class OneHotColumn:
+    """One-hot encode an integer action column of shape (..., 1).
+
+    A NaN (no action, e.g. the last frame of an episode) becomes an all-zero
+    vector, the same "no action" the continuous pipeline gets from NaN -> 0.
+    """
+
+    def __init__(self, num_classes: int, source: str, target: str):
+        self.num_classes, self.source, self.target = num_classes, source, target
+
+    def __call__(self, sample: dict) -> dict:
+        index = sample[self.source][..., 0]
+        valid = ~torch.isnan(index)
+        if ((index[valid] < 0) | (index[valid] >= self.num_classes)).any():
+            raise ValueError(
+                f"{self.source}: action index outside [0, {self.num_classes})"
+            )
+        onehot = torch.nn.functional.one_hot(
+            index.nan_to_num(0).long(), self.num_classes
+        ).float()
+        sample[self.target] = onehot * valid.unsqueeze(-1)
+        return sample
+
+
+def discrete_num_actions(cfg) -> int | None:
+    """Number of discrete level-1 actions (`level1.wm.num_actions`), None if continuous."""
+    num_actions = cfg.level1.wm.get("num_actions", None)
+    return None if num_actions is None else int(num_actions)
+
+
+def build_column_transforms(cfg, dataset) -> list:
+    """Per-column transforms for training: z-score, or one-hot for discrete actions."""
+    num_actions = discrete_num_actions(cfg)
+    return [
+        OneHotColumn(num_actions, col, col)
+        if col == "action" and num_actions is not None
+        else get_column_normalizer(dataset, col, col)
+        for col in cfg.data.dataset.keys_to_load
+        if not col.startswith("pixels")
+    ]
+
+
 def build_hdf5_dataset(dataset_cfg, cache_dir=None):
     if OmegaConf.is_config(dataset_cfg):
         cfg = OmegaConf.to_container(dataset_cfg, resolve=True)
@@ -198,8 +240,11 @@ def _column_mean_std(dataset, col: str) -> tuple[np.ndarray, np.ndarray, int]:
 def build_normalizer_artifact(cfg, train_dataset) -> dict:
     """Build serializable training normalizer stats for planning eval."""
     dataset_cfg = cfg.data.dataset
+    num_actions = discrete_num_actions(cfg)
     stats = {}
     for col in normalizer_columns_from_dataset_cfg(dataset_cfg):
+        if col == "action" and num_actions is not None:
+            continue  # one-hot encoded, not z-scored; the planner outputs action indices
         mean, std, count = _column_mean_std(train_dataset, col)
         stats[col] = {
             "mean": mean.astype(np.float32),
@@ -214,6 +259,7 @@ def build_normalizer_artifact(cfg, train_dataset) -> dict:
             "dataset_name": str(dataset_cfg.get("name", "")),
             "columns": list(stats.keys()),
             "std_ddof": 1,
+            "num_actions": num_actions,
         },
     }
 

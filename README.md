@@ -157,6 +157,26 @@ callables:
 
 Tests: `pytest H-JEPA/tests` (needs the H-JEPA environment). They compare the environment frame by frame with an episode written by the collector (`tests/data/craftax_classic_episode.npz`, regenerate it with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`), and run `World.evaluate_from_dataset` on a dataset built from it.
 
+## Stage 3: training and planning with discrete actions
+
+Craftax actions are the 17 discrete indices. They enter the world model as one-hot vectors (`data.OneHotColumn`), switched on by `level1.wm.num_actions: 17`. The model, the losses and the action embedder are unchanged, only the embedder input size follows `num_actions`. A missing action (NaN, last frame of an episode) becomes an all-zero vector. The training normalizer artifact then holds no action statistics and records `num_actions`, so the evaluation does not de-normalize the planner's action indices.
+
+Frames are used at their native 63x63 (`img_size: 63`, ViT with `patch_size: 7`, one patch per tile), so no new encoder was needed.
+
+Configs (Push-T hyperparameters until timed on Craftax): `h_jepa/config/train/base/craftax.yaml`, `craftax_lewm.yaml`, and `config/eval/craftax_flat.yaml`. The dataset names `craftax_expert_train` and `craftax_expert_val` are placeholders for the collector's output files in `$HJEPA_HOME`.
+
+```bash
+cd H-JEPA/h_jepa
+python main_hjepa.py --config-name craftax_lewm
+# evaluation tasks are sampled once from a dataset, then reused:
+python eval.py --config-name craftax_flat policy=random dump_eval_trajs_path=<tasks.pt>
+python eval.py --config-name craftax_flat policy=<run> load_eval_trajs_path=<tasks.pt>
+```
+
+Planning at level 1 uses `stable_worldmodel.solver.CategoricalCEMSolver`: CEM over one categorical distribution per planned step, forward passes only, candidates scored with `model.get_cost`. It has the same `configure` / `solve` interface as `GradientSolver` (levels above 1 keep the gradient solver) and writes the same `solve_records`, marked `backward: false`.
+
+Checked on CPU with a small random-policy dataset: training for an epoch, the task dump, and planning on the real environment all run end to end. The resulting success rate is meaningless there, because of the goal-test caveat above and an untrained model. IDM with one-hot targets works through the existing MSE loss; a cross-entropy variant is an option for E5.
+
 ## Compute and roadmap
 
 About 15 A100-hours per month (~180 in total). One seed for exploration, three seeds only for headline results. We time one training run and one planning evaluation first, then size the experiments from those numbers.

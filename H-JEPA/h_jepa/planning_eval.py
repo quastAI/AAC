@@ -116,6 +116,9 @@ def _required_process_columns(cfg: DictConfig) -> list[str]:
 
 def _normalizer_artifact_to_process(artifact: dict, required_cols: list[str]) -> dict:
     stats = artifact["stats"]
+    if artifact.get("metadata", {}).get("num_actions") is not None:
+        # discrete actions: the solver outputs action indices, nothing to de-normalize
+        required_cols = [col for col in required_cols if col != "action"]
     missing = [col for col in required_cols if col not in stats]
     if missing:
         available = ", ".join(sorted(stats.keys()))
