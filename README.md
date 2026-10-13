@@ -65,22 +65,32 @@ Not doing: compute-Pareto sweeps, stagewise data specialisation, detachment grid
 
 ## Repository layout
 
-This repository holds only the project documentation (this README). The three codebases below are separate repositories (forks under `quastAI`) with their own history. They are not submodules. Clone them side by side in one parent folder:
+All project code lives in this repository. [H-JEPA](H-JEPA) and [purejaxql](purejaxql) were imported from our forks with `git subtree`, so their history is kept and there are no submodules. A result is traceable to one commit of this repository, and the paper release is a single tag.
 
 ```
-AAC/            this repository (documentation)
-Craftax/        github.com/quastAI/Craftax
-purejaxql/      github.com/quastAI/purejaxql
-H-JEPA/         github.com/quastAI/H-JEPA
+AAC/
+  H-JEPA/        world-model training and planning (PyTorch)
+  purejaxql/     PQN-RNN expert and episode collection (JAX)
+  experiments/   one launcher per experiment E1-E8 (hydra overrides, seeds)
+  analysis/      clip-count tables, probes, plots
+  papers/        reference papers (PDFs are local, see papers/README.md)
 ```
 
-Code changes are committed in the repository they belong to, so a result should be traceable to a commit in each of the three.
+The two code folders are separate Python projects with their own `pyproject.toml` and lockfile, because JAX and PyTorch do not share an environment. The only interface between them is a flat HDF5 episode file in the format of H-JEPA's `HDF5Dataset`.
 
 | Folder | Contents | Planned changes |
 |---|---|---|
-| [Craftax](Craftax) | Environment | Pixel rendering and state export for data collection |
-| [purejaxql](purejaxql) | PQN-RNN expert | Classic env config, checkpoint saving, achievement logging |
-| [H-JEPA](H-JEPA) | World-model training and planning | Craftax data loader, discrete actions, CEM solver, variable-stride dataset and planner |
+| [purejaxql](purejaxql) | PQN-RNN expert | Classic env config, checkpoint saving, achievement logging, episode collector (pixels rendered from the same state) |
+| [H-JEPA](H-JEPA) | World-model training and planning | Craftax env wrapper, discrete actions, CEM solver, small encoder, variable-stride dataset and planner |
+
+**Upstream bases.** Diff against these to see exactly what changed relative to the forks as imported:
+
+| Folder | Source | Commit |
+|---|---|---|
+| H-JEPA | github.com/quastAI/H-JEPA | `97054ec` |
+| purejaxql | github.com/quastAI/purejaxql | `47af6d7` |
+
+**External references (not in this repository).** [Craftax](https://github.com/MichaelTMatthews/Craftax) is used unmodified as a pinned dependency (v1.6.1, which already provides state-to-pixel rendering). The Craftax Gymnasium wrapper in H-JEPA is adapted from [stable-worldmodel](https://github.com/galilai-group/stable-worldmodel). Both are kept as read-only clones outside this repository.
 
 Pipeline: train expert → collect and filter episodes → train world models → plan and evaluate → probe. Run commands are added here as each stage is implemented.
 
