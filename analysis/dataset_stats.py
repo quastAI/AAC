@@ -1,0 +1,394 @@
+"""Statistics of a Craftax-Classic episode file that the design decisions depend on.
+
+Reads the collector's HDF5 files (numpy and h5py only, no pixels) and reports:
+
+* composition: episodes, lengths, sources, held-out seed check between files;
+* clip counts per depth and stride: how many training clips a level can still draw
+  (E2: strides, and whether deeper levels have enough data);
+* event durations: when achievements unlock and the gaps between unlocks;
+* time scales of the symbolic state (the frequency gap): how fast every group
+  decorrelates, from the distance between states `lag` steps apart;
+* action-chunk diversity per chunk length k: distinct chunks and distinct *effects*,
+  which sizes the VQ codebook and the band of durations;
+* what each action does: share of the data and how often it changes anything.
+
+    python dataset_stats.py --data expert_train.h5 --label train \
+        --data expert_val.h5 --label val --out report/
+
+The sections that need the derived columns (inventory, vitals, ...) are skipped
+for files written by an older collector.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+
+import h5py
+import numpy as np
+
+ACHIEVEMENTS = [
+    "collect_wood", "place_table", "eat_cow", "collect_sapling", "collect_drink",
+    "make_wood_pickaxe", "make_wood_sword", "place_plant", "defeat_zombie",
+    "collect_stone", "place_stone", "eat_plant", "defeat_skeleton",
+    "make_stone_pickaxe", "make_stone_sword", "wake_up", "place_furnace",
+    "collect_coal", "collect_iron", "collect_diamond", "make_iron_pickaxe",
+    "make_iron_sword",
+]  # fmt: skip
+ACTIONS = [
+    "noop", "left", "right", "up", "down", "do", "sleep", "place_stone", "place_table",
+    "place_furnace", "place_plant", "make_wood_pickaxe", "make_stone_pickaxe",
+    "make_iron_pickaxe", "make_wood_sword", "make_stone_sword", "make_iron_sword",
+]  # fmt: skip
+GROUPS = {  # state columns by how fast they change
+    "position": ("fast", ["position"]),
+    "facing": ("fast", ["facing"]),
+    "mobs_in_view": ("fast", ["mobs_in_view"]),
+    "vitals": ("medium", ["vitals"]),
+    "inventory": ("slow", ["inventory"]),
+    "daylight": ("slow", ["daylight"]),
+    "achievements": ("slow", ["achievements"]),
+}
+LAGS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
+CHUNKS = (1, 2, 3, 4, 6, 8, 12, 16)
+MAX_FRAMES = 2_000_000
+
+
+# --------------------------------------------------------------------------
+# loading
+
+
+class Data:
+    """The small columns of one file, with episode boundaries."""
+
+    COLUMNS = ["action", "achievements", "inventory", "vitals", "facing", "daylight", "position", "mobs_in_view", "source", "seed"]
+
+    def __init__(self, path, max_frames: int = MAX_FRAMES):
+        with h5py.File(path, "r") as f:
+            self.lengths = f["ep_len"][:].astype(np.int64)
+            self.offsets = f["ep_offset"][:].astype(np.int64)
+            # keep whole episodes up to the frame budget
+            keep = int(np.searchsorted(np.cumsum(self.lengths), max_frames, side="right")) or len(self.lengths)
+            self.lengths, self.offsets = self.lengths[:keep], self.offsets[:keep]
+            total = int(self.offsets[-1] + self.lengths[-1])
+            self.cols = {c: f[c][:total] for c in self.COLUMNS if c in f}
+        self.n_episodes = len(self.lengths)
+        self.total = total
+        self.episode = np.repeat(np.arange(self.n_episodes), self.lengths)
+        self.seeds = self.cols["seed"][self.offsets] if "seed" in self.cols else None
+
+    def has(self, *names) -> bool:
+        return all(n in self.cols for n in names)
+
+    def episodes(self, name):
+        arr = self.cols[name]
+        return [arr[o : o + n] for o, n in zip(self.offsets, self.lengths)]
+
+
+# --------------------------------------------------------------------------
+# sections
+
+
+def composition(d: Data) -> dict:
+    out = {
+        "episodes": d.n_episodes,
+        "frames": d.total,
+        "length": {q: float(np.percentile(d.lengths, p)) for q, p in (("min", 0), ("p25", 25), ("median", 50), ("p75", 75), ("max", 100))},
+    }
+    if "source" in d.cols:
+        src = d.cols["source"][d.offsets]
+        out["by_source"] = {name: int((src == i).sum()) for i, name in enumerate(("expert", "noised_expert", "random")) if (src == i).any()}
+    if d.has("achievements"):
+        flags = d.episodes("achievements")
+        out["diamond_episodes"] = int(sum(f[:, ACHIEVEMENTS.index("collect_diamond")].any() for f in flags))
+        out["achievements_per_episode_mean"] = float(np.mean([f[-1].sum() for f in flags]))
+    return out
+
+
+def clip_counts(d: Data, strides=(2, 3, 4, 6, 8), depths=(1, 2, 3), history=3, rollout=1) -> list[dict]:
+    """Clips a model of `depth` levels can draw from the file, for equal strides above level 1."""
+    steps = history + rollout
+    rows = []
+    for depth in depths:
+        for stride in (strides if depth > 1 else (1,)):
+            span = steps
+            for _ in range(depth - 1):
+                span = (span - 1) * stride + 1
+            starts = np.maximum(d.lengths - span + 1, 0)
+            rows.append(
+                {
+                    "depth": depth, "stride": stride, "span": int(span),
+                    "episodes_long_enough": int((d.lengths >= span).sum()),
+                    "clips": int(starts.sum()),
+                    "independent_clips": int((d.lengths // span).sum()),
+                }
+            )  # fmt: skip
+    return rows
+
+
+def event_durations(d: Data) -> dict:
+    flags = d.episodes("achievements")
+    unlock = {}  # achievement -> first frame per episode that has it
+    gaps = []
+    for f in flags:
+        first = np.where(f.any(0), f.argmax(0), -1)
+        for i, frame in enumerate(first):
+            if frame >= 0:
+                unlock.setdefault(i, []).append(int(frame))
+        frames = np.sort(first[first >= 0])
+        gaps += np.diff(frames).tolist()
+    table = {
+        ACHIEVEMENTS[i]: {
+            "episodes": len(v), "median": float(np.median(v)),
+            "p25": float(np.percentile(v, 25)), "p75": float(np.percentile(v, 75)),
+        }
+        for i, v in sorted(unlock.items(), key=lambda kv: np.median(kv[1]))
+    }  # fmt: skip
+    gaps = np.array([g for g in gaps if g > 0])
+    out = {"unlock_frames": table}
+    if len(gaps):
+        out["gap_between_unlocks"] = {f"p{p}": float(np.percentile(gaps, p)) for p in (10, 25, 50, 75, 90)}
+        median = float(np.median(gaps))
+        out["stride_hint"] = {
+            f"{levels}_levels": int(max(2, round(median ** (1 / (levels - 1)))))
+            for levels in (2, 3)
+        }  # a top-level step about one median gap between unlocks
+        out["stride_hint_note"] = "equal strides s with s^(levels-1) frames per top-level step close to the median gap"
+    return out
+
+
+def _group_matrix(d: Data, columns) -> np.ndarray:
+    parts = [d.cols[c].reshape(d.total, -1).astype(np.float32) for c in columns]
+    x = np.concatenate(parts, axis=1)
+    return (x - x.mean(0)) / np.maximum(x.std(0), 1e-6)
+
+
+def time_scales(d: Data, lags=LAGS, pairs=200_000, seed=0, min_pairs=1000) -> dict:
+    """Distance between states `lag` steps apart, against unrelated states (1 = unrelated).
+
+    A group with a small ratio at a long lag is slow. The saturation lag is the
+    first lag where the ratio reaches 0.9; None if it never does within `lags`.
+    Lags with fewer than `min_pairs` pairs inside episodes are left out (too noisy).
+    """
+    rng = np.random.default_rng(seed)
+    out = {}
+    for name, (speed, columns) in GROUPS.items():
+        if not d.has(*columns):
+            continue
+        x = _group_matrix(d, columns)
+        i = rng.integers(0, d.total, pairs)
+        j = rng.integers(0, d.total, pairs)
+        different = d.episode[i] != d.episode[j]
+        unrelated = float(np.abs(x[i[different]] - x[j[different]]).mean()) or 1.0
+        ratios, changed = {}, {}
+        for lag in lags:
+            if lag >= d.total:
+                continue
+            valid = d.episode[lag:] == d.episode[:-lag]
+            if valid.sum() < min_pairs:
+                continue
+            delta = np.abs(x[lag:] - x[:-lag])[valid]
+            ratios[lag] = float(delta.mean() / unrelated)
+            changed[lag] = float((delta.max(1) > 1e-6).mean())
+        saturation = next((lag for lag, r in ratios.items() if r >= 0.9), None)
+        out[name] = {"speed": speed, "ratio": ratios, "changed": changed, "saturation_lag": saturation}
+    return out
+
+
+def _windows(d: Data, k: int):
+    """Start frames of non-overlapping chunks of k steps inside an episode."""
+    starts = []
+    for o, n in zip(d.offsets, d.lengths):
+        starts.append(o + np.arange(0, n - k, k))  # the last frame has no action
+    return np.concatenate(starts) if starts else np.zeros(0, dtype=np.int64)
+
+
+def _entropy_bits(counts: np.ndarray) -> float:
+    p = counts / counts.sum()
+    return float(-(p * np.log2(p)).sum())
+
+
+def chunk_diversity(d: Data, chunks=CHUNKS, max_windows=500_000) -> dict:
+    """Distinct action chunks and distinct effects of the chunks, per chunk length k."""
+    action = np.nan_to_num(d.cols["action"][:, 0], nan=0).astype(np.int8)
+    out = {}
+    rng = np.random.default_rng(0)
+    for k in chunks:
+        starts = _windows(d, k)
+        if len(starts) > max_windows:
+            starts = rng.choice(starts, max_windows, replace=False)
+        if not len(starts):
+            continue
+        grams = action[starts[:, None] + np.arange(k)]
+        _, counts = np.unique(grams, axis=0, return_counts=True)
+        entry = {
+            "windows": int(len(starts)),
+            "distinct_chunks": int(len(counts)),
+            "chunk_entropy_bits": _entropy_bits(counts),
+        }
+        if d.has("inventory", "achievements", "vitals", "position"):
+            end = starts + k
+            inv = d.cols["inventory"][end].astype(np.int16) - d.cols["inventory"][starts]
+            ach = d.cols["achievements"][end].astype(np.int8) - d.cols["achievements"][starts]
+            vit = np.sign(d.cols["vitals"][end].astype(np.int16) - d.cols["vitals"][starts]).astype(np.int8)
+            pos = np.clip(d.cols["position"][end].astype(np.int16) - d.cols["position"][starts], -k, k)
+            interaction = np.concatenate([inv, ach, vit], axis=1)
+            _, c_int = np.unique(interaction, axis=0, return_counts=True)
+            _, c_all = np.unique(np.concatenate([interaction, pos], axis=1), axis=0, return_counts=True)
+            entry |= {
+                "distinct_interaction_effects": int(len(c_int)),
+                "interaction_entropy_bits": _entropy_bits(c_int),
+                "distinct_effects_with_motion": int(len(c_all)),
+                "effect_entropy_bits": _entropy_bits(c_all),
+                "no_effect_share": float((~interaction.any(1) & ~pos.any(1)).mean()),
+            }
+        out[k] = entry
+    return out
+
+
+def action_effects(d: Data) -> list[dict]:
+    """Share of each action in the data, and how often it changes the state."""
+    action = d.cols["action"][:, 0]
+    valid = ~np.isnan(action)
+    nxt = np.arange(d.total) + 1
+    valid &= nxt < d.total
+    valid[valid] &= d.episode[nxt[valid]] == d.episode[valid]
+    idx = np.nonzero(valid)[0]
+    a = action[idx].astype(int)
+    changed = np.zeros(len(idx), dtype=bool)
+    for name in ("inventory", "achievements", "vitals", "position", "facing"):
+        if d.has(name):
+            col = d.cols[name].reshape(d.total, -1)
+            changed |= (col[idx + 1] != col[idx]).any(1)
+    rows = []
+    for i, name in enumerate(ACTIONS):
+        m = a == i
+        rows.append({"action": name, "share": float(m.mean()), "changes_state": float(changed[m].mean()) if m.any() else None})
+    return rows
+
+
+# --------------------------------------------------------------------------
+# report
+
+
+def seed_overlap(datas: dict[str, Data]) -> list[str]:
+    notes = []
+    labels = list(datas)
+    for i, a in enumerate(labels):
+        for b in labels[i + 1 :]:
+            if datas[a].seeds is not None and datas[b].seeds is not None:
+                shared = np.intersect1d(datas[a].seeds, datas[b].seeds)
+                if len(shared):
+                    notes.append(f"WARNING: {len(shared)} world seeds appear in both {a} and {b}: not held out")
+    return notes
+
+
+def analyse(datas: dict[str, Data]) -> dict:
+    result = {"seed_overlap": seed_overlap(datas), "files": {}}
+    for label, d in datas.items():
+        entry = {"composition": composition(d), "clip_counts": clip_counts(d)}
+        if d.has("achievements"):
+            entry["events"] = event_durations(d)
+        if d.has("inventory", "vitals", "facing", "daylight", "position", "mobs_in_view", "achievements"):
+            entry["time_scales"] = time_scales(d)
+        else:
+            entry["time_scales"] = None
+        if d.has("action"):
+            entry["chunks"] = chunk_diversity(d)
+            if d.has("position"):
+                entry["actions"] = action_effects(d)
+        result["files"][label] = entry
+    return result
+
+
+def _f(x, digits=3):
+    return "-" if x is None else (f"{x:.{digits}g}" if isinstance(x, float) else str(x))
+
+
+def render(result: dict) -> str:
+    out = ["# Dataset statistics", ""]
+    out += [f"- {n}" for n in result["seed_overlap"]] or ["World seeds are disjoint between the files."]
+    for label, e in result["files"].items():
+        c = e["composition"]
+        out += ["", f"## {label}", "", f"{c['episodes']} episodes, {c['frames']} frames. Length min/median/max "
+                f"{_f(c['length']['min'])}/{_f(c['length']['median'])}/{_f(c['length']['max'])}."]
+        if "by_source" in c:
+            out.append("Sources: " + ", ".join(f"{k} {v}" for k, v in c["by_source"].items()) + ".")
+        if "diamond_episodes" in c:
+            out.append(f"Episodes with a diamond: {c['diamond_episodes']}; achievements per episode (mean): {_f(c['achievements_per_episode_mean'])}.")
+
+        out += ["", "### Clips per depth and stride", "", "History 3, rollout 1. `span` is the number of level-1 frames one clip needs.", "",
+                "| depth | stride | span | episodes long enough | clips | independent clips |", "|---|---|---|---|---|---|"]
+        out += [f"| {r['depth']} | {r['stride']} | {r['span']} | {r['episodes_long_enough']} | {r['clips']} | {r['independent_clips']} |" for r in e["clip_counts"]]
+
+        ev = e.get("events")
+        if ev and ev.get("unlock_frames"):
+            out += ["", "### When achievements unlock (frame of the first unlock per episode)", "",
+                    "| achievement | episodes | median | p25 | p75 |", "|---|---|---|---|---|"]
+            out += [f"| {n} | {v['episodes']} | {_f(v['median'])} | {_f(v['p25'])} | {_f(v['p75'])} |" for n, v in ev["unlock_frames"].items()]
+            if "gap_between_unlocks" in ev:
+                g = ev["gap_between_unlocks"]
+                out += ["", "Steps between consecutive unlocks: " + ", ".join(f"{k} {_f(v)}" for k, v in g.items()) + ".",
+                        f"Stride hint (equal strides): {ev['stride_hint']} ({ev['stride_hint_note']}). A hint, not a decision."]
+
+        ts = e.get("time_scales")
+        if ts:
+            lags = sorted({lag for v in ts.values() for lag in v["ratio"]})
+            out += ["", "### Time scales of the state (distance between states `lag` steps apart; 1 = unrelated)", "",
+                    "| group | speed | saturation lag | " + " | ".join(f"lag {l}" for l in lags) + " |", "|---|---|---|" + "---|" * len(lags)]
+            out += [f"| {n} | {v['speed']} | {_f(v['saturation_lag'])} | " + " | ".join(_f(v["ratio"].get(l), 2) for l in lags) + " |" for n, v in ts.items()]
+        elif ts is None:
+            out += ["", "Time scales skipped: the file lacks the derived columns (collect it with the current collector)."]
+
+        ch = e.get("chunks")
+        if ch:
+            out += ["", "### Action chunks of length k", "", "Non-overlapping chunks. Effects are what a chunk changes (inventory, "
+                    "achievements, vitals; with motion also the position). Entropy in bits: 2^bits is the effective number of distinct chunks or effects, "
+                    "the scale for the codebook size.", "",
+                    "| k | chunks | distinct chunks | chunk entropy | distinct interaction effects | interaction entropy | distinct effects with motion | effect entropy | no effect |",
+                    "|---|---|---|---|---|---|---|---|---|"]
+            out += [f"| {k} | {v['windows']} | {v['distinct_chunks']} | {_f(v['chunk_entropy_bits'])} | {_f(v.get('distinct_interaction_effects'))} "
+                    f"| {_f(v.get('interaction_entropy_bits'))} | {_f(v.get('distinct_effects_with_motion'))} | {_f(v.get('effect_entropy_bits'))} | {_f(v.get('no_effect_share'))} |"
+                    for k, v in ch.items()]
+
+        ac = e.get("actions")
+        if ac:
+            out += ["", "### What the actions do", "", "| action | share of steps | changes the state |", "|---|---|---|"]
+            out += [f"| {r['action']} | {_f(r['share'])} | {_f(r['changes_state'])} |" for r in ac]
+    return "\n".join(out) + "\n"
+
+
+def to_jsonable(x):
+    if isinstance(x, dict):
+        return {str(k): to_jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [to_jsonable(v) for v in x]
+    if isinstance(x, (np.generic,)):
+        return x.item()
+    if isinstance(x, float) and not math.isfinite(x):
+        return None
+    return x
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data", action="append", required=True, help="HDF5 episode file (repeat for several)")
+    parser.add_argument("--label", action="append", help="name of each file (default: the file name)")
+    parser.add_argument("--max-frames", type=int, default=MAX_FRAMES, help="frames read per file")
+    parser.add_argument("--out", default="analysis_report")
+    args = parser.parse_args()
+    labels = args.label or [Path(p).stem for p in args.data]
+    if len(labels) != len(args.data):
+        parser.error("--label must be given once per --data")
+    result = analyse({label: Data(path, args.max_frames) for label, path in zip(labels, args.data)})
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "dataset_stats.md").write_text(render(result))
+    (out / "dataset_stats.json").write_text(json.dumps(to_jsonable(result), indent=1))
+    print(render(result))
+
+
+if __name__ == "__main__":
+    main()

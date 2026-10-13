@@ -214,6 +214,7 @@ def run_probing(
         "levels": probe_levels(train, val),
         "n_train": {n: len(train[n][0]) for n in train},
         "n_val": {n: len(val[n][0]) for n in val},
+        "dim": {n: train[n][0].shape[1] for n in train},
     }
     if control:
         from hjepa_utils import create_world_model

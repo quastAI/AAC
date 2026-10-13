@@ -376,3 +376,35 @@ def test_hierarchical_cem_plans_codes_and_durations():
     out = solver.solve(info, steps_taken=0, eval_budget=20)
     assert out['actions'].dtype == torch.long and out['actions'].shape[0] == 2
     assert solver.level_solvers[2].action_dim == 16 + 3
+
+
+def test_projected_cost_planning_runs_with_vq_levels():
+    """E6: level 1 plans in the level-2 latent; level 2 is skipped."""
+    import planning_eval
+    from eval_config_utils import _build_policy_plan_config
+    from hierarchical_solver import build_hierarchical_solver
+    from hjepa_utils import create_world_model
+
+    model, _ = create_world_model(compose_train('craftax_hjepa_l2'))
+    model.eval()
+    cfg = planning_eval.load_eval_config(config_name='craftax_l2_project')
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+    for level in (1, 2):
+        cfg.solver.solvers[f'level{level}'].update(
+            device='cpu', num_samples=6, n_iters=2, topk=2, batch_size=2
+        )
+    solver = build_hierarchical_solver(cfg, model)
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17] * 2),
+        n_envs=2,
+        config=_build_policy_plan_config(cfg),
+    )
+    info = {
+        'pixels': torch.randn(2, 1, 3, 63, 63),
+        'goal': torch.randn(2, 1, 3, 63, 63),
+        'action': torch.zeros(2, 1, 17),
+    }
+    out = solver.solve(info, steps_taken=0, eval_budget=20)
+    assert out['actions'].shape[1] == 8  # the level-1 horizon
+    assert solver.level_solvers[1].solve_records  # level 1 planned
+    assert not solver.level_solvers[2].solve_records  # level 2 was skipped

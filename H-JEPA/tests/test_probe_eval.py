@@ -118,6 +118,17 @@ def test_findings_for_empty_and_untrained_looking_latents():
     assert 'PROBE_GROUP_MISSING' in codes(health.diagnose_probing(missing))
 
 
+def test_findings_flag_too_few_probe_samples():
+    summary = {
+        'levels': {1: level(0.5, 0.5, 0.5)},
+        'n_train': {1: 400},
+        'dim': {1: 192},
+    }
+    assert 'PROBE_FEW_SAMPLES' in codes(health.diagnose_probing(summary))
+    summary['n_train'][1] = 4000
+    assert 'PROBE_FEW_SAMPLES' not in codes(health.diagnose_probing(summary))
+
+
 def test_findings_describe_what_upper_levels_keep():
     summary = {'levels': {1: level(0.8, 0.6, 0.7), 2: level(0.1, 0.4, 0.65)}}
     found = health.diagnose_probing(summary)

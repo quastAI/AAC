@@ -265,6 +265,11 @@ def _build_policy(
     model=None,
 ):
     if model is None and cfg.get("policy", "random") == "random":
+        metrics_cfg = cfg.get("planning_metrics", None)
+        if metrics_cfg is not None and metrics_cfg.get("enabled", False):
+            from planning_metrics import RandomRecordingPolicy
+
+            return RandomRecordingPolicy(seed=int(cfg.get("seed", 0)))
         return swm.policy.RandomPolicy()
 
     model = load_model(cfg, model)

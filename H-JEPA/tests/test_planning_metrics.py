@@ -335,3 +335,18 @@ def test_write_planning_health_creates_the_report(dataset, tmp_path):
     assert (tmp_path / 'planning_health.json').exists()
     assert metrics['progress_mean'] == summary['progress_mean'] == 1.0
     assert np.isfinite(metrics['tflops_per_task'])
+
+
+def test_random_baseline_records_like_the_planner(dataset):
+    policy = pm.RandomRecordingPolicy(seed=0)
+    tasks = run_eval(policy, dataset)
+    (record,) = policy.records
+    assert len(record['progress']) >= 2 and record['required'] == 1
+    assert len(record['actions']) >= 2 and not record['solves']
+    summary = pm.summarize_planning(policy.records, tasks)
+    assert summary['num_tasks'] == 1 and 'plans' not in summary
+    assert summary['compute']['tflops_per_task'] == 0
+    report = health.render_planning_report(
+        summary, health.diagnose_planning(summary)
+    )
+    assert '# Planning report' in report

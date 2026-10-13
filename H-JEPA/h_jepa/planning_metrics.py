@@ -32,7 +32,7 @@ from loguru import logger as logging
 from torch.utils.flop_counter import FlopCounterMode
 from torchvision import tv_tensors
 
-from stable_worldmodel.policy import WorldModelPolicy
+from stable_worldmodel.policy import RandomPolicy, WorldModelPolicy
 
 EPS = 1e-12
 
@@ -142,6 +142,59 @@ def offsupport_fraction(latents: torch.Tensor, bank: torch.Tensor, scale: float,
 
 
 # --------------------------------------------------------------------------
+# records
+
+
+def new_records(n: int) -> list[dict]:
+    return [
+        {"step": [], "progress": [], "required": 0, "achievements": [], "terminated": [],
+         "dist": {}, "actions": [], "solves": [], "subgoals": []}
+        for _ in range(n)
+    ]  # fmt: skip
+
+
+def record_state(records, raw, step, obs_z=None, goal_z=None) -> None:
+    """Progress, achievements and (if given) the latent distance to the goal of every task."""
+    for i, rec in enumerate(records):
+        if rec["terminated"] and rec["terminated"][-1]:
+            continue  # the evaluation keeps stepping after success; stop recording
+        rec["step"].append(step)
+        rec["progress"].append(float(np.asarray(raw["goal_progress"])[i, -1]))
+        rec["required"] = int(np.asarray(raw["goal_required"])[i, -1])
+        rec["achievements"].append(int(np.asarray(raw["achievements"])[i, -1].sum()))
+        rec["terminated"].append(bool(np.asarray(raw["terminated"])[i, -1]))
+        for level in obs_z or {}:
+            rec["dist"].setdefault(str(level), []).append(float(mse(obs_z[level][i], goal_z[level][i])))
+
+
+class RandomRecordingPolicy(RandomPolicy):
+    """Uniform random actions, recorded like the planner: the baseline of a task set.
+
+    Tasks defined by progress can be easy (a random agent wakes up, drinks, plants a
+    sapling), so every planning result needs this reference on the same tasks.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.records = None
+        self._steps = 0
+
+    def reset(self) -> None:
+        self.records, self._steps = None, 0
+
+    def get_action(self, info_dict, **kwargs):
+        n = self.env.num_envs
+        if self.records is None:
+            self.records = new_records(n)
+        record_state(self.records, dict(info_dict), self._steps)
+        action = super().get_action(info_dict, **kwargs)
+        for i in range(n):
+            self.records[i]["actions"].append(int(np.asarray(action).reshape(n, -1)[i, 0]))
+        self._steps += 1
+        return action
+
+
+# --------------------------------------------------------------------------
 # the recording policy
 
 
@@ -179,11 +232,7 @@ class RecordingPolicy(WorldModelPolicy):
 
     def _ensure(self, n: int) -> None:
         if self.records is None:
-            self.records = [
-                {"step": [], "progress": [], "required": 0, "achievements": [], "terminated": [],
-                 "dist": {}, "actions": [], "solves": [], "subgoals": []}
-                for _ in range(n)
-            ]  # fmt: skip
+            self.records = new_records(n)
 
     # --------------------------------------------------------------- encoding
 
@@ -240,16 +289,7 @@ class RecordingPolicy(WorldModelPolicy):
     # -------------------------------------------------------------- recording
 
     def _record_state(self, raw, obs_z, goal_z, step) -> None:
-        for i, rec in enumerate(self.records):
-            if rec["terminated"] and rec["terminated"][-1]:
-                continue  # the evaluation keeps stepping after success; stop recording
-            rec["step"].append(step)
-            rec["progress"].append(float(np.asarray(raw["goal_progress"])[i, -1]))
-            rec["required"] = int(np.asarray(raw["goal_required"])[i, -1])
-            rec["achievements"].append(int(np.asarray(raw["achievements"])[i, -1].sum()))
-            rec["terminated"].append(bool(np.asarray(raw["terminated"])[i, -1]))
-            for level in obs_z:
-                rec["dist"].setdefault(str(level), []).append(float(mse(obs_z[level][i], goal_z[level][i])))
+        record_state(self.records, raw, step, obs_z, goal_z)
 
     def _active(self, i: int) -> bool:
         rec = self.records[i]

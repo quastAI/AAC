@@ -716,7 +716,8 @@ def render_planning_report(summary: dict, findings: list[Finding]) -> str:
 
 
 def _ratio(a, b):
-    return None if a is None or b is None or b <= 0.1 else a / b
+    """Share of the base score that is kept; a score below zero counts as nothing."""
+    return None if a is None or b is None or b <= 0.1 else max(a, 0.0) / b
 
 
 def diagnose_probing(summary: dict, thr: Thresholds | None = None) -> list[Finding]:
@@ -724,6 +725,11 @@ def diagnose_probing(summary: dict, thr: Thresholds | None = None) -> list[Findi
     thr = thr or Thresholds()
     f: list[Finding] = []
     levels = {int(n): e for n, e in summary.get("levels", {}).items()}
+    for n, samples in sorted((int(k), v) for k, v in (summary.get("n_train") or {}).items()):
+        dim = (summary.get("dim") or {}).get(n) or (summary.get("dim") or {}).get(str(n))
+        if dim and samples < 10 * dim:
+            _f(f, "warn", "PROBE_FEW_SAMPLES", n, f"{samples} training samples for {dim} latent dimensions",
+               "the probe scores are unreliable (overfit, often below zero): use more or longer clips")
     for n, e in sorted(levels.items()):
         groups = e["groups"]
         control = e.get("control_groups") or {}
