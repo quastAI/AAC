@@ -117,7 +117,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
     --num-episodes 1000 --seed-start 5000000        # uniform random, no checkpoint
 ```
 
-Defaults: episodes stop at the diamond (`--no-stop-at-diamond` keeps full episodes, `--tail-steps` keeps a few steps after it). `--eps` between 0 and 1 gives noised-expert episodes. Running again on an existing file appends and skips world seeds already in it.
+Defaults: an episode ends `--tail-steps` (500) steps after the diamond, or earlier if the agent dies, as a margin for planning horizons that extend past it. `--no-stop-at-diamond` keeps full episodes. `--eps` between 0 and 1 gives noised-expert episodes. Running again on an existing file appends and skips world seeds already in it.
 
 **Data format.** One flat HDF5 file in the layout of H-JEPA's `HDF5Dataset` (`ep_len`, `ep_offset`, one array per column). Per episode there are L+1 frames and L actions, and `action[t]` belongs to frame `t` (the last one is NaN).
 
@@ -128,13 +128,34 @@ Defaults: episodes stop at the diamond (`--no-stop-at-diamond` keeps full episod
 | `action` | (N, 1) float32 | action index 0-16 |
 | `reward` | (N,) float32 | reward of the transition into this frame |
 | `achievements` | (N, 22) uint8 | cumulative flags in Craftax-Classic order |
-| `step_idx`, `ep_idx`, `world_seed`, `source` | (N,) int | `source`: 0 expert, 1 noised expert, 2 random |
+| `full_state` | (N, 20952) uint8 | snapshot of the complete env state, to start the planning env from any frame (about 1.5 KB per frame on disk) |
+| `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed of the episode; `source`: 0 expert, 1 noised expert, 2 random |
 
-**Replayable episodes.** An episode is fully determined by `world_seed` and its actions: with `reset_key, step_key, _ = split(PRNGKey(world_seed), 3)` the reset uses `reset_key` and the transition at step `t` uses `fold_in(step_key, t)`. The collector checks this on every kept episode, and the planning environment must follow the same convention to start from a dataset state.
+**Replayable episodes.** An episode is fully determined by `seed` and its actions: with `reset_key, step_key, _ = split(PRNGKey(seed), 3)` the reset uses `reset_key` and the step taken at `state.timestep == t` uses `fold_in(step_key, t)`. The collector checks this on every kept episode, and the planning environment follows the same convention, so a state loaded from `full_state` continues exactly as the dataset episode would under the same actions.
 
 **Seed ranges.** World seeds are the split: use disjoint ranges for training, validation and test data, so that probing and planning tasks use held-out worlds. The ranges are not fixed yet.
 
 Tests: `pytest purejaxql/tests`.
+
+## Stage 2: planning environment
+
+`swm/CraftaxClassic-v1` ([H-JEPA/stable_worldmodel/envs/craftax](H-JEPA/stable_worldmodel/envs/craftax)) is Craftax-Classic with pixel frames (63x63), the symbolic observation, and a snapshot-based state API. It is registered next to the other environments and needs `pip install craftax==1.6.1` (the `env` extra of H-JEPA). Use `image_shape=(63, 63)` in `World` to keep frames at native resolution. JAX runs on the CPU unless `JAX_PLATFORMS` is set.
+
+- `reset(seed=s)` generates the world of dataset episode `s`, with the dynamics of the collector.
+- For `World.evaluate_from_dataset`, the evaluation config passes these callables:
+
+```yaml
+callables:
+- method: _set_state
+  args: {full_state: {value: full_state}}
+- method: _set_goal_state
+  args: {full_state: {value: goal_full_state}}
+```
+
+- `terminated` means the goal test succeeded (`World` counts it as success). Death and the 10000-step horizon are `truncated`.
+- The goal test is a placeholder (`achievements_inventory_test`: all achievements and inventory counts of the goal frame are met). A goal without progress over the start state is met after one step, so evaluation tasks must be chosen with progress between start and goal. The final goal test for protocol A is still an open decision.
+
+Tests: `pytest H-JEPA/tests` (needs the H-JEPA environment). They compare the environment frame by frame with an episode written by the collector (`tests/data/craftax_classic_episode.npz`, regenerate it with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`), and run `World.evaluate_from_dataset` on a dataset built from it.
 
 ## Compute and roadmap
 
