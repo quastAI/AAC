@@ -17,6 +17,26 @@ This project transfers H-JEPA to [Craftax-Classic](https://github.com/MichaelTMa
 | **RQ3** Variable horizons | To what extent does letting each level predict over a band of horizons, with the planner choosing the horizon, improve planning over a fixed stride per level? |
 | **RQ4** Learned jumps | Can a level learn time-independent, meaningful jumps from observation-action data alone, and how does planning with them compare to fixed and band strides? |
 
+## Method
+
+```
+pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t+1             level 1: step = 1 env step
+                              │            ▲
+                a_t, one-hot(17) ──────────┘
+                              │ chunk of s latents
+                              ▼
+          z1_t..t+s ──latent MLP──► z2_T ──► predictor 2 ──► z2_T+1      level 2: step = s env steps
+                                      │            ▲
+  a_t..t+s ──sequence encoder──VQ──► token ────────┘         token = code indices [+ one-hot k]
+```
+
+- **Levels.** Level 1 encodes a 63×63 frame with a ViT (patch 7, one patch per tile). Each level above encodes a chunk of `stride` latents of the level below: with a latent MLP in H-JEPA, with the identity in HWM (one shared latent space). LeWM is level 1 alone.
+- **Predictor.** A causal transformer over a history of 3 latents, conditioned on the embedded action token, predicts the next latent.
+- **Action tokens.** Level 1: one-hot of the 17 actions. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (band of horizons, E7).
+- **Losses per level.** Next-latent MSE, SIGReg on the latents (not above level 1 in HWM), an inverse-dynamics cross-entropy (action index at level 1, code indices above), and the VQ commitment loss above level 1.
+- **Planning.** Top-down CEM over the discrete tokens of every level, forward passes only. The top level minimises the latent distance to the goal frame, its predicted latents become the subgoals of the level below, and level 1 outputs environment actions (receding horizon).
+- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (proposals, trust regions, learned actors). Diagnostics planned from the start: exploitation gap (predicted vs realised cost, by replaying plans in the simulator), success vs planner compute, and a support metric.
+
 ## Setup
 
 **Environment.** Craftax-Classic (JAX). World models use pixel observations. The symbolic state is used only by the expert and for probing and evaluation. Diamond is achievement 19 and requires the iron pickaxe.
@@ -32,12 +52,6 @@ This project transfers H-JEPA to [Craftax-Classic](https://github.com/MichaelTMa
 | **LeWM** | Single level (JEPA + SIGReg) | Flat baseline |
 | **HWM** | Several temporal levels, identity encoders above level 1, one shared latent space | Isolates temporal decomposition |
 | **H-JEPA** | A distinct learned latent space per level, trained end-to-end | Main model |
-
-Implemented on top of the [H-JEPA](H-JEPA) code. Craftax-specific changes:
-
-- Discrete level-1 actions with CEM planning at level 1. Upper levels use continuous macro-actions.
-- Small encoder suited to Craftax's small frames.
-- Inverse dynamics (IDM) per model, as decided by the ablation in E5.
 
 ## Evaluation
 
@@ -65,61 +79,41 @@ Not doing: compute-Pareto sweeps, stagewise data specialisation, detachment grid
 
 ## Repository layout
 
-All project code lives in this repository. [H-JEPA](H-JEPA) and [purejaxql](purejaxql) were imported from our forks with `git subtree`, so their history is kept and there are no submodules. A result is traceable to one commit of this repository, and the paper release is a single tag.
+One repository holds all code. [H-JEPA](H-JEPA) and [purejaxql](purejaxql) were imported from our forks with `git subtree` (history kept, no submodules), so a result is traceable to one commit and the paper release is one tag.
 
 ```
 AAC/
-  H-JEPA/        world-model training and planning (PyTorch)
-  purejaxql/     PQN-RNN expert and episode collection (JAX)
-  experiments/   one launcher per experiment E1-E8 (hydra overrides, seeds)
-  analysis/      clip-count tables, probes, plots
+  H-JEPA/        world models, planning, Craftax environment (PyTorch)
+  purejaxql/     PQN-RNN expert and episode collector (JAX)
   papers/        reference papers (PDFs are local, see papers/README.md)
+  CLAUDE.md      working notes for Claude Code
+  experiments/   (planned) one launcher per experiment E1-E8
+  analysis/      (planned) clip counts, probes, plots
 ```
 
-The two code folders are separate Python projects with their own `pyproject.toml` and lockfile, because JAX and PyTorch do not share an environment. The only interface between them is a flat HDF5 episode file in the format of H-JEPA's `HDF5Dataset`.
+The two code folders are separate Python projects (JAX and PyTorch do not share an environment). They only meet in the HDF5 episode file below.
 
-| Folder | Contents | Planned changes |
-|---|---|---|
-| [purejaxql](purejaxql) | PQN-RNN expert | Classic env config, checkpoint saving, achievement logging, episode collector (pixels rendered from the same state) |
-| [H-JEPA](H-JEPA) | World-model training and planning | Craftax env wrapper, discrete actions, CEM solver, small encoder, variable-stride dataset and planner |
+**Upstream bases** (diff against these to see what changed): H-JEPA `97054ec` (github.com/quastAI/H-JEPA), purejaxql `47af6d7` (github.com/quastAI/purejaxql). **External:** [Craftax](https://github.com/MichaelTMatthews/Craftax) is an unmodified pinned dependency (v1.6.1, it already renders pixels from a state); the environment wrapper is adapted from [stable-worldmodel](https://github.com/galilai-group/stable-worldmodel). Both clones are kept outside this repository.
 
-**Upstream bases.** Diff against these to see exactly what changed relative to the forks as imported:
+## Usage
 
-| Folder | Source | Commit |
-|---|---|---|
-| H-JEPA | github.com/quastAI/H-JEPA | `97054ec` |
-| purejaxql | github.com/quastAI/purejaxql | `47af6d7` |
+Pipeline: train expert → collect episodes → train world models → plan and evaluate → probe.
 
-**External references (not in this repository).** [Craftax](https://github.com/MichaelTMatthews/Craftax) is used unmodified as a pinned dependency (v1.6.1, which already provides state-to-pixel rendering). The Craftax Gymnasium wrapper in H-JEPA is adapted from [stable-worldmodel](https://github.com/galilai-group/stable-worldmodel). Both are kept as read-only clones outside this repository.
-
-Pipeline: train expert → collect and filter episodes → train world models → plan and evaluate → probe. Run commands are added here as each stage is implemented.
-
-## Stage 1: expert and episode collection
-
-Environment for the JAX side (the pins matter: `jax<=0.4.38` needs `flax<=0.10.3`):
+### Expert and episodes (purejaxql)
 
 ```bash
-cd purejaxql && pip install -e ".[jax_envs]"
-```
-
-Train the expert on `Craftax-Classic-Symbolic-v1`. This writes `<SAVE_PATH>/Craftax-Classic-Symbolic-v1/pqn_rnn_..._vmap0.safetensors` (params and BatchRenorm statistics) and the matching `_config.yaml`:
-
-```bash
-python purejaxql/pqn_rnn_craftax.py +alg=pqn_rnn_craftax_classic
-```
-
-Collect episodes. The collector rolls out the expert, keeps the episodes that reach diamond (achievement 19), and renders pixels from the same states by replaying them:
-
-```bash
+cd purejaxql && pip install -e ".[jax_envs]"      # pins: jax<=0.4.38 needs flax<=0.10.3
+python purejaxql/pqn_rnn_craftax.py +alg=pqn_rnn_craftax_classic   # saves params + BatchRenorm stats + config
 python scripts/collect_craftax_episodes.py --out data/expert.h5 --checkpoint models/.../..._vmap0.safetensors \
     --num-episodes 1000 --seed-start 0
 python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-require-diamond \
     --num-episodes 1000 --seed-start 5000000        # uniform random, no checkpoint
 ```
 
-Defaults: an episode ends `--tail-steps` (500) steps after the diamond, or earlier if the agent dies, as a margin for planning horizons that extend past it. `--no-stop-at-diamond` keeps full episodes. `--eps` between 0 and 1 gives noised-expert episodes. Running again on an existing file appends and skips world seeds already in it.
+- The collector keeps episodes that reach diamond and ends them `--tail-steps` (500) after it, or earlier on death (margin for long planning horizons). `--no-stop-at-diamond` keeps full episodes, `--eps` in (0, 1) gives noised-expert episodes. A second run on an existing file appends and skips seeds already in it.
+- Pixels are rendered by replaying the kept episodes. The replay is checked against the rollout for every episode.
 
-**Data format.** One flat HDF5 file in the layout of H-JEPA's `HDF5Dataset` (`ep_len`, `ep_offset`, one array per column). Per episode there are L+1 frames and L actions, and `action[t]` belongs to frame `t` (the last one is NaN).
+**Episode file.** One flat HDF5 in the layout of H-JEPA's `HDF5Dataset` (`ep_len`, `ep_offset`, one array per column). Per episode there are L+1 frames and L actions; `action[t]` belongs to frame `t`, the last one is NaN.
 
 | Column | Shape, dtype | Content |
 |---|---|---|
@@ -127,22 +121,20 @@ Defaults: an episode ends `--tail-steps` (500) steps after the diamond, or earli
 | `state` | (N, 1345) float32 | symbolic observation |
 | `action` | (N, 1) float32 | action index 0-16 |
 | `reward` | (N,) float32 | reward of the transition into this frame |
-| `achievements` | (N, 22) uint8 | cumulative flags in Craftax-Classic order |
-| `full_state` | (N, 20952) uint8 | snapshot of the complete env state, to start the planning env from any frame (about 1.5 KB per frame on disk) |
-| `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed of the episode; `source`: 0 expert, 1 noised expert, 2 random |
+| `achievements` | (N, 22) uint8 | cumulative flags, Craftax-Classic order |
+| `full_state` | (N, 20952) uint8 | snapshot of the complete env state (about 1.5 KB per frame on disk) |
+| `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random |
 
-**Replayable episodes.** An episode is fully determined by `seed` and its actions: with `reset_key, step_key, _ = split(PRNGKey(seed), 3)` the reset uses `reset_key` and the step taken at `state.timestep == t` uses `fold_in(step_key, t)`. The collector checks this on every kept episode, and the planning environment follows the same convention, so a state loaded from `full_state` continues exactly as the dataset episode would under the same actions.
+- **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
+- **Seeds are the split.** Use disjoint seed ranges for train, validation and test so that probing and planning tasks use held-out worlds. The ranges are not fixed yet.
 
-**Seed ranges.** World seeds are the split: use disjoint ranges for training, validation and test data, so that probing and planning tasks use held-out worlds. The ranges are not fixed yet.
+### Planning environment (H-JEPA)
 
-Tests: `pytest purejaxql/tests`.
+`swm/CraftaxClassic-v1` ([H-JEPA/stable_worldmodel/envs/craftax](H-JEPA/stable_worldmodel/envs/craftax)): pixel frames, symbolic observation, snapshot state API. Needs `craftax==1.6.1` (the `env` extra). JAX runs on the CPU unless `JAX_PLATFORMS` is set.
 
-## Stage 2: planning environment
-
-`swm/CraftaxClassic-v1` ([H-JEPA/stable_worldmodel/envs/craftax](H-JEPA/stable_worldmodel/envs/craftax)) is Craftax-Classic with pixel frames (63x63), the symbolic observation, and a snapshot-based state API. It is registered next to the other environments and needs `pip install craftax==1.6.1` (the `env` extra of H-JEPA). Use `image_shape=(63, 63)` in `World` to keep frames at native resolution. JAX runs on the CPU unless `JAX_PLATFORMS` is set.
-
-- `reset(seed=s)` generates the world of dataset episode `s`, with the dynamics of the collector.
-- For `World.evaluate_from_dataset`, the evaluation config passes these callables:
+- Use `image_shape=(63, 63)` in `World` (native resolution). `reset(seed=s)` generates the world of dataset episode `s`.
+- `terminated` = goal test succeeded (`World` counts it as success). Death and the 10000-step horizon are `truncated`.
+- `World.evaluate_from_dataset` starts from dataset states through these callables:
 
 ```yaml
 callables:
@@ -152,42 +144,33 @@ callables:
   args: {full_state: {value: goal_full_state}}
 ```
 
-- `terminated` means the goal test succeeded (`World` counts it as success). Death and the 10000-step horizon are `truncated`.
-- The goal test is a placeholder (`achievements_inventory_test`: all achievements and inventory counts of the goal frame are met). A goal without progress over the start state is met after one step, so evaluation tasks must be chosen with progress between start and goal. The final goal test for protocol A is still an open decision.
+- The goal test is a placeholder: all achievements and inventory counts of the goal frame are met. A goal without progress over the start is met after one step, so evaluation tasks must have progress between start and goal. The final test for protocol A is open.
 
-Tests: `pytest H-JEPA/tests` (needs the H-JEPA environment). They compare the environment frame by frame with an episode written by the collector (`tests/data/craftax_classic_episode.npz`, regenerate it with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`), and run `World.evaluate_from_dataset` on a dataset built from it.
-
-## Stage 3: training and planning with discrete actions
-
-Craftax actions are the 17 discrete indices. They enter the world model as one-hot vectors (`data.OneHotColumn`), switched on by `level1.wm.num_actions: 17`. The model, the losses and the action embedder are unchanged, only the embedder input size follows `num_actions`. A missing action (NaN, last frame of an episode) becomes an all-zero vector. The training normalizer artifact then holds no action statistics and records `num_actions`, so the evaluation does not de-normalize the planner's action indices.
-
-Frames are used at their native 63x63 (`img_size: 63`, ViT with `patch_size: 7`, one patch per tile), so no new encoder was needed.
-
-Configs (Push-T hyperparameters until timed on Craftax): `h_jepa/config/train/base/craftax.yaml`, `craftax_lewm.yaml`, and `config/eval/craftax_flat.yaml`. The dataset names `craftax_expert_train` and `craftax_expert_val` are placeholders for the collector's output files in `$HJEPA_HOME`.
+### Training and evaluation (H-JEPA)
 
 ```bash
 cd H-JEPA/h_jepa
-python main_hjepa.py --config-name craftax_lewm
-# evaluation tasks are sampled once from a dataset, then reused:
+python main_hjepa.py --config-name craftax_lewm        # or craftax_hjepa_l2/l3, craftax_hwm_l2/l3
+# eval tasks are sampled once from a dataset, then reused:
 python eval.py --config-name craftax_flat policy=random dump_eval_trajs_path=<tasks.pt>
-python eval.py --config-name craftax_flat policy=<run> load_eval_trajs_path=<tasks.pt>
+python eval.py --config-name craftax_flat policy=<run> load_eval_trajs_path=<tasks.pt>   # craftax_l2/l3 for hierarchies
 ```
 
-Planning at level 1 uses `stable_worldmodel.solver.CategoricalCEMSolver`: CEM over one categorical distribution per planned step, forward passes only, candidates scored with `model.get_cost`. It has the same `configure` / `solve` interface as `GradientSolver` (levels above 1 keep the gradient solver) and writes the same `solve_records`, marked `backward: false`.
+Configs are in `h_jepa/config/{train,eval}`. Hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`.
 
-### Upper levels: discrete codes, and the IDM at every level
+### Design notes
 
-The latent actions of the upper levels are vector-quantized (`levelN.action_encoder.vq`, `h_jepa/models/vq.py`). The sequence encoder that pools a chunk of lower-level actions is followed by a codebook (EMA updates, commitment loss, dead codes re-seeded from the batch, straight-through gradient), so an upper-level action is a tuple of code indices. The codebook is factorized: the latent is split into `groups` parts (default 2), each with its own codebook (64 codes), which gives 64^2 combinations without a huge single codebook. The planner then searches discrete actions at every level: `CategoricalCEMSolver` at level 1 plans the 17 actions, and at levels above it plans one index per group and passes the code vectors to the level's model (`get_action_spec`). Removing the `vq:` block gives the continuous latent actions again (planned with the gradient solver), so the quantization is one config switch.
+- **Level-1 actions.** One-hot (`data.OneHotColumn`, `level1.wm.num_actions: 17`); NaN becomes zeros. The normalizer artifact holds no action statistics and records `num_actions`, so evaluation does not de-normalize action indices.
+- **Upper-level actions.** `levelN.action_encoder.vq` (`h_jepa/models/vq.py`): EMA codebooks, commitment loss, dead codes re-seeded, straight-through gradient. `groups` independent codebooks of `num_codes` codes (a code is a tuple of indices). Without the `vq:` block the latent actions are continuous (gradient solver).
+- **Step duration k.** `vq.durations: [..]` makes the token `[code vectors | one-hot(k)]` and gives the IDM k as input. k is explicit (`action_duration`, (B, T)) and defaults to the stride. It is not derived from the padding mask, which mislabels chunks cut at an episode end. Not built (E7): the irregular-spacing sampler, passing `action_duration` through the hierarchical encode, the hierarchical solver's fixed-stride horizon coupling.
+- **IDM.** On at every level (`idm_coeff: 0.1`, placeholder; E5 sets it per model). Cross-entropy over the action index (level 1, one slot per frameskip step) or the code indices (above, one classification per group). Logs `idm_accuracy_loss_levelN` (chance 1/17, 1/64).
+- **Collapse monitors.** `vq_perplexity_loss_levelN` (effective codes in use, 1 = collapsed) and `vq_usage_loss_levelN`. The first validation pass shows perplexity 1: the codebook is initialised on the first training forward.
+- **Planner.** `stable_worldmodel.solver.CategoricalCEMSolver`, same interface as `GradientSolver`, logs `solve_records` with `backward: false`. Level 1 plans `action_block` slots of 17 actions; level N plans one slot per code group (plus one for k) and passes the code vectors to the model (`get_action_spec`); levels above 1 need `action_block: 1`. `allowed_durations`: `default` (the safe default: k pinned to the stride), `all`, or a list.
+- **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride comes from the data (E2). The level-1 horizon must lie in [stride, 2 × stride).
 
-**Step duration k (band of horizons).** The VQ encoder can also put the duration of a step into the action token: with `vq.durations: [2, 3, ..., 8]` the token is `[code vectors | one-hot(k)]`, so the code says what happens and k says how long it takes. k is an explicit input (`action_duration`, shape (B, T)) and defaults to the stride, because deriving it from the padding mask would mislabel chunks cut at the end of an episode. The IDM then receives k as an extra input, and the planner gets one more categorical slot per step (the duration, with its own number of classes) and returns the chosen `durations`. What is not built yet (E7): the dataset sampler that produces irregular spacings, passing `action_duration` through the hierarchical encode, and the hierarchical solver, which still ties the lower-level horizon to a fixed stride. With the fixed-stride data every step has the default duration, so a duration band can be switched on in the config but only becomes meaningful with that data.
+### Tests
 
-Codebook collapse is the main risk, so training logs `vq_perplexity_loss_levelN` (effective number of codes in use, 1 = collapsed) and `vq_usage_loss_levelN` (fraction of codes used in the batch). The first validation pass before training shows perplexity 1 because the codebook is only initialised on the first training forward.
-
-The IDM is on at every level (`idm_coeff: 0.1`, a placeholder weight; E5 switches it per model). It is a cross-entropy classifier of the action taken between two consecutive latent states: the action index at level 1 (one slot per frameskip step) and the code indices of each chunk above (one classification per codebook group, with the duration as an input when there is a band). It logs `idm_accuracy_loss_levelN`; chance is 1/17 at level 1 and 1/128 above. The same head could later score the plausibility of planned transitions.
-
-Configs: `craftax_hjepa_l2/l3` and `craftax_hwm_l2/l3` (HWM: identity encoders and no SIGReg above level 1, same VQ), with `eval/craftax_l2/l3` using CEM at every level. The strides (4), the codebook (2 groups of 64 codes, dimension 8 each), the horizons and the sample counts are placeholders. The stride is to be derived from the data (E2), and the level-1 horizon must lie in [stride, 2 * stride).
-
-Checked on CPU with a small random-policy dataset, for the single-level model and for the 2-level H-JEPA (a few batches): training for an epoch, the task dump, and planning on the real environment all run end to end. The resulting success rate is meaningless there, because of the goal-test caveat above and an untrained model.
+`pytest purejaxql/tests` (JAX environment) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 46 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
 
 ## Compute and roadmap
 
@@ -201,12 +184,12 @@ About 15 A100-hours per month (~180 in total). One seed for exploration, three s
 
 ## Open decisions
 
+- Planner: proposals, trust region, learned actors (stay with discrete CEM until decided)
 - Expert / random data ratio
 - Offset values and goal test for protocol A
 - Goal sequence for protocol B (final goal only vs key states)
 - Level-1 step size (1 env step vs a few with concatenated actions)
-- Encoder architecture
-- Band ranges for E7
+- Band ranges for E7, and whether the planner may choose k freely
 
 ## References
 
