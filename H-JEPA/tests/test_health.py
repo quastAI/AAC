@@ -239,3 +239,23 @@ def test_report_renders_and_serialises():
     assert health.to_jsonable({'a': [float('nan'), torch.tensor(1.5)]}) == {
         'a': [None, 1.5]
     }
+
+
+def test_majority_baseline_is_the_best_constant_guess():
+    # expert actions are skewed: always guessing the commonest one is the bar
+    target = torch.tensor([[0, 0, 0, 0, 1, 2, -1, -1]]).reshape(1, 8, 1)
+    assert health.majority_baseline(target, 17) == pytest.approx(4 / 6)
+    two_slots = torch.tensor([[[0, 5], [0, 6], [1, 7], [-1, -1]]])
+    assert health.majority_baseline(two_slots, 17) == pytest.approx(
+        (2 / 3 + 1 / 3) / 2
+    )
+    assert health.majority_baseline(torch.full((1, 4, 1), -1), 8) == 1 / 8
+    # never below uniform chance
+    uniform = torch.arange(8).reshape(1, 8, 1)
+    assert health.majority_baseline(uniform, 8) == pytest.approx(1 / 8)
+
+
+def test_idm_lift_is_undefined_when_one_class_fills_the_data():
+    assert health.idm_lift(0.5, 1.0) is None
+    assert health.idm_lift(None, 0.2) is None
+    assert health.idm_lift(0.6, 0.2) == pytest.approx(0.5)

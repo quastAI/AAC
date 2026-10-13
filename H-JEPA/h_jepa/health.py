@@ -306,8 +306,26 @@ def vq_metrics(vq: Any, indices: torch.Tensor | None = None) -> dict[str, float]
     return out
 
 
+def majority_baseline(target: torch.Tensor, num_classes: int) -> float:
+    """Accuracy of always predicting the most frequent class of each slot (-1 targets are ignored).
+
+    The reference for an inverse-dynamics model: expert actions are far from uniform (movement and
+    `do` dominate, and so do a few codes), so 1 / num_classes is a too low bar and a model that only
+    knows the class frequencies would look like it had learned something.
+    """
+    shares = []
+    for slot in range(target.shape[-1]):
+        t = target[..., slot].reshape(-1)
+        t = t[t >= 0]
+        if t.numel():
+            shares.append(torch.bincount(t, minlength=num_classes).max().item() / t.numel())
+    return max(1.0 / num_classes, sum(shares) / len(shares)) if shares else 1.0 / num_classes
+
+
 def idm_lift(accuracy: float | None, chance: float) -> float | None:
-    return None if accuracy is None else (accuracy - chance) / (1 - chance)
+    if accuracy is None or chance >= 1.0:  # one class only: nothing to learn, no lift to measure
+        return None
+    return (accuracy - chance) / (1 - chance)
 
 
 # --------------------------------------------------------------------------

@@ -105,6 +105,8 @@ def test_evaluation_covers_every_metric_family(setup, callback):
         assert set(entry['drift']) == {1, 3}  # planning and training history
         assert entry['geometry']['gaps'][0] == 1
         assert 0 <= entry['idm']['accuracy'] <= 1
+        # the bar is the best constant guess, never below uniform chance
+        assert entry['idm']['chance'] >= 1 / 64
         assert entry['grad']['explosions'] == 0
     assert 'vq' not in levels[1] and levels[2]['vq']['num_codes'] == 64
     assert levels[2]['vq']['groups'] == 2

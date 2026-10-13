@@ -177,7 +177,7 @@ class TrainingHealthCallback(Callback):
                 entry["vq"] = vq
             accuracy = outputs.get(f"idm_accuracy_loss_level{n}")
             if accuracy is not None and getattr(jepa, "idm_loss_fn", None) is not None:
-                chance = 1.0 / jepa.idm_loss_fn.num_classes
+                chance = self._idm_chance(outputs, n, jepa)
                 accuracy = float(accuracy)
                 entry["idm"] = {"accuracy": accuracy, "chance": chance, "lift": health.idm_lift(accuracy, chance)}
             entry["grad"] = self._grad_entry(n)
@@ -189,6 +189,12 @@ class TrainingHealthCallback(Callback):
         if trainer.global_step >= int(self.hcfg.warmup_steps):
             findings = health.diagnose_training(self._summary(self.live), self.thr)
             self._report_findings(findings, f"step {trainer.global_step}")
+
+    def _idm_chance(self, outputs, n, jepa) -> float:
+        """Accuracy of the best constant guess on this batch (see health.majority_baseline)."""
+        target = health_idm_target(outputs, n, self.cfg)
+        classes = jepa.idm_loss_fn.num_classes
+        return 1.0 / classes if target is None else health.majority_baseline(target.cpu(), classes)
 
     def _grad_entry(self, n) -> dict:
         norms = self.grad_norms[n]
@@ -232,6 +238,7 @@ class TrainingHealthCallback(Callback):
         acts = {n: [] for n in embs}
         codes = {n: [] for n in embs}
         idm = {n: [] for n in embs}
+        idm_targets = {n: [] for n in embs}
         try:
             device = next(model.parameters()).device
             for i, batch in enumerate(self.loader):
@@ -252,6 +259,7 @@ class TrainingHealthCallback(Callback):
                         if target is not None:
                             loss_fn(out[f"embed_{n}"], target, out.get(f"duration_index_{n}"))
                             idm[n].append(float(loss_fn.last_accuracy))
+                            idm_targets[n].append(target.cpu())
         finally:
             for j, t in zip(jepas, saved):
                 j.target_length = t
@@ -282,7 +290,7 @@ class TrainingHealthCallback(Callback):
             if codes[n] and getattr(vq_module, "num_codes", None):
                 entry["vq"] = health.vq_metrics(vq_module, torch.cat(codes[n]))
             if idm[n]:
-                chance = 1.0 / jepa.idm_loss_fn.num_classes
+                chance = health.majority_baseline(torch.cat(idm_targets[n]), jepa.idm_loss_fn.num_classes)
                 accuracy = _mean(idm[n])
                 entry["idm"] = {"accuracy": accuracy, "chance": chance, "lift": health.idm_lift(accuracy, chance)}
             entry["grad"] = self._grad_entry(n)
