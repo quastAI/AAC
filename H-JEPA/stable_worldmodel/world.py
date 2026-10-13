@@ -1205,6 +1205,11 @@ class World:
             # for auto-reset
             self.envs.unwrapped._autoreset_envs = np.zeros((self.num_envs,))
 
+        # a policy that records the run sees the state after the last action too
+        finish = getattr(self.policy, 'finish', None)
+        if callable(finish):
+            finish(self.infos)
+
         n_episodes = len(ep_idx_arr)
 
         # compute success rate

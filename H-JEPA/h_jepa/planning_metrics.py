@@ -32,6 +32,7 @@ from loguru import logger as logging
 from torch.utils.flop_counter import FlopCounterMode
 from torchvision import tv_tensors
 
+from eval_tasks import ACHIEVEMENT_NAMES, DIAMOND
 from stable_worldmodel.policy import RandomPolicy, WorldModelPolicy
 
 EPS = 1e-12
@@ -147,7 +148,7 @@ def offsupport_fraction(latents: torch.Tensor, bank: torch.Tensor, scale: float,
 
 def new_records(n: int) -> list[dict]:
     return [
-        {"step": [], "progress": [], "required": 0, "achievements": [], "terminated": [],
+        {"step": [], "progress": [], "required": 0, "achievements": [], "flags": [], "terminated": [],
          "dist": {}, "actions": [], "solves": [], "subgoals": []}
         for _ in range(n)
     ]  # fmt: skip
@@ -161,7 +162,9 @@ def record_state(records, raw, step, obs_z=None, goal_z=None) -> None:
         rec["step"].append(step)
         rec["progress"].append(float(np.asarray(raw["goal_progress"])[i, -1]))
         rec["required"] = int(np.asarray(raw["goal_required"])[i, -1])
-        rec["achievements"].append(int(np.asarray(raw["achievements"])[i, -1].sum()))
+        flags = np.asarray(raw["achievements"])[i, -1]
+        rec["achievements"].append(int(flags.sum()))
+        rec["flags"] = flags.astype(int).tolist()  # the latest state: which achievements are unlocked
         rec["terminated"].append(bool(np.asarray(raw["terminated"])[i, -1]))
         for level in obs_z or {}:
             rec["dist"].setdefault(str(level), []).append(float(mse(obs_z[level][i], goal_z[level][i])))
@@ -192,6 +195,11 @@ class RandomRecordingPolicy(RandomPolicy):
             self.records[i]["actions"].append(int(np.asarray(action).reshape(n, -1)[i, 0]))
         self._steps += 1
         return action
+
+    def finish(self, info_dict) -> None:
+        """The state after the last action: the evaluation calls it once the budget is spent."""
+        if self.records is not None:
+            record_state(self.records, dict(info_dict), self._steps)
 
 
 # --------------------------------------------------------------------------
@@ -290,6 +298,11 @@ class RecordingPolicy(WorldModelPolicy):
 
     def _record_state(self, raw, obs_z, goal_z, step) -> None:
         record_state(self.records, raw, step, obs_z, goal_z)
+
+    def finish(self, info_dict) -> None:
+        """The state after the last action: a success or unlock on the final step is recorded too."""
+        if self.records is not None:
+            record_state(self.records, dict(info_dict), self._steps_taken)
 
     def _active(self, i: int) -> bool:
         rec = self.records[i]
@@ -480,6 +493,19 @@ def summarize_planning(records: list[dict], task_info: list[dict] | None = None)
         }
         for g, idx in sorted(groups.items())
     }
+
+    # which of the required achievements were unlocked (protocol B: the diamond rate)
+    if task_info:
+        unlocked: dict[int, list[bool]] = {}
+        for i, r in enumerate(records):
+            if i < len(task_info) and r.get("flags"):
+                for a in task_info[i].get("required", []):
+                    unlocked.setdefault(int(a), []).append(bool(r["flags"][a]))
+        out["by_achievement"] = {
+            ACHIEVEMENT_NAMES[a]: {"n": len(v), "unlocked": float(np.mean(v))} for a, v in sorted(unlocked.items())
+        }
+        if DIAMOND in unlocked:
+            out["diamond"] = {"n": len(unlocked[DIAMOND]), "rate": float(np.mean(unlocked[DIAMOND]))}
 
     # latent distance to the goal, per level
     dist = {}

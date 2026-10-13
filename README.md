@@ -58,7 +58,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 | Protocol | Definition | Metric |
 |---|---|---|
 | **A. Offset goals** | Start and goal frames from held-out expert trajectories, one task per world seed, only pairs with progress between start and goal (fixed offsets, or the d-th next achievement) | Success and progress under the goal test below, against a random policy on the same tasks |
-| **B. Full episodes** | From reset to the frame where the expert unlocks the diamond in the same world seed, so the whole chain is required (the final goal only; key states are not built) | Progress by achievement depth, and the diamond rate |
+| **B. Full episodes** | From reset to the frame where the expert unlocks the diamond in the same world seed, so the whole chain is required (the final goal only; key states are not built) | Diamond rate and the unlock rate of every required achievement (the planning report); success needs all required achievements, also incidental ones |
 
 **Goal test.** A task's required set is the achievements the goal frame has and the start frame lacks. Success means all of them are unlocked, in any order and by any route; progress is the share unlocked. The planner never sees this: it minimises the latent distance to the goal frame (in the projected embedding space that the predictor and SIGReg use; between levels, predictions are encoded up to the upper latent). The test only judges the result. 
 

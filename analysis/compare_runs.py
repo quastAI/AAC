@@ -52,14 +52,14 @@ def planning_table(runs: dict[str, Path], baseline: str | None) -> list[str]:
     def comparable(label):
         return base is not None and hashes[label] == hashes[baseline] and data[label]["num_tasks"] == base["num_tasks"]
 
-    out = ["## Planning", "", "| run | tasks | task file | success | progress | progress over baseline | TFLOPs per task | critical | warnings |",
-           "|---|---|---|---|---|---|---|---|---|"]
+    out = ["## Planning", "", "| run | tasks | task file | success | progress | diamond | progress over baseline | TFLOPs per task | critical | warnings |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
     findings = {label: doc.get("findings", []) for label, doc in docs.items()}
     for label, s in data.items():
         gain = None if base is None or label == baseline or not comparable(label) else s["progress_mean"] - base["progress_mean"]
         f = findings[label]
         out.append(
-            f"| {label} | {s['num_tasks']} | {(hashes[label] or '?')[:8]} | {_f(s['success_rate'])} | {_f(s['progress_mean'])} | {_f(gain)} "
+            f"| {label} | {s['num_tasks']} | {(hashes[label] or '?')[:8]} | {_f(s['success_rate'])} | {_f(s['progress_mean'])} | {_f((s.get('diamond') or {}).get('rate'))} | {_f(gain)} "
             f"| {_f((s.get('compute') or {}).get('tflops_per_task'))} "
             f"| {sum(x['severity'] == 'critical' for x in f)} | {sum(x['severity'] == 'warn' for x in f)} |"
         )

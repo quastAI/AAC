@@ -673,6 +673,12 @@ def render_planning_report(summary: dict, findings: list[Finding]) -> str:
     if groups:
         out += ["", "| group | tasks | success | progress |", "|---|---|---|---|"]
         out += [f"| {g} | {v['n']} | {_fmt(v['success'])} | {_fmt(v['progress'])} |" for g, v in groups.items()]
+    if summary.get("diamond"):
+        d = summary["diamond"]
+        out += ["", f"Diamond: unlocked in {_fmt(d['rate'])} of the {d['n']} tasks that require it."]
+    if summary.get("by_achievement"):
+        out += ["", "| required achievement | tasks | unlocked |", "|---|---|---|"]
+        out += [f"| {a} | {v['n']} | {_fmt(v['unlocked'])} |" for a, v in summary["by_achievement"].items()]
     if summary.get("dist"):
         out += ["", "## Latent distance to the goal (per level)", "",
                 "| level | final / initial | best / initial | tasks with a fall |", "|---|---|---|---|"]

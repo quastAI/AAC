@@ -149,6 +149,36 @@ def test_partial_progress_is_reported_apart_from_failure():
     ) and 'PLAN_NO_PROGRESS' not in codes(found)
 
 
+def test_diamond_rate_and_unlocks_per_required_achievement():
+    def flags(*unlocked):
+        out = [0] * 22
+        for a in unlocked:
+            out[a] = 1
+        return out
+
+    diamond = eval_tasks.DIAMOND
+    records = [
+        record([0, 0.5], [1, 0.5], plan(), flags=flags(0, diamond)),
+        record([0, 0.5], [1, 0.5], plan(), flags=flags(0)),
+        record([0, 1.0], [1, 0.1], plan(), flags=flags(1)),
+    ]
+    info = [
+        {'required': [0, diamond]},
+        {'required': [0, diamond]},
+        {'required': [1]},
+    ]
+    summary = pm.summarize_planning(records, info)
+    assert summary['diamond'] == {'n': 2, 'rate': 0.5}
+    by = summary['by_achievement']
+    assert by['collect_wood'] == {'n': 2, 'unlocked': 1.0}
+    assert by['collect_diamond'] == {'n': 2, 'unlocked': 0.5}
+    assert by['place_table'] == {'n': 1, 'unlocked': 1.0}
+    report = health.render_planning_report(summary, [])
+    assert 'Diamond: unlocked in 0.5 of the 2 tasks' in report
+    assert 'collect_diamond' in report
+    assert 'diamond' not in pm.summarize_planning(records[2:], info[2:])
+
+
 def test_groups_by_required_count_and_task_info():
     records = [
         record([0, 1], [1, 0.1], plan(), required=1),
@@ -259,6 +289,9 @@ def image_transforms():
 def check_records(policy, tasks, levels):
     (record,) = policy.records
     assert len(record['progress']) >= 2 and record['required'] == 1
+    # the state after the last action is recorded too (the budget is 8)
+    assert record['terminated'][-1] or record['step'][-1] == 8
+    assert len(record['flags']) == 22
     assert set(record['dist']) == {str(level) for level in levels}
     solve = record['solves'][0]
     assert solve['flops'] > 0 and set(solve['levels']) == {
