@@ -12,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import compare_runs as cr  # noqa: E402
 
 
-def planning_run(path, success, progress, tflops, groups=None, findings=()):
+def planning_run(
+    path, success, progress, tflops, groups=None, findings=(), tasks=None
+):
     path.mkdir(parents=True)
     summary = {
         'num_tasks': 10,
@@ -28,7 +30,13 @@ def planning_run(path, success, progress, tflops, groups=None, findings=()):
         },
     }
     (path / 'planning_health.json').write_text(
-        json.dumps({'summary': summary, 'findings': list(findings)})
+        json.dumps(
+            {
+                'summary': summary,
+                'findings': list(findings),
+                'tasks_sha256': tasks,
+            }
+        )
     )
     return path
 
@@ -129,3 +137,25 @@ def test_missing_results_are_skipped_and_bad_labels_rejected(tmp_path):
     )
     with pytest.raises(SystemExit):
         cr.build(args(planning=['no-label']))
+
+
+def test_planning_table_refuses_to_compare_other_tasks(tmp_path):
+    rand = planning_run(tmp_path / 'random', 0.3, 0.3, 0.0, tasks='a' * 64)
+    same = planning_run(tmp_path / 'same', 0.5, 0.6, 2.0, tasks='a' * 64)
+    other = planning_run(tmp_path / 'other', 0.5, 0.9, 2.0, tasks='b' * 64)
+
+    def row(model, label):
+        text = cr.build(
+            args(planning=[f'random={rand}', f'{label}={model}'], baseline='random')
+        )
+        line = next(l for l in text.splitlines() if l.startswith(f'| {label}'))
+        return text, line
+
+    text, line = row(same, 'same')
+    assert 'WARNING' not in text and '| 0.3 |' in line  # gain 0.6 - 0.3
+    assert 'aaaaaaaa' in line
+
+    text, line = row(other, 'other')
+    assert 'WARNING' in text and 'not evaluated on the same tasks' in text
+    assert '| 0.6 |' not in line  # no gain across different task files
+    assert 'bbbbbbbb' in line

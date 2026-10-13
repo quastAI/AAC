@@ -61,23 +61,42 @@ MAX_FRAMES = 2_000_000
 
 
 class Data:
-    """The small columns of one file, with episode boundaries."""
+    """The small columns of one file, with episode boundaries.
+
+    Lengths, sources, seeds and the final achievements are read for every episode. The frame
+    columns are read for at most `max_frames` frames: above that, every k-th episode (spread over
+    the whole file, so every source is in it) is kept, and `sampled` says so.
+    """
 
     COLUMNS = ["action", "achievements", "inventory", "vitals", "facing", "daylight", "position", "mobs_in_view", "source", "seed"]
 
     def __init__(self, path, max_frames: int = MAX_FRAMES):
         with h5py.File(path, "r") as f:
-            self.lengths = f["ep_len"][:].astype(np.int64)
-            self.offsets = f["ep_offset"][:].astype(np.int64)
-            # keep whole episodes up to the frame budget
-            keep = int(np.searchsorted(np.cumsum(self.lengths), max_frames, side="right")) or len(self.lengths)
-            self.lengths, self.offsets = self.lengths[:keep], self.offsets[:keep]
-            total = int(self.offsets[-1] + self.lengths[-1])
-            self.cols = {c: f[c][:total] for c in self.COLUMNS if c in f}
+            self.all_lengths = f["ep_len"][:].astype(np.int64)
+            all_offsets = f["ep_offset"][:].astype(np.int64)
+            self.total_all = int(self.all_lengths.sum())
+            self.all_sources = f["source"][all_offsets] if "source" in f else None
+            self.all_seeds = f["seed"][all_offsets] if "seed" in f else None
+            last = all_offsets + self.all_lengths - 1
+            self.all_final_achievements = f["achievements"][last] if "achievements" in f else None
+
+            step = max(1, -(-self.total_all // max(1, max_frames)))  # ceil
+            keep = np.arange(0, len(self.all_lengths), step)
+            self.lengths, self.offsets_in_file = self.all_lengths[keep], all_offsets[keep]
+            if step == 1:
+                self.cols = {c: f[c][: self.total_all] for c in self.COLUMNS if c in f}
+            else:
+                self.cols = {
+                    c: np.concatenate([f[c][o : o + n] for o, n in zip(self.offsets_in_file, self.lengths)])
+                    for c in self.COLUMNS
+                    if c in f
+                }
+        self.offsets = np.concatenate([[0], np.cumsum(self.lengths)[:-1]]).astype(np.int64)
         self.n_episodes = len(self.lengths)
-        self.total = total
+        self.total = int(self.lengths.sum())
+        self.sampled = None if step == 1 else (self.n_episodes, len(self.all_lengths))
         self.episode = np.repeat(np.arange(self.n_episodes), self.lengths)
-        self.seeds = self.cols["seed"][self.offsets] if "seed" in self.cols else None
+        self.seeds = self.all_seeds
 
     def has(self, *names) -> bool:
         return all(n in self.cols for n in names)
@@ -92,18 +111,24 @@ class Data:
 
 
 def composition(d: Data) -> dict:
+    """Counts over every episode of the file, also when the frame columns were sampled."""
+    lengths = d.all_lengths
     out = {
-        "episodes": d.n_episodes,
-        "frames": d.total,
-        "length": {q: float(np.percentile(d.lengths, p)) for q, p in (("min", 0), ("p25", 25), ("median", 50), ("p75", 75), ("max", 100))},
+        "episodes": len(lengths),
+        "frames": d.total_all,
+        "length": {q: float(np.percentile(lengths, p)) for q, p in (("min", 0), ("p25", 25), ("median", 50), ("p75", 75), ("max", 100))},
     }
-    if "source" in d.cols:
-        src = d.cols["source"][d.offsets]
-        out["by_source"] = {name: int((src == i).sum()) for i, name in enumerate(("expert", "noised_expert", "random")) if (src == i).any()}
-    if d.has("achievements"):
-        flags = d.episodes("achievements")
-        out["diamond_episodes"] = int(sum(f[:, ACHIEVEMENTS.index("collect_diamond")].any() for f in flags))
-        out["achievements_per_episode_mean"] = float(np.mean([f[-1].sum() for f in flags]))
+    if d.sampled:
+        out["sampled"] = {"episodes_analysed": d.sampled[0], "episodes": d.sampled[1]}
+    if d.all_sources is not None:
+        names = ("expert", "noised_expert", "random")
+        out["by_source"] = {n: int((d.all_sources == i).sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
+        out["frames_by_source"] = {n: int(lengths[d.all_sources == i].sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
+        out["frame_share_by_source"] = {n: v / d.total_all for n, v in out["frames_by_source"].items()}
+    if d.all_final_achievements is not None:
+        final = d.all_final_achievements.astype(bool)
+        out["diamond_episodes"] = int(final[:, ACHIEVEMENTS.index("collect_diamond")].sum())
+        out["achievements_per_episode_mean"] = float(final.sum(1).mean())
     return out
 
 
@@ -116,13 +141,13 @@ def clip_counts(d: Data, strides=(2, 3, 4, 6, 8), depths=(1, 2, 3), history=3, r
             span = steps
             for _ in range(depth - 1):
                 span = (span - 1) * stride + 1
-            starts = np.maximum(d.lengths - span + 1, 0)
+            starts = np.maximum(d.all_lengths - span + 1, 0)
             rows.append(
                 {
                     "depth": depth, "stride": stride, "span": int(span),
-                    "episodes_long_enough": int((d.lengths >= span).sum()),
+                    "episodes_long_enough": int((d.all_lengths >= span).sum()),
                     "clips": int(starts.sum()),
-                    "independent_clips": int((d.lengths // span).sum()),
+                    "independent_clips": int((d.all_lengths // span).sum()),
                 }
             )  # fmt: skip
     return rows
@@ -314,8 +339,12 @@ def render(result: dict) -> str:
         c = e["composition"]
         out += ["", f"## {label}", "", f"{c['episodes']} episodes, {c['frames']} frames. Length min/median/max "
                 f"{_f(c['length']['min'])}/{_f(c['length']['median'])}/{_f(c['length']['max'])}."]
+        if "sampled" in c:
+            out.append(f"The state sections below use every k-th episode ({c['sampled']['episodes_analysed']} of {c['sampled']['episodes']}); "
+                       "counts here and the clip counts use all episodes.")
         if "by_source" in c:
-            out.append("Sources: " + ", ".join(f"{k} {v}" for k, v in c["by_source"].items()) + ".")
+            out.append("Sources (episodes, share of frames): " + ", ".join(
+                f"{k} {v} ({c['frame_share_by_source'][k]:.1%})" for k, v in c["by_source"].items()) + ".")
         if "diamond_episodes" in c:
             out.append(f"Episodes with a diamond: {c['diamond_episodes']}; achievements per episode (mean): {_f(c['achievements_per_episode_mean'])}.")
 

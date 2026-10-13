@@ -38,19 +38,28 @@ def _runs(items):
 
 
 def planning_table(runs: dict[str, Path], baseline: str | None) -> list[str]:
-    data = {label: _load(p / "planning_health.json") for label, p in runs.items()}
-    data = {k: v["summary"] for k, v in data.items() if v}
+    docs = {label: _load(p / "planning_health.json") for label, p in runs.items()}
+    docs = {k: v for k, v in docs.items() if v}
+    data = {k: v["summary"] for k, v in docs.items()}
     if not data:
         return []
     base = data.get(baseline) if baseline else None
-    out = ["## Planning", "", "| run | tasks | success | progress | progress over baseline | TFLOPs per task | critical | warnings |",
-           "|---|---|---|---|---|---|---|---|"]
-    findings = {label: (_load(runs[label] / "planning_health.json") or {}).get("findings", []) for label in data}
+    # numbers are only comparable on the same tasks: the file hash is stored with every run
+    hashes = {label: doc.get("tasks_sha256") for label, doc in docs.items()}
+    known = {h for h in hashes.values() if h}
+    mismatch = len(known) > 1 or len({s["num_tasks"] for s in data.values()}) > 1
+
+    def comparable(label):
+        return base is not None and hashes[label] == hashes[baseline] and data[label]["num_tasks"] == base["num_tasks"]
+
+    out = ["## Planning", "", "| run | tasks | task file | success | progress | progress over baseline | TFLOPs per task | critical | warnings |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    findings = {label: doc.get("findings", []) for label, doc in docs.items()}
     for label, s in data.items():
-        gain = None if base is None or label == baseline else s["progress_mean"] - base["progress_mean"]
+        gain = None if base is None or label == baseline or not comparable(label) else s["progress_mean"] - base["progress_mean"]
         f = findings[label]
         out.append(
-            f"| {label} | {s['num_tasks']} | {_f(s['success_rate'])} | {_f(s['progress_mean'])} | {_f(gain)} "
+            f"| {label} | {s['num_tasks']} | {(hashes[label] or '?')[:8]} | {_f(s['success_rate'])} | {_f(s['progress_mean'])} | {_f(gain)} "
             f"| {_f((s.get('compute') or {}).get('tflops_per_task'))} "
             f"| {sum(x['severity'] == 'critical' for x in f)} | {sum(x['severity'] == 'warn' for x in f)} |"
         )
@@ -65,6 +74,11 @@ def planning_table(runs: dict[str, Path], baseline: str | None) -> list[str]:
                 ref = (base or {}).get("by_group", {}).get(g)
                 cells.append("-" if v is None else _f(v["success"], 2) + (f" ({_f(ref['success'], 2)})" if ref and label != baseline else ""))
             out.append(f"| {label} | " + " | ".join(cells) + " |")
+    if mismatch:
+        out += ["", "WARNING: the runs were not evaluated on the same tasks (different task files or numbers of tasks): "
+                "differences between them, and over the baseline, are not shown as comparisons."]
+    elif base is not None and not known:
+        out += ["", "Note: the runs do not record their task file (unchunked evaluation); that they share tasks is not checked."]
     return out + [""]
 
 

@@ -248,7 +248,15 @@ def write_planning_health(results_dir: Path, records, task_info, metrics_to_save
     findings = diagnose_planning(summary)
     (results_dir / "planning_report.md").write_text(render_planning_report(summary, findings))
     (results_dir / "planning_health.json").write_text(
-        json.dumps({"summary": to_jsonable(summary), "findings": findings_to_json(findings)}, indent=1)
+        json.dumps(
+            {
+                "summary": to_jsonable(summary),
+                "findings": findings_to_json(findings),
+                # which task file the numbers are for, so a comparison can check it
+                "tasks_sha256": (metrics_to_save or {}).get("tasks_sha256"),
+            },
+            indent=1,
+        )
     )
     (results_dir / "planning_records.json").write_text(json.dumps(to_jsonable(records)))
     print("planning findings:\n" + findings_block(findings))

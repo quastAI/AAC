@@ -224,3 +224,11 @@ def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):
 def test_collection_run_needs_the_checkpoint(spec):
     with pytest.raises(SystemExit, match='expert-checkpoint'):
         run.main(['run', 'D1', '--mode', 'slurm'])
+
+
+def test_dataset_analysis_checks_the_seed_overlap_of_all_three_files(spec):
+    jobs = run.build_jobs(spec, 'D0', [42], home='/data')
+    command = jobs[0].command
+    assert command.count('--data') == 3
+    labels = [command[i + 1] for i, c in enumerate(command) if c == '--label']
+    assert labels == ['train', 'val', 'test']

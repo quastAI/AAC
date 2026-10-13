@@ -184,3 +184,32 @@ def test_max_frames_keeps_whole_episodes(tmp_path):
 def test_noisy_lags_are_left_out_by_default(data):
     ts = ds.time_scales(data)  # 350 frames: no lag has 1000 pairs
     assert all(not v['ratio'] for v in ts.values())
+
+
+def test_a_frame_budget_samples_over_the_whole_file(tmp_path):
+    # D1 appends expert, then noised, then random episodes to one file: a
+    # prefix of the file would be the expert episodes alone
+    lengths = [100] * 6 + [20] * 6
+    path = write(tmp_path / 'mixed.h5', lengths=lengths)
+    source = np.repeat(np.array([0] * 6 + [2] * 6, np.int8), lengths)
+    with h5py.File(path, 'r+') as f:
+        del f['source']
+        f.create_dataset('source', data=source)
+
+    d = ds.Data(path, max_frames=300)
+    assert d.sampled is not None and d.sampled[1] == 12
+    assert d.total <= 300
+    comp = ds.composition(d)
+    assert comp['episodes'] == 12 and comp['frames'] == sum(lengths)
+    assert comp['by_source'] == {'expert': 6, 'random': 6}
+    assert comp['frame_share_by_source']['expert'] == pytest.approx(
+        600 / 720
+    )
+    assert set(d.cols['source'].tolist()) == {0, 2}  # both sources are in
+    # clip counts use every episode, not the sampled ones
+    rows = ds.clip_counts(d, strides=(2,), depths=(1,))
+    assert rows[0]['episodes_long_enough'] == 12
+    assert 'every k-th episode' in ds.render(ds.analyse({'mixed': d}))
+
+    full = ds.Data(path)
+    assert full.sampled is None and full.total == sum(lengths)
