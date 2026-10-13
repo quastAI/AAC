@@ -15,19 +15,21 @@ Columns (N = total frames):
     action        (N, 1)          float32  action index 0..16, NaN in the last frame
     reward        (N,)            float32  reward of the transition into this frame (0 in frame 0)
     achievements  (N, 22)         uint8    cumulative flags, Craftax-Classic Achievement order
+    full_state    (N, 20952)      uint8    snapshot of the complete env state (see pack_state)
     step_idx      (N,)            int32
     ep_idx        (N,)            int32
-    world_seed    (N,)            int64
+    seed          (N,)            int64    world seed of the episode
     source        (N,)            int8     0 expert, 1 noised expert, 2 uniform random
 
-Episodes are replayable from `world_seed` and the action sequence. With
-    reset_key, step_key, _ = jax.random.split(jax.random.PRNGKey(world_seed), 3)
-the reset uses `reset_key` and the transition at step t uses
-`jax.random.fold_in(step_key, t)`. Anything that re-simulates an episode (the
-planning environment) must follow this convention.
+`full_state` lets the planning environment start from any frame. Episodes are also
+replayable from `seed` and the action sequence. With
+    reset_key, step_key, _ = jax.random.split(jax.random.PRNGKey(seed), 3)
+the reset uses `reset_key` and the transition at step t (t = state.timestep before
+the step) uses `jax.random.fold_in(step_key, t)`. Anything that re-simulates an
+episode must follow this convention.
 
 Examples:
-    # expert episodes that reach diamond, stopping at the diamond
+    # expert episodes that reach diamond, ending 500 steps after the diamond
     python scripts/collect_craftax_episodes.py --out data/expert.h5 \
         --checkpoint models/Craftax-Classic-Symbolic-v1/pqn_rnn_..._vmap0.safetensors \
         --num-episodes 1000 --seed-start 0
@@ -168,13 +170,29 @@ def make_rollout(env, env_params, network, variables, eps, num_envs):
     return rollout
 
 
+def pack_state(state):
+    """Lossless flat byte view of an env state: the leaves in tree order, as raw bytes.
+
+    The planning environment unpacks it with the leaf shapes and dtypes of a freshly
+    reset state, so both sides only depend on the pinned Craftax version.
+    """
+    parts = []
+    for leaf in jax.tree_util.tree_leaves(state):
+        leaf = jnp.asarray(leaf)
+        if leaf.dtype == jnp.bool_:
+            parts.append(leaf.astype(jnp.uint8).reshape(-1))
+        else:
+            parts.append(jax.lax.bitcast_convert_type(leaf, jnp.uint8).reshape(-1))
+    return jnp.concatenate(parts)
+
+
 def make_replay(env, env_params):
     """Re-simulate one episode from (seed, actions) and render pixels from its states."""
     render = make_craftax_pixel_renderer(BLOCK_PIXEL_SIZE_AGENT)
 
     def frame(state):
         pixels = jnp.clip(jnp.round(render(state)), 0, 255).astype(jnp.uint8)
-        return pixels, state.achievements.astype(jnp.uint8)
+        return pixels, state.achievements.astype(jnp.uint8), pack_state(state)
 
     @jax.jit
     def reset(seed):
@@ -196,16 +214,20 @@ def make_replay(env, env_params):
 
     def replay(seed, actions):
         length = len(actions)
-        obs0, state, step_key, pix0, ach0 = reset(seed)
+        obs0, state, step_key, pix0, ach0, full0 = reset(seed)
         padded = np.zeros(-(-length // REPLAY_CHUNK) * REPLAY_CHUNK, dtype=np.int32)
         padded[:length] = actions
-        obs, reward, pixels, ach = [obs0[None]], [np.zeros(1, np.float32)], [pix0[None]], [ach0[None]]
+        first = (obs0, np.zeros(1, np.float32), pix0, ach0, full0)
+        columns = [[np.asarray(x)[None]] if i != 1 else [x] for i, x in enumerate(first)]
         for t0 in range(0, len(padded), REPLAY_CHUNK):
             state, out = run_chunk(state, step_key, t0, jnp.asarray(padded[t0 : t0 + REPLAY_CHUNK]))
-            for acc, x in zip((obs, reward, pixels, ach), out):
+            for acc, x in zip(columns, out):
                 acc.append(np.asarray(x))
-        obs, reward, pixels, ach = (np.concatenate(x)[: length + 1] for x in (obs, reward, pixels, ach))
-        return dict(pixels=pixels, state=obs.astype(np.float32), reward=reward.astype(np.float32), achievements=ach)  # fmt: skip
+        obs, reward, pixels, ach, full = (np.concatenate(c)[: length + 1] for c in columns)
+        return dict(
+            pixels=pixels, state=obs.astype(np.float32), reward=reward.astype(np.float32),
+            achievements=ach, full_state=full,
+        )  # fmt: skip
 
     return replay
 
@@ -227,7 +249,7 @@ class EpisodeWriter:
         if not self.initialized or self.num_episodes == 0:
             return set()
         offsets = self.f["ep_offset"][:]
-        return set(int(s) for s in self.f["world_seed"][offsets])
+        return set(int(s) for s in self.f["seed"][offsets])
 
     def _create(self, ep):
         for key, data in ep.items():
@@ -280,8 +302,9 @@ def build_episode(seed, actions, rendered, source):
         action=action,
         reward=rendered["reward"],
         achievements=rendered["achievements"],
+        full_state=rendered["full_state"],
         step_idx=np.arange(length + 1, dtype=np.int32),
-        world_seed=np.full(length + 1, seed, dtype=np.int64),
+        seed=np.full(length + 1, seed, dtype=np.int64),
         source=np.full(length + 1, source, dtype=np.int8),
     )  # fmt: skip
 
@@ -292,7 +315,7 @@ def check_replay(seed, length, rendered, rollout, i):
     ok &= np.array_equal(rendered["achievements"][1:].sum(-1), rollout["ach_counts"][:length, i])
     if not ok:
         raise RuntimeError(
-            f"Replay of world_seed={seed} differs from the rollout; the environment "
+            f"Replay of seed={seed} differs from the rollout; the environment "
             "is not deterministic in (seed, actions), so episodes would not be replayable."
         )
 
@@ -310,7 +333,9 @@ def parse_args():
     p.add_argument("--require-diamond", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--stop-at-diamond", action=argparse.BooleanOptionalAction, default=True,
                    help="end the episode when the diamond is collected (plus --tail-steps)")  # fmt: skip
-    p.add_argument("--tail-steps", type=int, default=0, help="extra steps kept after the diamond")
+    p.add_argument("--tail-steps", type=int, default=500,
+                   help="steps kept after the diamond, as a margin for long planning horizons "
+                        "(the episode still ends early on death or at --max-steps)")  # fmt: skip
     return p.parse_args()
 
 

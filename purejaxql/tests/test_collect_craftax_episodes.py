@@ -40,6 +40,7 @@ def test_layout_and_replayability(collect, monkeypatch, tmp_path):
     assert a["pixels"].shape == (n, 63, 63, 3) and a["pixels"].dtype == np.uint8
     assert a["state"].shape == (n, 1345)
     assert a["achievements"].shape == (n, 22)
+    assert a["full_state"].shape == (n, 20952) and a["full_state"].dtype == np.uint8
     assert list(a["ep_offset"][:]) == list(np.cumsum(np.r_[0, a["ep_len"][:-1]]))
 
     # One NaN action per episode, in its last frame; the others are valid indices.
@@ -68,6 +69,6 @@ def test_append_skips_used_seeds(collect, monkeypatch, tmp_path):
     kwargs = dict(num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
     run(collect, monkeypatch, tmp_path / "d.h5", **kwargs)
     f = run(collect, monkeypatch, tmp_path / "d.h5", **kwargs)  # same seed range again
-    seeds = f["world_seed"][f["ep_offset"][:]]
+    seeds = f["seed"][f["ep_offset"][:]]
     assert len(seeds) == 8 and len(set(seeds.tolist())) == 8
     assert sorted(set(f["ep_idx"][:].tolist())) == list(range(8))
