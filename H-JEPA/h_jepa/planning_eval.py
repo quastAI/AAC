@@ -1,3 +1,4 @@
+import json
 import os
 import shlex
 import subprocess
@@ -208,6 +209,55 @@ def build_solver(cfg: DictConfig, model):
     return hydra.utils.instantiate(cfg.solver, model=model)
 
 
+def _support_bank(cfg, metrics_cfg, model, transform):
+    """Latents of dataset frames for the support metric, or None when not configured."""
+    name = metrics_cfg.get("support_bank_dataset", None)
+    if not name:
+        return None
+    from planning_metrics import build_support_bank
+
+    path = Path(cfg.cache_dir or swm.data.utils.get_cache_dir()) / f"{name}.h5"
+    if not path.exists():
+        print(f"planning metrics: support bank dataset {path} not found, support metric off")
+        return None
+    jepa1 = model.get_level(1) if hasattr(model, "get_level") else model
+    return build_support_bank(jepa1, path, transform["pixels"], int(metrics_cfg.get("support_bank_frames", 4096)))
+
+
+def _task_info(load_eval_trajs_path) -> list | None:
+    """Per-task description stored in a task file made by eval_tasks.py, if any."""
+    if not load_eval_trajs_path:
+        return None
+    payload = torch.load(Path(load_eval_trajs_path), map_location="cpu", weights_only=False)
+    return (payload.get("task_info") or {}).get("tasks")
+
+
+def write_planning_health(results_dir: Path, records, task_info, metrics_to_save: dict | None = None) -> dict:
+    """Summarise the recorded planning, write the report, and return the summary."""
+    from health import (
+        diagnose_planning,
+        findings_block,
+        findings_to_json,
+        render_planning_report,
+        to_jsonable,
+    )
+    from planning_metrics import summarize_planning
+
+    summary = summarize_planning(records, task_info)
+    findings = diagnose_planning(summary)
+    (results_dir / "planning_report.md").write_text(render_planning_report(summary, findings))
+    (results_dir / "planning_health.json").write_text(
+        json.dumps({"summary": to_jsonable(summary), "findings": findings_to_json(findings)}, indent=1)
+    )
+    (results_dir / "planning_records.json").write_text(json.dumps(to_jsonable(records)))
+    print("planning findings:\n" + findings_block(findings))
+    if metrics_to_save is not None:
+        metrics_to_save["progress_mean"] = summary.get("progress_mean")
+        metrics_to_save["progress_any"] = summary.get("progress_any")
+        metrics_to_save["tflops_per_task"] = (summary.get("compute") or {}).get("tflops_per_task")
+    return summary
+
+
 def _build_policy(
     cfg: DictConfig,
     process: dict,
@@ -222,6 +272,20 @@ def _build_policy(
         _drop_levels_above_model(cfg, model.num_levels)
     policy_config = _build_policy_plan_config(cfg)
     solver = build_solver(cfg, model)
+
+    metrics_cfg = cfg.get("planning_metrics", None)
+    if metrics_cfg is not None and metrics_cfg.get("enabled", False):
+        from planning_metrics import RecordingPolicy, RecordingSolver
+
+        return RecordingPolicy(
+            RecordingSolver(solver),
+            policy_config,
+            metrics_cfg=OmegaConf.to_container(metrics_cfg),
+            bank=_support_bank(cfg, metrics_cfg, model, transform),
+            process=process,
+            transform=transform,
+            eval_budget=int(cfg.eval.eval_budget),
+        )
 
     return swm.policy.WorldModelPolicy(
         solver=solver,
@@ -386,6 +450,8 @@ def _run_chunked_eval(
         finally:
             world.close()
         metrics["solve_records"] = pop_solve_records(getattr(policy, "solver", None))
+        if getattr(policy, "records", None) is not None:
+            metrics["planning_records"] = policy.records
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(_serialize_metrics(metrics)))
         os.replace(tmp, path)  # atomic: a preemption never leaves a partial chunk file
@@ -410,6 +476,10 @@ def _run_chunked_eval(
         "evaluation_time": sum(c["evaluation_time"] for c in chunks),
         "chunk_size": chunk_size,
     }
+    records = [r for c in chunks for r in c.get("planning_records", [])]
+    if records:
+        task_info = _task_info(load_eval_trajs_path)
+        write_planning_health(results_dir, records, task_info[:n] if task_info else None, metrics_to_save)
     (results_dir / "metrics.yaml").write_text(OmegaConf.to_yaml(metrics_to_save))
     print(metrics_to_save)
     solve_records = [r for c in chunks for r in c["solve_records"]]
@@ -518,6 +588,8 @@ def run_planning_eval(
 
     metrics_to_save = _serialize_metrics(metrics)
     metrics_to_save["evaluation_time"] = end_time - start_time
+    if getattr(policy, "records", None):
+        write_planning_health(resolved_results_dir, policy.records, _task_info(load_eval_trajs_path), metrics_to_save)
 
     metrics_path = resolved_results_dir / "metrics.yaml"
     metrics_path.write_text(OmegaConf.to_yaml(metrics_to_save))

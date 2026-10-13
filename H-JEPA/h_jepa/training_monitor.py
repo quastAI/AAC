@@ -39,8 +39,12 @@ def _average(dicts: list[dict]) -> dict:
     return {k: _mean([d.get(k) for d in dicts]) for k in keys}
 
 
-def build_health_loader(cfg, cache_dir, transform, *, frames, batch_size, max_clips, seed=0):
-    """Long validation clips (level-1 frames only; the model builds the upper levels).
+def build_health_loader(
+    cfg, cache_dir, transform, *, frames, batch_size, max_clips, seed=0, name=None, columns=("pixels", "action")
+):
+    """Long clips (level-1 frames only; the model builds the upper levels).
+
+    `name` is the dataset (default: the validation set), `columns` what to load.
 
     Falls back to shorter clips when the validation episodes are too short, and
     returns None when there are no clips at all.
@@ -52,8 +56,8 @@ def build_health_loader(cfg, cache_dir, transform, *, frames, batch_size, max_cl
     }
     base = {k: (dict(v) if hasattr(v, "items") else v) for k, v in base.items()}
     base = {k: v for k, v in base.items() if not (k.startswith("level") and k != "level1")}
-    base["name"] = cfg.data.dataset.val_name
-    base["keys_to_load"] = [c for c in ("pixels", "action")]
+    base["name"] = name or cfg.data.dataset.val_name
+    base["keys_to_load"] = list(columns)
     base["keys_to_cache"] = ["action"]
     frameskip = int(base["level1"]["frameskip"])
     while frames >= 4:
@@ -69,8 +73,12 @@ def build_health_loader(cfg, cache_dir, transform, *, frames, batch_size, max_cl
 
 
 class TrainingHealthCallback(Callback):
-    def __init__(self, cfg, run_dir, *, health_loader=None, normalize_fn=None, thresholds=None):
+    def __init__(
+        self, cfg, run_dir, *, health_loader=None, normalize_fn=None, thresholds=None, cache_dir=None, transform=None
+    ):
         super().__init__()
+        self.cache_dir = cache_dir
+        self.transform = transform
         self.cfg = cfg
         self.hcfg = cfg.health
         self.run_dir = Path(run_dir) / "health"
@@ -359,6 +367,38 @@ class TrainingHealthCallback(Callback):
             )
             logging.info(f"[health] report written to {self.run_dir / 'report.md'}")
         logging.info("[health] final findings:\n" + (health.findings_block(findings)))
+        if self.hcfg.get("probe_at_end", False) and trainer.is_global_zero:
+            self._probe(pl_module)
+
+    def _probe(self, pl_module):
+        """Probe every level on held-out worlds; skipped when the data lacks the target columns."""
+        import h5py
+
+        from probe_eval import COLUMNS, run_probing
+
+        path = Path(self.cache_dir or ".") / f"{self.cfg.data.dataset.val_name}.h5"
+        try:
+            with h5py.File(path, "r") as f:
+                missing = [c for c in COLUMNS if c not in f]
+        except OSError:
+            missing = ["(dataset not readable)"]
+        if missing:
+            logging.warning(f"[health] probing skipped, the validation data lacks columns {missing}; collect it with the current collector")
+            return
+        try:
+            device = next(pl_module.model.parameters()).device
+            summary, findings = run_probing(
+                pl_module.model, self.cfg, self.cache_dir, transform=self.transform, normalize=self.normalize,
+                device=device, frames=int(self.hcfg.long_clip_frames), max_clips=int(self.hcfg.get("probe_clips", 256)),
+            )  # fmt: skip
+        except Exception as error:  # a failed probe must not lose a finished training run
+            logging.warning(f"[health] probing failed: {error!r}")
+            return
+        (self.run_dir / "probe_report.md").write_text(health.render_probing_report(summary, findings))
+        (self.run_dir / "probe_summary.json").write_text(
+            json.dumps({"summary": health.to_jsonable(summary), "findings": health.findings_to_json(findings)}, indent=1)
+        )
+        logging.info("[health] probing findings:\n" + health.findings_block(findings))
 
 
 def health_idm_target(output: dict, level: int, cfg):

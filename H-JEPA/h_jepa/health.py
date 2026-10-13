@@ -64,6 +64,10 @@ class Thresholds:
     spike_factor: float = 3.0  # a step loss above this times the running median
     spike_count_warn: int = 5
     # planning
+    dist_decrease_warn: float = 0.3  # share of tasks whose goal distance falls
+    cem_improvement_warn: float = 0.01  # relative cost gain of CEM over its first samples
+    cem_entropy_warn: float = 0.9  # normalised entropy of the final distributions
+    optimism_warn: float = 2.0  # real / predicted goal distance after a plan
     plan_gap_ratio_warn: float = 1.5  # error of chosen plans / error of random plans
     plan_rank_corr_warn: float = 0.3  # predicted vs real cost ranking of candidates
     support_offsupport_warn: float = 0.25  # share of predicted latents far from the data
@@ -559,3 +563,233 @@ def to_jsonable(x: Any) -> Any:
 
 def findings_to_json(findings: list[Finding]) -> list[dict]:
     return [asdict(f) for f in findings]
+
+
+# --------------------------------------------------------------------------
+# diagnosis: planning
+
+
+def diagnose_planning(summary: dict, thr: Thresholds | None = None) -> list[Finding]:
+    """Findings from `planning_metrics.summarize_planning`.
+
+    No progress is reported first; the other findings narrow down the cause:
+    the optimiser (CEM does not optimise or converge), the cost landscape (goal
+    distance does not fall), the model's reliability (plans wrong more often
+    than random ones, cost cannot rank plans, optimism), support, and plan
+    degeneracy.
+    """
+    thr = thr or Thresholds()
+    f: list[Finding] = []
+    if not summary:
+        return f
+
+    if summary.get("progress_any", 0) == 0:
+        _f(f, "critical", "PLAN_NO_PROGRESS", None,
+           "no task unlocked any of its required achievements",
+           "see the findings below for the likely cause")
+    elif summary.get("success_rate", 0) == 0:
+        _f(f, "info", "PLAN_PARTIAL_ONLY", None,
+           f"no task succeeded, mean progress {summary['progress_mean']:.1%} of the required achievements",
+           "the planner moves toward the goal but does not finish: budget, horizon, or far goals")
+
+    for level, d in (summary.get("dist") or {}).items():
+        if d.get("decreased_frac") is not None and d["decreased_frac"] < thr.dist_decrease_warn:
+            _f(f, "warn", "DIST_NOT_DECREASING", int(level),
+               f"latent distance to the goal fell in only {d['decreased_frac']:.0%} of the tasks",
+               "plans do not bring the agent closer in this latent space: cost landscape or plan reliability")
+
+    for level, p in (summary.get("planner") or {}).items():
+        if p.get("cem_improvement") is not None and p["cem_improvement"] < thr.cem_improvement_warn:
+            _f(f, "warn", "CEM_NOT_OPTIMIZING", int(level),
+               f"CEM improves the cost by only {p['cem_improvement']:.2%} over its first samples",
+               "the cost is flat over the candidates: the model barely distinguishes plans at this level")
+        if p.get("cem_entropy_final") is not None and p["cem_entropy_final"] > thr.cem_entropy_warn:
+            _f(f, "info", "CEM_NOT_CONVERGED", int(level),
+               f"the final distributions are still {p['cem_entropy_final']:.0%} of uniform entropy",
+               "more iterations or fewer candidate steps; or the cost gives no direction")
+
+    pl = summary.get("plans") or {}
+    if pl:
+        if pl.get("err_ratio_vs_random") is not None and pl["err_ratio_vs_random"] > thr.plan_gap_ratio_warn:
+            _f(f, "critical", "PLAN_EXPLOITATION", None,
+               f"chosen plans are predicted {pl['err_ratio_vs_random']:.1f}x worse than random plans",
+               "the optimiser finds model errors: restrict the search (proposals, trust region), check support")
+        opt, opt_random = pl.get("optimism_chosen"), pl.get("optimism_random")
+        if opt is not None and opt > thr.optimism_warn and (opt_random is None or opt > 1.5 * opt_random):
+            _f(f, "warn", "PLAN_OPTIMISM", None,
+               f"after a chosen plan the real goal distance is {opt:.1f}x the predicted one"
+               + ("" if opt_random is None else f" (random plans: {opt_random:.1f}x)"),
+               "the model promises progress that reality does not deliver")
+        if pl.get("rank_corr") is not None and pl["rank_corr"] < thr.plan_rank_corr_warn:
+            _f(f, "warn", "COST_RANKING", None,
+               f"predicted and real goal distance of candidate plans correlate at {pl['rank_corr']:.2f}",
+               "the model cannot order nearby plans: use shorter horizons or a better cost space")
+        off = pl.get("offsupport_plan")
+        if off is not None and off > thr.support_offsupport_warn and off > 2 * (pl.get("offsupport_real") or 0):
+            _f(f, "warn", "OFF_SUPPORT", None,
+               f"{off:.0%} of the predicted latents of chosen plans are far from the data "
+               f"(reality: {pl.get('offsupport_real', 0):.0%})",
+               "plans leave the data support: constrain the planner")
+        if pl.get("pred_gain") is not None and pl["pred_gain"] > 0.05 and (pl.get("real_gain") or 0) <= 0:
+            _f(f, "warn", "PREDICTED_GAIN_NOT_REAL", None,
+               f"plans are predicted to close {pl['pred_gain']:.0%} of the goal distance, reality {pl['real_gain']:.0%}",
+               "the dynamics model is wrong in the direction the planner exploits")
+
+    act = summary.get("actions") or {}
+    if act.get("degenerate_frac", 0) > 0.5:
+        _f(f, "warn", "PLAN_DEGENERATE", None,
+           f"in {act['degenerate_frac']:.0%} of the tasks one action made up over 90% of the steps",
+           "collapsed plans: check the action embedding and the cost scale")
+    elif act.get("noop_share", 0) > 0.5:
+        _f(f, "info", "NOOP_HEAVY", None, f"{act['noop_share']:.0%} of the executed steps are no-ops",
+           "the planner finds no useful action")
+
+    sg = summary.get("subgoals") or {}
+    if sg and sg.get("reached_frac", 1) < thr.subgoal_reach_warn:
+        _f(f, "warn", "SUBGOAL_NOT_TRACKED", None,
+           f"only {sg['reached_frac']:.0%} of the upper-level subgoals were approached over half way",
+           "the level below cannot follow the level above: check the action cost and the horizons")
+
+    groups = summary.get("by_group") or {}
+    easy, hard = groups.get("required_1"), [g for k, g in groups.items() if k.startswith("required_") and k != "required_1" and k != "required_0"]
+    if easy and hard and easy["success"] > 0.3 and max(g["success"] for g in hard) == 0:
+        _f(f, "info", "FAR_GOALS_FAIL", None,
+           f"success is {easy['success']:.0%} with one required achievement and 0 with more",
+           "goal distance is the limit: the cost geometry or the hierarchy at depth")
+    # the headline first, then the causes by severity
+    return sorted(sort_findings(f), key=lambda x: x.code != "PLAN_NO_PROGRESS")
+
+
+def render_planning_report(summary: dict, findings: list[Finding]) -> str:
+    """Markdown report of a planning evaluation."""
+    out = ["# Planning report", "", "## Findings", "", findings_block(findings), "## Outcome", ""]
+    out.append(f"{summary.get('num_tasks')} tasks. Success {_fmt(summary.get('success_rate'))}, "
+               f"mean progress {_fmt(summary.get('progress_mean'))}, "
+               f"any progress {_fmt(summary.get('progress_any'))}, "
+               f"steps to first progress {_fmt(summary.get('steps_to_first_progress'))}.")
+    groups = summary.get("by_group") or {}
+    if groups:
+        out += ["", "| group | tasks | success | progress |", "|---|---|---|---|"]
+        out += [f"| {g} | {v['n']} | {_fmt(v['success'])} | {_fmt(v['progress'])} |" for g, v in groups.items()]
+    if summary.get("dist"):
+        out += ["", "## Latent distance to the goal (per level)", "",
+                "| level | final / initial | best / initial | tasks with a fall |", "|---|---|---|---|"]
+        out += [f"| {l} | {_fmt(d['final_over_initial'])} | {_fmt(d['min_over_initial'])} | {_fmt(d['decreased_frac'])} |"
+                for l, d in summary["dist"].items()]
+    if summary.get("planner"):
+        out += ["", "## Planner", "", "| level | solves | CEM improvement | final entropy | horizon | wall clock (s) |",
+                "|---|---|---|---|---|---|"]
+        out += [f"| {l} | {p['solves']} | {_fmt(p['cem_improvement'])} | {_fmt(p['cem_entropy_final'])} "
+                f"| {_fmt(p['horizon'])} | {_fmt(p['wall_clock'])} |" for l, p in summary["planner"].items()]
+    c = summary.get("compute") or {}
+    if c:
+        out += ["", f"Compute: {_fmt(c.get('tflops_per_task'))} TFLOPs per task, "
+                    f"{_fmt(c.get('tflops_per_solve'))} per solve, {_fmt(c.get('solves_per_task'))} solves per task.", ""]
+    pl = summary.get("plans") or {}
+    if pl:
+        out += ["## Plan reliability (executed open-loop in the simulator)", "", "| quantity | chosen plans | random plans |",
+                "|---|---|---|",
+                f"| latent prediction error | {_fmt(pl['pred_err'])} | {_fmt(pl['pred_err_random'])} |",
+                f"| real / predicted goal distance | {_fmt(pl['optimism_chosen'])} | {_fmt(pl['optimism_random'])} |"]
+        if "offsupport_plan" in pl:
+            out.append(f"| predicted latents off the data support | {_fmt(pl['offsupport_plan'])} | {_fmt(pl['offsupport_random'])} |")
+        out += ["", f"Rank correlation of predicted and real goal distance over candidate plans: {_fmt(pl['rank_corr'])}. "
+                    f"Predicted / real goal-distance reduction by the chosen plans: {_fmt(pl['pred_gain'])} / {_fmt(pl['real_gain'])}.", ""]
+        if pl.get("err_curve"):
+            ks = range(1, len(pl["err_curve"]) + 1)
+            out += ["| step | " + " | ".join(map(str, ks)) + " |", "|---|" + "---|" * len(ks),
+                    "| error of chosen plan | " + " | ".join(_fmt(v, 2) for v in pl["err_curve"]) + " |", ""]
+    act = summary.get("actions") or {}
+    if act:
+        out += ["## Executed actions", "", f"largest single-action share {_fmt(act['max_share_mean'])}, "
+                f"degenerate tasks {_fmt(act['degenerate_frac'])}, no-op share {_fmt(act['noop_share'])}, "
+                f"distinct actions per task {_fmt(act['distinct_mean'])}", ""]
+    sg = summary.get("subgoals") or {}
+    if sg:
+        out += ["## Subgoal tracking", "", f"{sg['n']} subgoals: mean progress {_fmt(sg['progress_mean'])}, "
+                f"approached over half way {_fmt(sg['reached_frac'])}", ""]
+    return "\n".join(out) + "\n"
+
+
+# --------------------------------------------------------------------------
+# diagnosis: probing
+
+
+def _ratio(a, b):
+    return None if a is None or b is None or b <= 0.1 else a / b
+
+
+def diagnose_probing(summary: dict, thr: Thresholds | None = None) -> list[Finding]:
+    """Findings from `probe_eval.run_probing`: what each level keeps of the symbolic state."""
+    thr = thr or Thresholds()
+    f: list[Finding] = []
+    levels = {int(n): e for n, e in summary.get("levels", {}).items()}
+    for n, e in sorted(levels.items()):
+        groups = e["groups"]
+        control = e.get("control_groups") or {}
+        scores = [v for v in groups.values() if v is not None]
+        if scores and max(scores) < 0.05:
+            _f(f, "critical", "PROBE_NOTHING", n, "no group of the symbolic state can be read from the latents",
+               "the level encodes none of the state: collapse, or the wrong frame/target alignment")
+        gains = [groups[g] - control[g] for g in groups if groups[g] is not None and control.get(g) is not None]
+        if gains and max(gains) < 0.05:
+            _f(f, "warn", "PROBE_NO_GAIN", n, "the latents are no more informative than those of an untrained encoder",
+               "training added no readable state information at this level")
+        if scores and max(scores) >= 0.3:
+            for g, v in groups.items():
+                if v is not None and v < thr.probe_group_r2_warn:
+                    _f(f, "warn", "PROBE_GROUP_MISSING", n, f"the {g} state is not readable (score {v:.2f}) while others are",
+                       {"fast": "the level ignores position, facing and nearby mobs",
+                        "medium": "vitals are not encoded: they change slowly and look alike in pixels",
+                        "slow": "inventory and progress are not encoded: they sit in a small strip of the frame"}[g])
+
+    base = levels.get(1)
+    if base:
+        for n, e in sorted(levels.items()):
+            if n == 1:
+                continue
+            ratios = {g: _ratio(e["groups"].get(g), base["groups"].get(g)) for g in ("fast", "medium", "slow")}
+            shown = ", ".join(f"{g} {r:.0%}" for g, r in ratios.items() if r is not None)
+            if shown:
+                _f(f, "info", "PROBE_RETENTION", n, f"share of the level-1 probe score kept: {shown}",
+                   "the frequency gap: an upper level should keep slow state and may drop fast state")
+            slow = ratios["slow"]
+            if slow is not None and slow < 0.3:
+                _f(f, "warn", "PROBE_UPPER_LOSES_SLOW", n, f"keeps only {slow:.0%} of the slow state of level 1",
+                   "slow state (inventory, progress) is what a high level should keep: check the encoder and the stride")
+            fast = ratios["fast"]
+            if fast is not None and slow is not None and fast >= 0.9 and slow >= 0.9:
+                _f(f, "info", "PROBE_NO_SPECIALISATION", n, "keeps fast and slow state alike",
+                   "no frequency specialisation between the levels")
+    return sort_findings(f)
+
+
+def render_probing_report(summary: dict, findings: list[Finding]) -> str:
+    out = ["# Probing report", "", "## Findings", "", findings_block(findings), "## Probe scores by group", ""]
+    levels = sorted((int(n), e) for n, e in summary["levels"].items())
+    has_control = any(e.get("control_groups") for _, e in levels)
+    head = "| level | fast | medium | slow |" + (" fast (untrained) | medium (untrained) | slow (untrained) |" if has_control else "")
+    out += [head, "|---|---|---|---|" + ("---|---|---|" if has_control else "")]
+    for n, e in levels:
+        row = f"| {n} | " + " | ".join(_fmt(e["groups"].get(g), 2) for g in ("fast", "medium", "slow")) + " |"
+        if has_control:
+            row += " " + " | ".join(_fmt((e.get("control_groups") or {}).get(g), 2) for g in ("fast", "medium", "slow")) + " |"
+        out.append(row)
+    out += ["", "Score: R^2 for counts and levels, 2*AUROC-1 for flags, (accuracy-majority)/(1-majority) for facing.", "",
+            "## Per target", "", "| target | group | " + " | ".join(f"level {n}" for n, _ in levels)
+            + (" | untrained, level 1 |" if has_control else " |"), "|---|---|" + "---|" * len(levels) + ("---|" if has_control else "")]
+    names = list(levels[0][1]["targets"])
+    for name in names:
+        from_group = {"position": "fast", "facing": "fast", "mobs_in_view": "fast", "vitals": "medium"}.get(name, "slow")
+        row = f"| {name} | {from_group} | " + " | ".join(_fmt(e["targets"][name]["score"], 2) for _, e in levels)
+        if has_control:
+            row += " | " + _fmt(levels[0][1]["targets"][name].get("control"), 2)
+        out.append(row + " |")
+    for n, e in levels:
+        columns = {c: s for t in e["targets"].values() for c, s in t["columns"].items() if s is not None}
+        worst = sorted(columns.items(), key=lambda kv: kv[1])[:5]
+        best = sorted(columns.items(), key=lambda kv: -kv[1])[:5]
+        out += ["", f"Level {n}: best " + ", ".join(f"{c} {s:.2f}" for c, s in best)
+                + "; worst " + ", ".join(f"{c} {s:.2f}" for c, s in worst)]
+    out += ["", f"Samples (train/val): {summary.get('n_train')} / {summary.get('n_val')}"]
+    return "\n".join(out) + "\n"

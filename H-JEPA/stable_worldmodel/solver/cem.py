@@ -208,6 +208,19 @@ class CategoricalCEMSolver(torch.nn.Module):
         probs = probs.clamp_min(self.min_prob) * valid
         return probs / probs.sum(-1, keepdim=True)
 
+    @staticmethod
+    def _entropy(probs: torch.Tensor, valid: torch.Tensor) -> float:
+        """Mean normalised entropy: 1 is uniform, 0 is converged.
+
+        Slots with a single allowed class (a pinned duration) are left out.
+        """
+        classes = valid.sum(-1)  # (slots,)
+        keep = classes > 1
+        if not keep.any():
+            return 0.0
+        entropy = -(probs * (probs + 1e-12).log()).sum(-1)  # (b, H, slots)
+        return (entropy[..., keep] / classes[keep].float().log()).mean().item()
+
     @torch.inference_mode()
     def _rollout_final_actions(
         self, info_dict: dict, actions: torch.Tensor
@@ -264,6 +277,7 @@ class CategoricalCEMSolver(torch.nn.Module):
 
         batch_size = self.batch_size or self.n_envs
         best_actions_list = []
+        curves, entropies = [], []
         per_env_time = []
         for start in range(0, self.n_envs, batch_size):
             end = min(start + batch_size, self.n_envs)
@@ -279,6 +293,7 @@ class CategoricalCEMSolver(torch.nn.Module):
                 device=self.device,
             )
             best_cost = torch.full((bs,), float('inf'), device=self.device)
+            curve = []  # best cost so far, after every iteration
 
             for it in range(self.n_iters):
                 samples = torch.multinomial(
@@ -315,12 +330,16 @@ class CategoricalCEMSolver(torch.nn.Module):
                     best,
                 )
                 probs = self._update_probs(probs, samples, costs, valid)
+                curve.append(best_cost.clone())
 
             best_actions_list.append(best.cpu())
+            curves.append(torch.stack(curve, dim=1).cpu())  # (bs, n_iters)
+            entropies.append(self._entropy(probs, valid))
             per_env_time.extend([time.time() - batch_t0] * bs)
 
         indices = torch.cat(best_actions_list, dim=0)  # (B, H, slots)
-        outputs = {'action_indices': indices}
+        curve = torch.cat(curves, dim=0)  # (B, n_iters), best cost so far
+        outputs = {'action_indices': indices, 'cost': curve[:, -1]}
         outputs['actions'] = (
             indices if self.level == 1 else self._decode(indices).cpu()
         )
@@ -342,6 +361,9 @@ class CategoricalCEMSolver(torch.nn.Module):
                 'num_samples': int(self.num_samples),
                 'allowed_durations': self.allowed_durations,
                 'n_iters': [self.n_iters] * self.n_envs,
+                'first_cost': curve[:, 0].tolist(),
+                'best_cost': curve[:, -1].tolist(),
+                'final_entropy': float(sum(entropies) / len(entropies)),
                 'wall_clock': end_time - start_time,
                 'wall_clock_per_env': per_env_time,
             }

@@ -320,6 +320,8 @@ def run(cfg):
                 run_dir,
                 health_loader=health_loader,
                 normalize_fn=_normalize_uint8_images_on_device,
+                cache_dir=cache_dir,
+                transform=transform,
             )
         )
 

@@ -87,12 +87,50 @@ def test_frozen_after_episode_end(env, episode):
     np.testing.assert_array_equal(obs['state'], last[0]['state'])
 
 
-def test_goal_success_is_terminated(env, episode):
+def unlock_frame(episode, index=0):
+    """First frame at which an achievement of the fixture episode is set."""
+    return int(np.argmax(episode['achievements'][:, index]))
+
+
+def test_new_achievements_goal_succeeds_when_the_new_ones_are_unlocked(
+    env, episode
+):
+    first = unlock_frame(episode)
+    assert first > 0, 'the fixture episode must unlock wood after the start'
+    env._set_state(episode['full_state'][0])
+    env._set_goal_state(episode['full_state'][-1])  # goal: wood unlocked
+    for t, (_, _, terminated, _, info) in enumerate(
+        replay_steps(env, episode), start=1
+    ):
+        assert info['goal_required'] == 1
+        assert terminated == (t >= first)
+        assert info['goal_progress'] == (1.0 if t >= first else 0.0)
+
+
+def test_goal_without_progress_never_succeeds(env, episode):
+    start = unlock_frame(episode) + 5  # wood is already unlocked
+    env._set_state(episode['full_state'][start])
+    env._set_goal_state(episode['full_state'][-1])
+    for _, _, terminated, _, info in replay_steps(env, episode, start):
+        assert not terminated
+        assert info['goal_required'] == 0 and info['goal_progress'] == 0.0
+
+
+def test_info_has_goal_fields_before_a_goal_is_set(env):
+    _, _, _, _, info = env.step(0)
+    assert info['goal_required'] == 0 and info['goal_progress'] == 0.0
+
+
+def test_inventory_goal_test_is_selectable(episode):
+    env = craftax_env.CraftaxClassicEnv(goal_test='achievements_inventory')
+    env.reset(seed=int(episode['seed']))
     goal = craftax_env.unpack_state(episode['full_state'][-1])
     env._set_goal_state(episode['full_state'][-1])
-    expected = None
-    for t in range(len(episode['actions'])):
-        state = craftax_env.unpack_state(episode['full_state'][t + 1])
+    expected = False
+    for t, (_, _, terminated, _, _) in enumerate(
+        replay_steps(env, episode), start=1
+    ):
+        state = craftax_env.unpack_state(episode['full_state'][t])
         met = craftax_env.achievements_inventory_test(
             {
                 'achievements': craftax_env._achievements(state),
@@ -103,10 +141,15 @@ def test_goal_success_is_terminated(env, episode):
                 'inventory': craftax_env._inventory(goal),
             },
         )
-        _, _, terminated, _, _ = env.step(int(episode['actions'][t]))
         assert terminated == met
         expected = expected or met
     assert expected, 'the goal is the last frame, so it must be met there'
+
+
+def replay_steps(env, episode, start=0):
+    """Step the recorded actions from frame `start`, yielding step results."""
+    for t in range(start, len(episode['actions'])):
+        yield env.step(int(episode['actions'][t]))
 
 
 def test_seed_out_of_range_raises():

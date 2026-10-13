@@ -105,6 +105,7 @@ class HierarchicalSolver:
         """
         subgoal_latents = None
         subgoal_actions = None
+        level_results = {}
         skipped_goal_level = None
         # Tracks whether the level above was anchored to the true goal at its last step.
         # True for the top level (trivially), and propagates down only when the substitution
@@ -208,12 +209,18 @@ class HierarchicalSolver:
                 steps_taken=steps_taken,
                 eval_budget=eval_budget,
             )
+            level_results[level] = result
             upper_anchored = this_level_anchored
             skipped_goal_level = None
             subgoal_latents = result['predictions']['predicted_embed_0']
             subgoal_actions = result['actions']
 
-        return {'actions': result['actions']}
+        # `levels` and `predictions` are for the planning diagnostics
+        return {
+            'actions': result['actions'],
+            'predictions': result['predictions'],
+            'levels': level_results,
+        }
 
     def _level_plan_config(self, level: int) -> Any:
         """Return planning config for a specific hierarchy level."""

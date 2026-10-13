@@ -79,6 +79,8 @@ health:  # collapse and failure monitor, see health.py and training_monitor.py
   drift_horizon: 8  # open-loop rollout steps per level
   plan_history: 1  # context frames the planner uses in its rollouts
   stop_after_critical_epochs: 0  # stop after this many epochs with a critical finding (0 = never)
+  probe_at_end: true  # probe every level on held-out worlds when training ends (probe_eval.py)
+  probe_clips: 256
   thresholds: {}  # overrides of health.Thresholds
 level1:
   lr: 5.0e-05

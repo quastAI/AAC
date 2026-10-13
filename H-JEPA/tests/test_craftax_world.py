@@ -16,7 +16,7 @@ import stable_worldmodel as swm  # noqa: E402
 from stable_worldmodel.policy import BasePolicy  # noqa: E402
 
 
-START, OFFSET = 10, 30
+START, OFFSET = 2, 30  # wood is unlocked at frame 5, inside the task
 
 
 class ReplayPolicy(BasePolicy):
@@ -69,7 +69,7 @@ def test_evaluate_from_dataset_replays_recorded_frames(episode, dataset):
     assert len(policy.frames) == OFFSET
     for t, frame in enumerate(policy.frames):
         np.testing.assert_array_equal(frame[0], episode['pixels'][START + t])
-    # The goal frame is reached by replaying the dataset: goal test passes.
+    # Replaying the dataset unlocks the goal's new achievement: success.
     assert results['success_rate'] == 100.0
 
 

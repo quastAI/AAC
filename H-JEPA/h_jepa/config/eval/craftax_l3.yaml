@@ -66,6 +66,12 @@ hierarchical_plan_config:
     action_block: 1
     action_dim: 16
     cost_last_n: 1
+planning_metrics:  # what the planner did and whether to trust it, see planning_metrics.py
+  enabled: true
+  diag_every: 1  # plan diagnostics (open-loop replay in the simulator) every k-th replanning, 0 = off
+  rank_candidates: 8  # chosen + random + perturbed plans compared per diagnostic
+  support_bank_dataset: craftax_expert_train  # dataset for the support metric, null = off
+  support_bank_frames: 4096
 eval:
   num_eval: 50
   goal_offset_steps: 50  # open decision, together with the goal test

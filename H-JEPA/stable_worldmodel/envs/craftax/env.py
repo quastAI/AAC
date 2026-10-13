@@ -14,8 +14,10 @@ Conventions:
     * ``observation``: ``{'state': symbolic observation (1345,)}``. The frame
       is ``render()`` (uint8, 63x63x3), so use ``image_shape=(63, 63)`` in
       ``World`` to keep frames at native resolution.
-    * ``info`` has ``achievements`` (22 flags), ``inventory`` (12 counts) and
-      ``seed``.
+    * ``info`` has ``achievements`` (22 flags), ``inventory`` (12 counts),
+      ``seed``, and once a goal is set ``goal_required`` (number of
+      achievements the goal has and the start lacks) and ``goal_progress``
+      (the share of them unlocked).
     * ``terminated`` means the goal test succeeded (``World`` counts it as
       success). Death and the 10000-step horizon are ``truncated``; the env
       then stays frozen on its last frame.
@@ -143,11 +145,32 @@ def _achievements(state) -> np.ndarray:
     return np.asarray(state.achievements, dtype=np.uint8)
 
 
-def achievements_inventory_test(current, goal) -> bool:
+def required_achievements(goal, start) -> np.ndarray:
+    """Boolean mask of the achievements the goal has and the start lacks."""
+    if goal is None or start is None:
+        return np.zeros(NUM_ACHIEVEMENTS, dtype=bool)
+    return goal['achievements'].astype(bool) & ~start['achievements'].astype(
+        bool
+    )
+
+
+def new_achievements_test(current, goal, start) -> bool:
+    """Success when every achievement that is new in the goal is unlocked.
+
+    The task is defined by progress: the achievements of the goal frame that
+    the start frame does not have. Achievements never lock again, so reaching
+    them in any order and by any route counts. A goal without progress over the
+    start has nothing to reach and never succeeds, so evaluation tasks must
+    contain progress.
+    """
+    required = required_achievements(goal, start)
+    return bool(required.any() and current['achievements'][required].all())
+
+
+def achievements_inventory_test(current, goal, start=None) -> bool:
     """Success when every achievement and inventory count of the goal is met.
 
-    A goal with no progress over the start state is met immediately, so
-    evaluation tasks must be chosen with progress between start and goal.
+    A goal with no progress over the start state is met immediately.
     """
     return bool(
         np.all(current['achievements'] >= goal['achievements'])
@@ -155,7 +178,10 @@ def achievements_inventory_test(current, goal) -> bool:
     )
 
 
-GOAL_TESTS = {'achievements_inventory': achievements_inventory_test}
+GOAL_TESTS = {
+    'new_achievements': new_achievements_test,
+    'achievements_inventory': achievements_inventory_test,
+}
 
 
 class CraftaxClassicEnv(gym.Env):
@@ -165,7 +191,7 @@ class CraftaxClassicEnv(gym.Env):
 
     def __init__(
         self,
-        goal_test: str | Callable = 'achievements_inventory',
+        goal_test: str | Callable = 'new_achievements',
         render_mode: str | None = 'rgb_array',
     ):
         self._sim = _sim()
@@ -187,13 +213,27 @@ class CraftaxClassicEnv(gym.Env):
         self._frame = None
         self._over = False
         self._goal = None
+        self._start = None
+
+    def _snapshot(self) -> dict:
+        return {
+            'achievements': _achievements(self._state),
+            'inventory': _inventory(self._state),
+        }
 
     def _info(self) -> dict:
+        current = self._snapshot()
+        required = required_achievements(self._goal, self._start)
+        reached = current['achievements'].astype(bool)[required]
         return {
             'env_name': self.env_name,
             'seed': np.int64(self._seed),
-            'achievements': _achievements(self._state),
-            'inventory': _inventory(self._state),
+            **current,
+            # how much of the goal's new achievements is unlocked
+            'goal_required': np.int32(required.sum()),
+            'goal_progress': np.float32(
+                reached.mean() if required.any() else 0.0
+            ),
         }
 
     def reset(self, seed=None, options=None):
@@ -210,6 +250,7 @@ class CraftaxClassicEnv(gym.Env):
         self._frame = np.asarray(frame)
         self._over = False
         self._goal = None
+        self._start = self._snapshot()
         return {'state': self._obs}, self._info()
 
     def step(self, action):
@@ -223,7 +264,7 @@ class CraftaxClassicEnv(gym.Env):
         self._over = bool(done)
         info = self._info()
         terminated = self._goal is not None and self.goal_test(
-            info, self._goal
+            info, self._goal, self._start
         )
         truncated = self._over and not terminated
         return {'state': self._obs}, float(reward), terminated, truncated, info
@@ -242,6 +283,7 @@ class CraftaxClassicEnv(gym.Env):
         self._obs = np.asarray(obs, dtype=np.float32)
         self._frame = np.asarray(frame)
         self._over = bool(terminal)
+        self._start = self._snapshot()  # tasks are defined relative to this
 
     def _set_goal_state(self, full_state):
         state = unpack_state(full_state)
@@ -249,6 +291,8 @@ class CraftaxClassicEnv(gym.Env):
             'achievements': _achievements(state),
             'inventory': _inventory(state),
         }
+        if self._start is None:
+            self._start = self._snapshot()
 
     def close(self):
         """Nothing to release: the jitted functions are shared."""
