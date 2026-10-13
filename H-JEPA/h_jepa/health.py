@@ -52,7 +52,7 @@ class Thresholds:
     # vq
     vq_perplexity_norm_critical: float = 0.02  # perplexity / codes
     vq_perplexity_norm_warn: float = 0.15
-    vq_dead_frac_warn: float = 0.5
+    vq_reseed_rate_warn: float = 0.05  # share of codes re-seeded per step (moving average)
     # idm
     idm_lift_critical: float = 0.02  # (acc - chance) / (1 - chance)
     idm_lift_warn: float = 0.10
@@ -298,7 +298,9 @@ def vq_metrics(vq: Any, indices: torch.Tensor | None = None) -> dict[str, float]
         out["perplexity"] = sum(perplexities) / len(perplexities)
         out["perplexity_norm"] = out["perplexity"] / vq.num_codes
         out["usage"] = sum(usages) / len(usages)
-    out["dead_frac"] = (vq.ema_count < vq.dead_threshold).float().mean().item()
+    # codes are re-seeded as soon as they fall below the threshold, so a count below it is never
+    # seen after an update; the re-seed rate is what shows codes that keep dying
+    out["reseed_rate"] = float(getattr(vq, "reseed_rate", 0.0))
     out["num_codes"] = vq.num_codes
     out["groups"] = vq.groups
     return out
@@ -443,9 +445,9 @@ def diagnose_training(summary: dict, thr: Thresholds | None = None) -> list[Find
                     _f(findings, "warn", "VQ_LOW_USE", n,
                        f"codebook perplexity {vq['perplexity']:.1f} of {vq['num_codes']} codes",
                        "few codes in use: a smaller codebook may be enough, or the encoder is under-trained")
-            if vq.get("dead_frac", 0) > thr.vq_dead_frac_warn:
-                _f(findings, "warn", "VQ_DEAD_CODES", n, f"{vq['dead_frac']:.0%} of the codes are dead",
-                   "codes are not being re-seeded fast enough")
+            if vq.get("reseed_rate", 0) > thr.vq_reseed_rate_warn:
+                _f(findings, "warn", "VQ_CODE_CHURN", n, f"{vq['reseed_rate']:.1%} of the codes are re-seeded per step",
+                   "codes keep dying: too few chunks per batch for this many codes, a collapsing encoder, or a threshold that is too high")
 
         idm = m.get("idm") or {}
         if idm.get("lift") is not None:

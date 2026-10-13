@@ -104,6 +104,59 @@ def test_vq_reseeds_dead_codes_in_every_group():
     assert vq.pop_aux()['perplexity'] >= 1.0
 
 
+def padded_batch(garbage):
+    """(2, 3, 4, 8) actions; the last chunk of each clip is cut by the clip end."""
+    inputs = torch.randn(2, 3, 4, 8, generator=torch.Generator().manual_seed(0))
+    mask = torch.zeros(2, 3, 4, dtype=torch.bool)
+    mask[:, 2, 1:] = True  # one real action, then padding
+    inputs[:, 2] = garbage
+    return inputs, mask
+
+
+def test_vq_leaves_cut_chunks_out_of_the_statistics():
+    # a chunk cut by the end of the clip has a code (the token is part of the
+    # sequence) but must not count as a sample for the codebook or the loss
+    vq = make_vq(dead_threshold=0.0)
+    vq(*padded_batch(1000.0))  # initialises the codebook
+    assert vq.codebook.abs().max() < 100  # not from the cut chunks
+    before = vq.ema_count.sum(-1).clone()
+    inputs, mask = padded_batch(-1000.0)
+    vq(inputs, mask)
+    n_counted = 4  # 6 chunks, 2 of them cut
+    expected = 0.99 * before + 0.01 * n_counted
+    assert torch.allclose(vq.ema_count.sum(-1), expected, atol=1e-4)
+
+    vq.eval()
+    vq(*padded_batch(1000.0))
+    loss_a = vq.pop_aux()['loss']
+    vq(*padded_batch(-1000.0))
+    loss_b = vq.pop_aux()['loss']
+    assert torch.allclose(loss_a, loss_b)
+
+
+def test_vq_with_only_cut_chunks_is_harmless():
+    vq = make_vq()
+    inputs = torch.randn(2, 3, 4, 8)
+    mask = torch.ones(2, 3, 4, dtype=torch.bool)
+    out = vq(inputs, mask)
+    assert out.shape == (2, 3, 4)
+    assert vq.pop_aux()['loss'] == 0
+    assert not bool(vq.initialized)  # nothing to initialise from
+
+
+def test_vq_reseed_rate_shows_codes_that_keep_dying():
+    torch.manual_seed(0)
+    vq = make_vq(num_codes=16, decay=0.5, dead_threshold=0.5)
+    cluster = torch.randn(1, 8) * 3
+    for _ in range(10):  # one tight cluster: most codes receive nothing
+        vq((cluster + 0.01 * torch.randn(32, 8)).reshape(4, 8, 1, 8))
+    assert vq.reseed_rate > 0  # re-seeding happened, which dead_frac could not show
+    healthy = make_vq(num_codes=4, dead_threshold=0.0)
+    for _ in range(10):
+        healthy(torch.randn(4, 8, 4, 8))
+    assert healthy.reseed_rate == 0
+
+
 def test_vq_duration_token():
     vq = make_vq(groups=2, durations=(2, 4, 8), default_duration=4)
     assert vq.token_dim == 4 + 3
@@ -235,11 +288,12 @@ def test_hierarchical_training_step(name, levels):
     model, losses = create_world_model(cfg)
     assert model.num_levels == levels
     for level in range(2, levels + 1):
-        assert model.get_level(level).get_action_spec().codebook.shape == (
-            2,
-            64,
-            8,
-        )
+        jepa = model.get_level(level)
+        assert jepa.get_action_spec().codebook.shape == (2, 64, 8)
+        # no dropout before the quantiser: the code of a chunk must not change
+        # from step to step
+        transformer = jepa.action_encoder.encoder.encoder
+        assert all(layer.dropout.p == 0 for layer in transformer.layers)
 
     frames = level1_frames(cfg)
     index = torch.randint(0, 17, (2, frames))

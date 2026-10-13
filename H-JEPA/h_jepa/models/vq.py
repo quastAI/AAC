@@ -54,6 +54,8 @@ class VQActionEncoder(nn.Module):
         commitment: Weight of the commitment loss pulling encoder outputs to
             their codes.
         dead_threshold: A code whose EMA count falls below this is re-seeded.
+            The count is per batch (all-reduced over ranks), so it scales with
+            the batch size.
         eps: Laplace smoothing of the EMA counts.
         durations: Allowed step durations, or None to leave k out of the token.
         default_duration: Duration used when none is passed (one of durations).
@@ -103,6 +105,8 @@ class VQActionEncoder(nn.Module):
         self.register_buffer("ema_sum", torch.zeros(shape))
         self.register_buffer("ema_count", torch.ones(self.groups, self.num_codes))
         self.register_buffer("initialized", torch.zeros((), dtype=torch.bool))
+        # moving average of the share of codes re-seeded per training step (monitoring only)
+        self.register_buffer("reseed_rate", torch.zeros(()), persistent=False)
 
         self.last_indices = None  # (B, T, groups) code indices of the last forward
         self.last_duration_index = None  # (B, T, 1) index into `durations`, or None
@@ -114,9 +118,17 @@ class VQActionEncoder(nn.Module):
     def forward(self, inputs, padding_mask=None, duration=None):
         z = self.encoder(inputs, padding_mask)  # (B, T, code_dim)
         flat = z.reshape(-1, self.groups, self.group_dim).float()  # (N, G, d)
+        if padding_mask is None:
+            counted = torch.ones(flat.size(0), dtype=torch.bool, device=z.device)
+        else:
+            # A chunk cut by the end of the clip is zero-padded. It still gets a code (the
+            # token is part of the sequence), but it is not a sample of what the codes should
+            # represent: it stays out of the codebook statistics, the re-seeding and the
+            # commitment loss.
+            counted = ~padding_mask.any(-1).reshape(-1)  # (N,)
 
-        if self.training and not bool(self.initialized):
-            self._init_codebook(flat)
+        if self.training and not bool(self.initialized) and counted.any():
+            self._init_codebook(flat[counted])
 
         indices = self._nearest(flat)  # (N, G)
         code = self.codebook.float()
@@ -124,15 +136,19 @@ class VQActionEncoder(nn.Module):
         quantized = quantized.reshape(z.shape).to(z.dtype)
 
         offset = indices + torch.arange(self.groups, device=z.device) * self.num_codes
-        counts = torch.bincount(offset.flatten(), minlength=self.groups * self.num_codes).float()
+        counts = torch.bincount(
+            offset[counted].flatten(), minlength=self.groups * self.num_codes
+        ).float()
         counts = counts.reshape(self.groups, self.num_codes)
         if self.training:
-            self._update_codebook(flat, offset, counts.clone())
+            self._update_codebook(flat[counted], offset[counted], counts.clone())
 
         probs = counts / counts.sum(1, keepdim=True).clamp_min(1.0)
         entropy = -(probs * probs.clamp_min(1e-10).log()).sum(1)
+        z_rows, q_rows = z.reshape(-1, self.code_dim), quantized.reshape(-1, self.code_dim)
+        commit = F.mse_loss(z_rows[counted], q_rows[counted].detach()) if counted.any() else z.sum() * 0.0
         self._aux = {
-            "loss": self.commitment * F.mse_loss(z, quantized.detach()),
+            "loss": self.commitment * commit,
             "perplexity": entropy.exp().mean().detach(),
             "usage": (counts > 0).float().mean().detach(),
         }
@@ -165,11 +181,14 @@ class VQActionEncoder(nn.Module):
     def _nearest(self, flat: torch.Tensor) -> torch.Tensor:
         """(N, G, d) -> (N, G) index of the nearest code in each group."""
         code = self.codebook.float()
-        distance = (
-            flat.pow(2).sum(-1, keepdim=True)
-            - 2 * torch.einsum("ngd,gkd->ngk", flat, code)
-            + code.pow(2).sum(-1)
-        )
+        # float32 also under autocast: bf16 dot products are off by about 0.02 for unit-scale
+        # groups, enough to flip near-ties, and planning (float32) would assign other codes
+        with torch.autocast(device_type=flat.device.type, enabled=False):
+            distance = (
+                flat.pow(2).sum(-1, keepdim=True)
+                - 2 * torch.einsum("ngd,gkd->ngk", flat, code)
+                + code.pow(2).sum(-1)
+            )
         return distance.argmin(dim=-1)
 
     @torch.no_grad()
@@ -200,13 +219,15 @@ class VQActionEncoder(nn.Module):
         self.codebook.copy_(self.ema_sum / count.unsqueeze(-1))
 
         dead = self.ema_count < self.dead_threshold  # (G, K)
-        if dead.any():
-            group, code = dead.nonzero(as_tuple=True)
-            rows = torch.randint(0, flat.size(0), (group.numel(),), device=flat.device)
-            seed = flat[rows, group]
-            self.codebook[group, code] = seed
-            self.ema_sum[group, code] = seed
-            self.ema_count[group, code] = 1.0
+        self.reseed_rate.mul_(self.decay).add_(dead.float().mean(), alpha=1 - self.decay)
+        if dead.any():  # synced counts: every rank takes this branch together
+            if flat.size(0) > 0:
+                group, code = dead.nonzero(as_tuple=True)
+                rows = torch.randint(0, flat.size(0), (group.numel(),), device=flat.device)
+                seed = flat[rows, group]
+                self.codebook[group, code] = seed
+                self.ema_sum[group, code] = seed
+                self.ema_count[group, code] = 1.0
             self._sync_codebook()
 
     @torch.no_grad()

@@ -33,6 +33,7 @@ level2:
     projector:
       type: identity
   action_encoder:
+    dropout: 0.0  # none before the quantiser: it would change the code of a chunk from step to step
     output_dim: 16  # code dimension
     input_dim: ${level1.wm.embed_dim}
     max_chunk: ${eval:'${data.dataset.level2.frameskip} + 1'}

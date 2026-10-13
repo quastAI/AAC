@@ -179,7 +179,7 @@ def test_diagnose_training_flags_each_failure():
         'perplexity': 1.0,
         'perplexity_norm': 0.01,
         'num_codes': 64,
-        'dead_frac': 0.9,
+        'reseed_rate': 0.4,
     }
     level['idm'] = {'accuracy': 0.06, 'chance': 0.0588, 'lift': 0.002}
     level['grad'] = {'explosions': 3, 'median': 1e-9}
@@ -208,7 +208,7 @@ def test_diagnose_training_flags_each_failure():
         'GEOM_SATURATES',
         'GEOM_NONMONOTONE',
         'VQ_COLLAPSE',
-        'VQ_DEAD_CODES',
+        'VQ_CODE_CHURN',
         'IDM_CHANCE',
         'GRAD_EXPLOSION',
         'GRAD_VANISHING',
