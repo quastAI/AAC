@@ -62,8 +62,9 @@ env = [
     "opencv-python",
     "stable_baselines3",
     "imageio",
-    "jax",  # OGBench AntMaze expert policy (data collection, eval-task generation)
-    "flax",
+    "jax==0.4.38",  # OGBench AntMaze expert policy; also the Craftax key contract (newer jax splits keys differently)
+    "jaxlib==0.4.38",
+    "flax<=0.10.3",  # 0.10.4+ needs a newer jax
     "craftax==1.6.1",  # Craftax-Classic env (swm/CraftaxClassic-v1)
 ]
 

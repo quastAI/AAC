@@ -47,7 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 
 jax_envs = [
-    "craftax>=1.4.2",
+    "craftax==1.6.1",  # the episode contract (keys, state layout) is pinned to it
     "h5py",
     "gymnax==0.0.6",
     "playground>=0.0.4",

@@ -64,6 +64,10 @@ from craftax.craftax_env import make_craftax_env_from_name
 from purejaxql.pqn_rnn_craftax import RNNQNetwork
 from purejaxql.utils.save_load import load_params
 
+# The episode contract (split of PRNGKey(seed), fold_in per step) must not depend on the default of
+# the installed jax: jax >= 0.5 switched it and would generate other worlds.
+jax.config.update("jax_threefry_partitionable", False)
+
 ENV_NAME = "Craftax-Classic-Symbolic-v1"
 DIAMOND = Achievement.COLLECT_DIAMOND.value
 NUM_ACHIEVEMENTS = len(Achievement)

@@ -51,6 +51,10 @@ from craftax.craftax_env import make_craftax_env_from_name  # noqa: E402
 from gymnasium import spaces  # noqa: E402
 
 
+# The episode contract (split of PRNGKey(seed), fold_in per step) must not depend on the default of
+# the installed jax: jax >= 0.5 switched it and would generate other worlds.
+jax.config.update('jax_threefry_partitionable', False)
+
 ENV_NAME = 'Craftax-Classic-Symbolic-v1'
 NUM_ACTIONS = 17
 NUM_ACHIEVEMENTS = len(Achievement)

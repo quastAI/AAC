@@ -134,7 +134,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 
 ### Planning environment (H-JEPA)
 
-`swm/CraftaxClassic-v1` ([H-JEPA/stable_worldmodel/envs/craftax](H-JEPA/stable_worldmodel/envs/craftax)): pixel frames, symbolic observation, snapshot state API. Needs `craftax==1.6.1` (the `env` extra). JAX runs on the CPU unless `JAX_PLATFORMS` is set.
+`swm/CraftaxClassic-v1` ([H-JEPA/stable_worldmodel/envs/craftax](H-JEPA/stable_worldmodel/envs/craftax)): pixel frames, symbolic observation, snapshot state API. Needs `craftax==1.6.1` with `jax==0.4.38` (both pinned in the `env` extra; jax 0.5+ splits keys differently and would generate other worlds, so the env and the collector also set `jax_threefry_partitionable=False`). JAX runs on the CPU unless `JAX_PLATFORMS` is set.
 
 - Use `image_shape=(63, 63)` in `World` (native resolution). `reset(seed=s)` generates the world of dataset episode `s`.
 - `terminated` = goal test succeeded (`World` counts it as success). Death and the 10000-step horizon are `truncated`.
