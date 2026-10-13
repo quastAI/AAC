@@ -179,6 +179,24 @@ def test_diamond_rate_and_unlocks_per_required_achievement():
     assert 'diamond' not in pm.summarize_planning(records[2:], info[2:])
 
 
+def test_subgoal_tracking_accounts_for_the_time_elapsed():
+    # a subgoal 4 steps ahead, checked after 2: half the way is what counts
+    def goal(progress, elapsed=2, due=4):
+        return {
+            'elapsed': elapsed,
+            'progress': progress,
+            'level': 2,
+            'expected': min(1.0, elapsed / due),
+        }
+
+    rec = record([0, 0.5], [1, 0.5], plan())
+    rec['subgoals'] = [goal(0.3), goal(0.1), goal(0.8, elapsed=4)]
+    sg = pm.summarize_planning([rec])['subgoals']
+    # 0.3 >= 0.25 yes, 0.1 >= 0.25 no, 0.8 >= 0.5 yes
+    assert sg['n'] == 3 and sg['reached_frac'] == pytest.approx(2 / 3)
+    assert sg['expected_mean'] == pytest.approx((0.5 + 0.5 + 1.0) / 3)
+
+
 def test_groups_by_required_count_and_task_info():
     records = [
         record([0, 1], [1, 0.1], plan(), required=1),

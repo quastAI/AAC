@@ -649,7 +649,7 @@ def diagnose_planning(summary: dict, thr: Thresholds | None = None) -> list[Find
     sg = summary.get("subgoals") or {}
     if sg and sg.get("reached_frac", 1) < thr.subgoal_reach_warn:
         _f(f, "warn", "SUBGOAL_NOT_TRACKED", None,
-           f"only {sg['reached_frac']:.0%} of the upper-level subgoals were approached over half way",
+           f"only {sg['reached_frac']:.0%} of the upper-level subgoals were approached by half of what the elapsed time allows",
            "the level below cannot follow the level above: check the action cost and the horizons")
 
     groups = summary.get("by_group") or {}
@@ -715,7 +715,8 @@ def render_planning_report(summary: dict, findings: list[Finding]) -> str:
     sg = summary.get("subgoals") or {}
     if sg:
         out += ["## Subgoal tracking", "", f"{sg['n']} subgoals: mean progress {_fmt(sg['progress_mean'])}, "
-                f"approached over half way {_fmt(sg['reached_frac'])}", ""]
+                f"approached by half of what the elapsed time allows {_fmt(sg['reached_frac'])} "
+                f"(the subgoal is checked after {_fmt(sg.get('expected_mean'))} of the time it lies ahead)", ""]
     return "\n".join(out) + "\n"
 
 

@@ -338,11 +338,18 @@ class RecordingPolicy(WorldModelPolicy):
             if pred is not None and pred.shape[1] > 1:
                 for i in range(n):
                     if self._active(i):
-                        self._pending[i] = {"level": top, "sub": pred[i, 1].float(), "ctx": pred[i, 0].float(), "step": step}
+                        self._pending[i] = {
+                            "level": top, "sub": pred[i, 1].float(), "ctx": pred[i, 0].float(), "step": step,
+                            "due": self._env_steps_per_step(top),
+                        }  # fmt: skip
 
         every = int(self.mcfg.get("diag_every", 1))
         if every and self._replans % every == 0 and not self._diag_disabled and "actions" in outputs:
             self._plan_diagnostics(prepared, outputs["actions"], goal_z[1], n)
+
+    def _env_steps_per_step(self, level: int) -> int:
+        """Environment steps one step of `level` spans (the subgoal lies this far ahead)."""
+        return max(1, math.prod(int(m.temporal_stride) for m in self.levels[1:level]))
 
     def _check_subgoals(self, obs_z, step) -> None:
         for i, p in list(self._pending.items()):
@@ -351,9 +358,14 @@ class RecordingPolicy(WorldModelPolicy):
                 continue
             now = obs_z[p["level"]][i].cpu()
             err, start = float(mse(now, p["sub"].cpu())), float(mse(p["ctx"].cpu(), p["sub"].cpu()))
+            # The subgoal lies `due` environment steps ahead but the plan is replaced every
+            # `receding_horizon` steps, so it is checked after `elapsed` < due: `expected` is
+            # how far a straight approach would have come by then.
+            elapsed = step - p["step"]
             self.records[i]["subgoals"].append(
-                {"elapsed": step - p["step"], "progress": 1.0 - err / (start + EPS), "level": p["level"]}
-            )
+                {"elapsed": elapsed, "progress": 1.0 - err / (start + EPS), "level": p["level"],
+                 "expected": min(1.0, elapsed / p["due"])}
+            )  # fmt: skip
             self._pending.pop(i)
 
     # ------------------------------------------------------ plan diagnostics
@@ -588,6 +600,8 @@ def summarize_planning(records: list[dict], task_info: list[dict] | None = None)
         out["subgoals"] = {
             "n": len(subgoals),
             "progress_mean": _mean([g["progress"] for g in subgoals]),
-            "reached_frac": float(np.mean([g["progress"] > 0.5 for g in subgoals])),
+            # at least half of the way a straight approach would have gone in the elapsed time
+            "reached_frac": float(np.mean([g["progress"] >= 0.5 * g.get("expected", 1.0) for g in subgoals])),
+            "expected_mean": _mean([g.get("expected", 1.0) for g in subgoals]),
         }
     return out
