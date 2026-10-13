@@ -28,3 +28,8 @@ register(
     id='swm/OGBAntMaze-v0',
     entry_point='stable_worldmodel.envs.ogbench.antmaze_env:AntMazeEnv',
 )
+
+register(
+    id='swm/CraftaxClassic-v1',
+    entry_point='stable_worldmodel.envs.craftax.env:CraftaxClassicEnv',
+)

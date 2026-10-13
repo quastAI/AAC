@@ -64,6 +64,7 @@ env = [
     "imageio",
     "jax",  # OGBench AntMaze expert policy (data collection, eval-task generation)
     "flax",
+    "craftax==1.6.1",  # Craftax-Classic env (swm/CraftaxClassic-v1)
 ]
 
 [dependency-groups]

@@ -286,7 +286,10 @@ class EverythingToInfoWrapper(gym.Wrapper):
         if isinstance(info['action'], dict):
             raise NotImplementedError
         else:
-            info['action'] = np.full_like(info['action'], np.nan)
+            # no action yet: NaN for continuous actions, -1 for discrete ones
+            action = np.asarray(info['action'])
+            fill = np.nan if np.issubdtype(action.dtype, np.floating) else -1
+            info['action'] = np.full_like(action, fill)
         return obs, info
 
     def step(self, action: Any) -> tuple[Any, float, bool, bool, dict]:
