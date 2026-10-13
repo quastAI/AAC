@@ -52,6 +52,22 @@ def _pred_component(pred, output, level, component):
     return pred.narrow(dim, pixel_size, pred.size(dim) - pixel_size)
 
 
+def _discrete_idm_target(output, level, level_cfg):
+    """Class indices (B, T, slots) the IDM must predict, -1 = no action; None if continuous.
+
+    Level 1 with discrete actions: the one-hot action stream, one slot per frameskip step.
+    Upper levels with a VQ action encoder: the code index of each chunk.
+    """
+    num_actions = level_cfg.wm.get("num_actions", None) if level == 1 else None
+    if num_actions is not None:
+        onehot = output["action_level1"]
+        onehot = onehot.reshape(*onehot.shape[:2], -1, int(num_actions))
+        target = onehot.argmax(-1)
+        target[onehot.sum(-1) == 0] = -1
+        return target
+    return output.get(f"action_index_{level}")
+
+
 def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
     """Encode HJEPA inputs, predict next states, and compute per-level losses."""
     normalize_batch(batch)
@@ -160,9 +176,23 @@ def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
 
         idm_coeff = float(level_cfg.get("idm_coeff", 0.0))
         if idm_coeff > 0:
-            idm_loss = jepa.idm_loss_fn(emb, act_emb)
+            idm_target = _discrete_idm_target(output, level, level_cfg)
+            if idm_target is None:
+                idm_loss = jepa.idm_loss_fn(emb, act_emb)
+            else:
+                idm_loss = jepa.idm_loss_fn(emb, idm_target)
+                output[f"idm_accuracy_loss{level_suffix}"] = jepa.idm_loss_fn.last_accuracy
             output[f"idm_loss{level_suffix}"] = idm_loss
             level_loss = level_loss + idm_coeff * idm_loss
+
+        pop_vq_aux = getattr(jepa.action_encoder, "pop_aux", None)
+        vq_aux = pop_vq_aux() if callable(pop_vq_aux) else None
+        if vq_aux is not None:
+            # the *_loss names are what gets logged: perplexity and usage watch for codebook collapse
+            output[f"vq_loss{level_suffix}"] = vq_aux["loss"]
+            output[f"vq_perplexity_loss{level_suffix}"] = vq_aux["perplexity"]
+            output[f"vq_usage_loss{level_suffix}"] = vq_aux["usage"]
+            level_loss = vq_aux["loss"] if level_loss is None else level_loss + vq_aux["loss"]
 
         if level_loss is None:
             continue
@@ -180,13 +210,14 @@ def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
 
 
 def create_world_model(cfg):
-    from loss import InverseDynamicsLoss, InverseDynamicsModel, SIGReg
+    from loss import DiscreteInverseDynamicsLoss, InverseDynamicsLoss, InverseDynamicsModel, SIGReg
     from models.encoders.build_encoder import build_encoder
     from models.encoders.seq_encoder import SequenceEncoder, SequenceMLPEncoder
     from models.hjepa import HJEPA
     from models.jepa import FusionEncoder, JEPA, ProjectedEncoder, ProjectedPredictor
     from models.module import Embedder, build_projector
     from models.predictors.predictors import ARPredictor, CausalTransformerPredictor
+    from models.vq import VQActionEncoder
 
     jepas = []
     embed_dims = {}
@@ -290,15 +321,19 @@ def create_world_model(cfg):
 
         action_encoder = None
         queue_size = 0
+        vq_cfg = None
         if "action_encoder" in level_cfg:
             action_encoder_kwargs = dict(level_cfg.action_encoder)
             queue_size = int(action_encoder_kwargs.pop("queue_size", 0))
+            vq_cfg = action_encoder_kwargs.pop("vq", None)
             if action_encoder_kwargs.pop("type", "sequence") == "mlp":
                 action_encoder = SequenceMLPEncoder(
                     temporal_stride=int(level_cfg.get("stride", 1)), **action_encoder_kwargs
                 )
             else:
                 action_encoder = SequenceEncoder(**action_encoder_kwargs)
+            if vq_cfg is not None:
+                action_encoder = VQActionEncoder(action_encoder, **dict(vq_cfg))
 
         action_embed_kwargs = dict(level_cfg.get("action_embed", {}))
         if action_embed_kwargs.pop("type", None) == "identity":
@@ -325,13 +360,31 @@ def create_world_model(cfg):
         )
 
         if float(level_cfg.get("idm_coeff", 0.0)) > 0:
-            jepa.idm_loss_fn = InverseDynamicsLoss(
-                InverseDynamicsModel(
-                    state_dim=embed_dim,
-                    hidden_dim=int(level_cfg.idm.hidden_dim),
-                    action_dim=int(level_cfg.predictor.action_dim),
+            if level == 1 and level_cfg.wm.get("num_actions", None) is not None:
+                # discrete level-1 actions: classify the action(s) of each step
+                slots, classes = int(cfg.data.dataset.level1.frameskip), int(level_cfg.wm.num_actions)
+            elif vq_cfg is not None:
+                slots, classes = 1, int(vq_cfg["num_codes"])  # classify the code of each chunk
+            else:
+                slots = classes = None
+            if classes is None:
+                jepa.idm_loss_fn = InverseDynamicsLoss(
+                    InverseDynamicsModel(
+                        state_dim=embed_dim,
+                        hidden_dim=int(level_cfg.idm.hidden_dim),
+                        action_dim=int(level_cfg.predictor.action_dim),
+                    )
                 )
-            )
+            else:
+                jepa.idm_loss_fn = DiscreteInverseDynamicsLoss(
+                    InverseDynamicsModel(
+                        state_dim=embed_dim,
+                        hidden_dim=int(level_cfg.idm.hidden_dim),
+                        action_dim=slots * classes,
+                    ),
+                    num_slots=slots,
+                    num_classes=classes,
+                )
 
         jepas.append(jepa)
 

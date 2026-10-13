@@ -1,0 +1,86 @@
+# Craftax-Classic: 3-level hierarchical planning, shared by H-JEPA and HWM. CEM over discrete
+# actions at level 1 and over VQ codes above. Sample counts and horizons are placeholders;
+# the level-1 horizon must lie in [stride, 2 * stride) (one subgoal per upper step).
+# Tasks: see craftax_flat.yaml.
+cache_dir: ${oc.env:HJEPA_HOME}
+world:
+  env_name: swm/CraftaxClassic-v1
+  num_envs: ${eval.num_eval}
+  max_episode_steps: ???
+  history_size: 1
+  frame_skip: 1
+dataset:
+  stats: craftax_expert_train
+  keys_to_cache:
+  - action
+  level1:
+    frameskip: 1
+    num_steps: 1
+seed: 42
+policy: null
+dump_eval_trajs_path: null
+load_eval_trajs_path: null
+solver:
+  _target_: hierarchical_solver.HierarchicalSolver
+  solvers:
+    level1:
+      _target_: stable_worldmodel.solver.CategoricalCEMSolver
+      num_samples: 300
+      n_iters: 10
+      topk: 30
+      batch_size: 5
+      device: cuda
+      seed: ${seed}
+    level2:
+      _target_: stable_worldmodel.solver.CategoricalCEMSolver
+      num_samples: 300
+      n_iters: 10
+      topk: 30
+      batch_size: 5
+      device: cuda
+      seed: ${seed}
+    level3:
+      _target_: stable_worldmodel.solver.CategoricalCEMSolver
+      num_samples: 300
+      n_iters: 10
+      topk: 30
+      batch_size: 5
+      device: cuda
+      seed: ${seed}
+hierarchical_plan_config:
+  receding_horizon: 2
+  level1:
+    horizon: 4
+    pre_decay_horizon: 4
+    action_block: 1
+    cost_last_n: 1
+    action_cost_weight: 0.0
+  level2:
+    horizon: 4
+    pre_decay_horizon: 4
+    action_block: 1
+    action_dim: 16
+    cost_last_n: 1
+  level3:
+    horizon: 4
+    action_block: 1
+    action_dim: 16
+    cost_last_n: 1
+eval:
+  num_eval: 50
+  goal_offset_steps: 50  # open decision, together with the goal test
+  eval_budget: 100
+  img_size: 63
+  dataset_name: craftax_expert_val
+  chunk_size: null  # chunked, resumable eval needs load_eval_trajs_path
+  callables:
+  - method: _set_state
+    args:
+      full_state:
+        value: full_state
+  - method: _set_goal_state
+    args:
+      full_state:
+        value: goal_full_state
+output:
+  dir: null

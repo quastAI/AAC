@@ -175,7 +175,17 @@ python eval.py --config-name craftax_flat policy=<run> load_eval_trajs_path=<tas
 
 Planning at level 1 uses `stable_worldmodel.solver.CategoricalCEMSolver`: CEM over one categorical distribution per planned step, forward passes only, candidates scored with `model.get_cost`. It has the same `configure` / `solve` interface as `GradientSolver` (levels above 1 keep the gradient solver) and writes the same `solve_records`, marked `backward: false`.
 
-Checked on CPU with a small random-policy dataset: training for an epoch, the task dump, and planning on the real environment all run end to end. The resulting success rate is meaningless there, because of the goal-test caveat above and an untrained model. IDM with one-hot targets works through the existing MSE loss; a cross-entropy variant is an option for E5.
+### Upper levels: discrete codes, and the IDM at every level
+
+The latent actions of the upper levels are vector-quantized (`levelN.action_encoder.vq`, `h_jepa/models/vq.py`). The sequence encoder that pools a chunk of lower-level actions is followed by a codebook (EMA updates, commitment loss, dead codes re-seeded from the batch, straight-through gradient), so an upper-level action is a code index. The planner then searches discrete actions at every level: `CategoricalCEMSolver` at level 1 plans the 17 actions, and at levels above it plans codes and passes the code vectors to the level's model (`get_action_codebook`). Removing the `vq:` block gives the continuous latent actions again (planned with the gradient solver), so the quantization is one config switch.
+
+Codebook collapse is the main risk, so training logs `vq_perplexity_loss_levelN` (effective number of codes in use, 1 = collapsed) and `vq_usage_loss_levelN` (fraction of codes used in the batch). The first validation pass before training shows perplexity 1 because the codebook is only initialised on the first training forward.
+
+The IDM is on at every level (`idm_coeff: 0.1`, a placeholder weight; E5 switches it per model). It is a cross-entropy classifier of the action taken between two consecutive latent states: the action index at level 1 (one slot per frameskip step) and the code index of each chunk above. It logs `idm_accuracy_loss_levelN`; chance is 1/17 at level 1 and 1/128 above. The same head could later score the plausibility of planned transitions.
+
+Configs: `craftax_hjepa_l2/l3` and `craftax_hwm_l2/l3` (HWM: identity encoders and no SIGReg above level 1, same VQ), with `eval/craftax_l2/l3` using CEM at every level. The strides (4), the codebook (128 codes of dimension 16), the horizons and the sample counts are placeholders. The stride is to be derived from the data (E2), and the level-1 horizon must lie in [stride, 2 * stride).
+
+Checked on CPU with a small random-policy dataset, for the single-level model and for the 2-level H-JEPA (a few batches): training for an epoch, the task dump, and planning on the real environment all run end to end. The resulting success rate is meaningless there, because of the goal-test caveat above and an untrained model.
 
 ## Compute and roadmap
 

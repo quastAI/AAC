@@ -1,4 +1,4 @@
-"""Cross-entropy method over discrete actions for model-based planning."""
+"""Cross-entropy method over discrete actions or action codes for planning."""
 
 import time
 from typing import Any
@@ -21,9 +21,14 @@ class CategoricalCEMSolver(torch.nn.Module):
     Every planned step holds one independent categorical distribution, which
     starts uniform. Each iteration samples `num_samples` action sequences,
     scores them with `model.get_cost`, and moves the distributions toward the
-    `topk` cheapest sequences. Candidates are passed to the model as one-hot
-    vectors of size `num_actions * action_block`, the encoding the world model
-    is trained on, and the best sequence found is returned as action indices.
+    `topk` cheapest sequences.
+
+    Level 1 plans the environment's discrete actions and passes them to the
+    model as one-hot vectors of size `num_actions * action_block`, the encoding
+    the world model is trained on. Levels above 1 plan the codes of the VQ
+    action encoder (`model.get_action_codebook()`) and pass the code vectors.
+    `solve` returns the best sequence as `action_indices`; `actions` holds the
+    indices at level 1 and the code vectors above it.
 
     Args:
         model: World model implementing the Costable protocol.
@@ -66,6 +71,7 @@ class CategoricalCEMSolver(torch.nn.Module):
 
         self._n_envs = None
         self._num_actions = None
+        self._code_dim = None
         self._config = None
         # One entry per solve(), same layout as GradientSolver.solve_records.
         self.solve_records = []
@@ -79,24 +85,28 @@ class CategoricalCEMSolver(torch.nn.Module):
         level: int = 1,
     ) -> None:
         """Configure the solver with environment specifications."""
-        if level != 1:
-            raise NotImplementedError(
-                'CategoricalCEMSolver plans discrete actions, which only '
-                'level 1 has; use the gradient solver for upper levels.'
-            )
-        if isinstance(action_space, gym.spaces.MultiDiscrete):
-            num_actions = int(np.max(action_space.nvec))
-        elif isinstance(action_space, gym.spaces.Discrete):
-            num_actions = int(action_space.n)
+        self.level = int(level)
+        if self.level == 1:
+            if isinstance(action_space, gym.spaces.MultiDiscrete):
+                num_actions = int(np.max(action_space.nvec))
+            elif isinstance(action_space, gym.spaces.Discrete):
+                num_actions = int(action_space.n)
+            else:
+                raise TypeError(
+                    f'Discrete action space required, got {action_space}.'
+                )
         else:
-            raise TypeError(
-                f'Discrete action space required, got {action_space}.'
-            )
+            codebook = self.model.get_action_codebook()
+            if codebook is None:
+                raise ValueError(
+                    f'Level {self.level} has no VQ action codebook; CEM needs '
+                    'discrete actions (use the gradient solver otherwise).'
+                )
+            num_actions, self._code_dim = codebook.shape
         self._action_space = action_space
         self._n_envs = n_envs
         self._config = config
-        self.level = int(level)
-        self._num_actions = num_actions
+        self._num_actions = int(num_actions)
 
     @property
     def n_envs(self) -> int:
@@ -105,8 +115,9 @@ class CategoricalCEMSolver(torch.nn.Module):
 
     @property
     def action_dim(self) -> int:
-        """One-hot action size fed to the model, including action_block."""
-        return self._num_actions * self._config.action_block
+        """Action size fed to the model, including action_block."""
+        size = self._num_actions if self.level == 1 else self._code_dim
+        return size * self._config.action_block
 
     @property
     def horizon(self) -> int:
@@ -117,10 +128,12 @@ class CategoricalCEMSolver(torch.nn.Module):
         """Make solver callable, forwarding to solve()."""
         return self.solve(*args, **kwargs)
 
-    def _onehot(self, indices: torch.Tensor) -> torch.Tensor:
-        """(b, S, H, block) indices -> (b, S, H, block * num_actions)."""
-        onehot = F.one_hot(indices, self._num_actions).float()
-        return onehot.flatten(start_dim=-2)
+    def _decode(self, indices: torch.Tensor) -> torch.Tensor:
+        """(b, S, H, block) indices -> (b, S, H, block * action size)."""
+        if self.level == 1:
+            return F.one_hot(indices, self._num_actions).float().flatten(-2)
+        codebook = self.model.get_action_codebook().detach()
+        return codebook.to(indices.device).float()[indices].flatten(-2)
 
     def _update_probs(
         self,
@@ -142,7 +155,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         self, info_dict: dict, actions: torch.Tensor
     ) -> dict:
         """Roll out the model once with the chosen actions."""
-        candidates = self._onehot(actions.to(self.device).unsqueeze(1))
+        candidates = self._decode(actions.to(self.device).unsqueeze(1))
         info_dict = expand_info_dict_for_samples(
             info_dict, 0, self.n_envs, 1, self.device
         )
@@ -218,7 +231,7 @@ class CategoricalCEMSolver(torch.nn.Module):
                 current = expanded.copy()
                 current['cost_last_n'] = cost_last_n
                 current['intermediate_cost_weight'] = intermediate_cost_weight
-                costs = self.model.get_cost(current, self._onehot(samples))
+                costs = self.model.get_cost(current, self._decode(samples))
                 for k in ('embed_0', 'goal_embed_0'):  # encode once per solve
                     expanded.setdefault(k, current[k])
                 assert costs.shape == (bs, self.num_samples), (
@@ -239,14 +252,18 @@ class CategoricalCEMSolver(torch.nn.Module):
             best_actions_list.append(best.cpu())
             per_env_time.extend([time.time() - batch_t0] * bs)
 
-        outputs = {'actions': torch.cat(best_actions_list, dim=0)}
+        indices = torch.cat(best_actions_list, dim=0)
+        outputs = {'action_indices': indices}
+        outputs['actions'] = (
+            indices if self.level == 1 else self._decode(indices).cpu()
+        )
         outputs['predictions'] = self._rollout_final_actions(
-            info_dict, outputs['actions']
+            info_dict, indices
         )
         end_time = time.time()
         self.solve_records.append(
             {
-                'level': 1,
+                'level': self.level,
                 'solver': 'categorical_cem',
                 'backward': False,  # forward passes only, unlike GD
                 'horizon': int(planning_horizon),

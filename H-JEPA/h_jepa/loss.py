@@ -77,3 +77,34 @@ class InverseDynamicsLoss(nn.Module):
         pred = self.idm(emb[:, :-1].flatten(0, 1), emb[:, 1:].flatten(0, 1))  # [B*(T-1), A]
         target = action[:, : emb.size(1) - 1].flatten(0, 1)  # [B*(T-1), A]
         return F.mse_loss(pred, target.detach())
+
+
+class DiscreteInverseDynamicsLoss(nn.Module):
+    """Cross-entropy of the IDM prediction of the action taken between z_t and z_t+1.
+
+    The target holds one class index per slot (frameskip actions at level 1, one
+    code at the upper levels); -1 marks "no action" and is ignored. The accuracy
+    of the last call is kept in `last_accuracy` for logging.
+    """
+
+    def __init__(self, idm, num_slots: int, num_classes: int):
+        super().__init__()
+        self.idm = idm
+        self.num_slots, self.num_classes = int(num_slots), int(num_classes)
+        self.last_accuracy = None
+
+    def forward(self, emb, target):
+        """
+        emb: (B, T, D), target: (B, T or T-1, num_slots) long, -1 = ignore
+        """
+        logits = self.idm(emb[:, :-1].flatten(0, 1), emb[:, 1:].flatten(0, 1))
+        logits = logits.reshape(-1, self.num_slots, self.num_classes)
+        target = target[:, : emb.size(1) - 1].flatten(0, 1)  # [B*(T-1), slots]
+        valid = target >= 0
+        if not valid.any():
+            self.last_accuracy = emb.new_zeros(())
+            return logits.sum() * 0.0
+        loss = F.cross_entropy(logits[valid], target[valid])
+        with torch.no_grad():
+            self.last_accuracy = (logits[valid].argmax(-1) == target[valid]).float().mean()
+        return loss

@@ -1,0 +1,62 @@
+# Craftax-Classic: HWM baseline: upper levels have identity encoders and no SIGReg. 2 levels. The upper levels quantize their
+# latent actions (VQ), so the planner searches discrete codes at every level.
+# Stride 4 is a placeholder until it is derived from the data (E2).
+defaults:
+- base/craftax
+- _self_
+output_model_name: craftax_hwm_l2
+num_levels: 2
+data:
+  dataset:
+    level2:
+      frameskip: ${level2.stride}
+      window_size: ${level2.window_size}
+      num_steps: ${eval:'${level2.wm.history_size} + ${level2.wm.rollout_n}'}
+planning_eval:
+  config_name: craftax_l2
+level2:
+  lr: 1.0e-05
+  stride: 4
+  window_size: 1
+  idm_coeff: 0.1  # cross-entropy on the code of each chunk (E5: set per model)
+  idm:
+    hidden_dim: 256
+  wm:
+    history_size: 3
+    rollout_n: 1
+    rollout_loss_weight: 1.0
+    embed_dim: ${level1.wm.embed_dim}
+    use_proprio: false
+  encoder:
+    type: identity
+    input_dim: ${level1.wm.embed_dim}
+    projector:
+      type: identity
+  action_encoder:
+    output_dim: 16  # code dimension
+    input_dim: ${level1.wm.embed_dim}
+    max_chunk: ${eval:'${data.dataset.level2.frameskip} + 1'}
+    queue_size: 4000
+    vq:
+      num_codes: 128
+      decay: 0.99
+      commitment: 0.25
+      dead_threshold: 1.0
+  action_embed:
+    patch_embed: false
+    input_dim: ${level2.action_encoder.output_dim}
+  predictor:
+    depth: 6
+    heads: 16
+    mlp_dim: 2048
+    dim_head: 64
+    dropout: 0.1
+    emb_dropout: 0.0
+    hidden_dim: 192
+    projector:
+      type: mlp
+  loss:
+    embed:
+      sigreg:
+        enabled: false
+        weight: 0.09

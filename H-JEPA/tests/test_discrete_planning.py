@@ -71,8 +71,12 @@ class ToyCost:
 
     level = 1
 
-    def __init__(self, num_actions, block):
+    def __init__(self, num_actions, block, codebook=False):
         self.num_actions, self.block = num_actions, block
+        self.codebook = torch.eye(num_actions) if codebook else None
+
+    def get_action_codebook(self):
+        return self.codebook
 
     def get_cost(self, info, candidates):
         b, s, h, _ = candidates.shape
@@ -133,10 +137,33 @@ def test_expand_info_dict_for_samples():
     assert out['array'].shape == (2, 4) and out['other'] == 'text'
 
 
+def test_cem_plans_codes_above_level_1():
+    n_envs, horizon, num_codes = 2, 4, 6
+    model = ToyCost(num_codes, 1, codebook=True)  # one-hot codes
+    solver = CategoricalCEMSolver(
+        model, num_samples=200, n_iters=12, topk=20, seed=0
+    )
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17] * n_envs),  # not used
+        n_envs=n_envs,
+        config=PlanConfig(horizon=horizon, receding_horizon=1),
+        level=2,
+    )
+    target = torch.randint(0, num_codes, (n_envs, horizon, 1))
+    out = solver.solve({'target': target}, planning_horizon=horizon)
+
+    assert torch.equal(out['action_indices'], target)
+    # `actions` are the code vectors the upper-level model consumes
+    assert out['actions'].shape == (n_envs, horizon, num_codes)
+    assert torch.equal(out['actions'].argmax(-1), target[..., 0])
+    assert solver.action_dim == num_codes
+    assert solver.solve_records[0]['level'] == 2
+
+
 def test_cem_rejects_unsupported_spaces():
     solver = CategoricalCEMSolver(ToyCost(5, 1))
     config = PlanConfig(horizon=2, receding_horizon=1)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match='codebook'):
         solver.configure(
             action_space=gym.spaces.MultiDiscrete([5]),
             n_envs=1,

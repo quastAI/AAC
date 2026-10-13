@@ -349,8 +349,15 @@ class JEPA(nn.Module):
                 latent_actions = self.action_encoder(info["action"], action_mask)
             self._update_latent_action_queue(latent_actions)
             info["action_0"] = self.action_embed(latent_actions)
+            if getattr(self.action_encoder, "last_indices", None) is not None:
+                info["action_index_0"] = self.action_encoder.last_indices
 
         return info
+
+    def get_action_codebook(self) -> torch.Tensor | None:
+        """Code vectors of the VQ action encoder (num_codes, dim); None if continuous."""
+        codebook = getattr(self.action_encoder, "codebook", None)
+        return codebook if torch.is_tensor(codebook) else None
 
     def predict(self, emb, act_emb):
         """Predict next state embedding
