@@ -58,11 +58,11 @@ action_N : (B, T, A)
 
 **Image preprocessing**: `ToImage` + `Resize(img_size)` + ImageNet mean/std normalization, applied to all `pixels_*` columns.
 
-**Action stacking (level 1)**: because the dataset skips 5 real steps between observations, the `frameskip` actions taken in between are concatenated, so the level-1 action vector has dimension `frameskip × raw_action_dim`.
+**Action stacking (level 1)**: because the dataset skips 5 real steps between observations, the `frameskip` actions taken in between are concatenated, so the level-1 action vector has dimension `frameskip × raw_action_dim`. With discrete actions (Craftax) each step is a one-hot of `num_actions` (NaN becomes zeros) and the vector has dimension `frameskip × num_actions`.
 
-**Action encoding (level 2+)**: an `action_encoder` (a small sequence encoder) compresses a chunk of lower-level action embeddings into a fixed-size latent action, the macro-action the level's planner optimizes. In model-side chunking, action chunks have length `levelN.stride`, independent of `levelN.window_size`.
+**Action encoding (level 2+)**: an `action_encoder` (a small sequence encoder) compresses a chunk of lower-level action embeddings into a fixed-size latent action, the macro-action the level's planner optimizes. With a `vq` block (`models/vq.py`, `VQActionEncoder`) the latent action is quantised: `groups` codebooks of `num_codes` codes, EMA-updated, dead codes re-seeded, straight-through gradient. The code indices are exported as `action_index_N` (and the step duration as `duration_index_N`) and are cropped like the other level keys; chunks cut by the end of a clip stay out of the codebook statistics. In model-side chunking, action chunks have length `levelN.stride`, independent of `levelN.window_size`.
 
-**Non-pixel columns** are z-score normalized using per-column mean/std computed on the training set.
+**Non-pixel columns** are z-score normalized using per-column mean/std computed on the training set; discrete action columns are one-hot and not normalised (the normalizer artifact records `num_actions`).
 
 ---
 
@@ -180,7 +180,7 @@ For `rollout_n>1`, the model rolls out autoregressively from the full `history_s
 | `teacher_forcing_loss` | One-step teacher-forced MSE anchor |
 | `rollout_loss` | Autoregressive full-history rollout MSE, logged when `rollout_n > 1` |
 
-Total loss per level: `pred_loss + sigreg_weight * sigreg_loss`.
+Total loss per level: `pred_loss + sigreg_weight * sigreg_loss`, plus `idm_coeff * idm_loss` (cross-entropy over the action index at level 1 or the code indices above, MSE for continuous actions), the action-SIGReg term if `action_sigreg_coeff > 0`, and the VQ commitment loss above level 1. Statistics such as `vq_perplexity_loss_levelN`, `vq_usage_loss_levelN` and `idm_accuracy_loss_levelN` are logged only (the logger keeps keys that contain `loss`) and are not part of the total.
 
 Total loss: sum across all trainable levels.
 

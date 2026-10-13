@@ -129,7 +129,7 @@ def _num(x) -> float | None:
 
 
 def effective_rank(e: torch.Tensor) -> dict[str, float]:
-    """Exponential of the entropy of the normalised singular values of the centred latents."""
+    """Exponential of the entropy of the normalised squared singular values (the covariance spectrum) of the centred latents."""
     x = _flat(e)
     x = x - x.mean(0)
     if x.shape[0] < 2:

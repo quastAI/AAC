@@ -6,7 +6,7 @@ Hierarchical JEPA world models (LeWM, HWM, H-JEPA) on Craftax-Classic, planning 
 
 - `H-JEPA/` PyTorch: world models (`h_jepa/`), planning and environments (`stable_worldmodel/`), tests (`tests/`). Imported from a fork with `git subtree`.
 - `purejaxql/` JAX: PQN-RNN expert and the episode collector (`scripts/collect_craftax_episodes.py`). Also a subtree.
-- `analysis/` (numpy, h5py): `dataset_stats.py`, `compare_runs.py`. `experiments/`: `experiments.yaml` (E1-E8, D0, C1) and `run.py`. `environment/`: install lists, reference freezes. `.github/workflows/tests.yml` is untested (written without runner access).
+- `analysis/` (numpy, h5py): `dataset_stats.py`, `compare_runs.py`. `experiments/`: `experiments.yaml` (E1-E8, D0, D1, C1) and `run.py`. `environment/`: install lists, reference freezes. `.github/workflows/tests.yml` is untested (written without runner access).
 - `papers/` PDFs are gitignored. `Craftax/` and `stable-worldmodel-craftax/` are read-only reference clones, gitignored, never edit them.
 - The two code folders only share the HDF5 episode file (column table in the README).
 
@@ -30,7 +30,7 @@ Test venvs are throwaway: recreate them with `python3 -m venv`. The default pip 
 
 - **Episodes** are replayable from `seed` + actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`, step at `state.timestep == t` uses `fold_in(step_key, t)`. The collector (`purejaxql`) and the env (`H-JEPA/stable_worldmodel/envs/craftax/env.py`) both follow it; `H-JEPA/tests/data/craftax_classic_episode.npz` guards it. `World` resets envs with the dataset's `seed` column.
 - `full_state` is a flat uint8 snapshot of the Craftax state pytree (leaf order), made by `pack_state` in the collector and the env. Craftax stays pinned at 1.6.1.
-- Env: `terminated` = goal success, death/horizon = `truncated`; the env freezes after the end.
+- Env: `terminated` = goal success, death/horizon = `truncated`; the env freezes after death or the horizon (after goal success it keeps stepping; `World` ORs the success flags).
 - Discrete actions: level-1 one-hot (`level1.wm.num_actions`); the normalizer artifact has no action stats and records `num_actions`. Upper levels: `VQActionEncoder` (groups x codes, optional duration k); planners read `model.get_action_spec()`.
 - `CategoricalCEMSolver` mirrors `GradientSolver` (`configure(..., level=)`, `solve`, `solve_records`). Its duration slot is pinned to the default stride unless `allowed_durations` says otherwise.
 
@@ -38,13 +38,15 @@ Test venvs are throwaway: recreate them with `python3 -m venv`. The default pip 
 
 Settled with the user: goal test `new_achievements` with all achievements counting (random baseline as reference); protocol A main task set = offsets with progress, per offset; data = expert (diamond filter) + 25% non-expert (half noised expert eps 0.3, half random), seed ranges 0 / 1M / 2M for train / val / test, headline runs use the test worlds; level-1 step = 1 environment step. Earlier: Discrete CEM at every level; VQ latent actions with a factorized codebook above level 1; IDM (cross-entropy) on at every level (E5 ablates per model); native 63x63 frames with a ViT of patch 7; actors are learned separately later (frozen, after the world model); the band of horizons (E7) is meant to become the default. Planner design (proposals, trust region, actors) is deferred; README "Open decisions" lists the rest.
 
+Settled on 2026-10-13 (review session): tasks and all planning evaluation come from diamond-reaching expert episodes only (`source == 0`); all achievements count, no per-group extras for now; horizons are fixed over the episode (`horizon_schedule: fixed`); strides and depth come from the dataset analysis (D0) so that the top level comfortably spans the expert's typical time to diamond (a quantile, for example the 75th); LeWM is just the hierarchy with one level, so the depth is a setting (1 to 4), the first trained model is the level-1-only one and a random baseline runs on the same tasks; the data mix (shares of diamond, noised-expert and uniform random episodes, counted in frames, and the noise values) is decided after the data exists and its behaviour has been analysed; uniform random episodes train level 1 only, noised-expert episodes (which may die) stay in the loss of every level, without an ablation; upper-level CEM starts from code sequences of the training data (actors replace that later); the terminal (death) frame is padded for the level steps. Death and starvation beyond that (a learned survival head, longer top-level clips) are left open until the data is analysed.
+
 ## Diagnostics (all in `H-JEPA/h_jepa`)
 
 `health.py` holds the metric functions, the `Thresholds` (heuristics, to be tuned on real runs) and `diagnose_training/planning/probing` returning `Finding`s (critical/warn/info with a hint). `training_monitor.py` (callback: live, per epoch, end report, optional probing), `planning_metrics.py` (`RecordingPolicy`, `RecordingSolver`, `RandomRecordingPolicy`, `summarize_planning`), `probe_eval.py`, `eval_tasks.py`, `time_run.py`. The goal test is `new_achievements` (progress-defined); tasks have one world seed each. A random-policy baseline on the same tasks is needed to read any planning number.
 
 ## Not built yet
 
-E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data ratio, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
+Depth as a setting 1-4 with strides (one config instead of one per depth), the per-source loss mask for uniform random episodes, frame-based data shares in the collector and the runner, code-sequence proposals for CEM, terminal-frame padding with a per-frame `dead` flag from the collector, a coverage table (levels x strides x horizon against the time to diamond) in D0, E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data mix, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
 
 ## Pitfalls seen
 

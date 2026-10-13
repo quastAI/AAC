@@ -109,7 +109,7 @@ def eps_greedy(key, q_vals, eps):
 
 
 def make_rollout(env, env_params, network, variables, eps, num_envs):
-    """Batched rollout that records actions, rewards and achievement counts only."""
+    """Batched rollout that records actions and, for the replay check, rewards, achievement counts, positions and health."""
     fold_in = jax.vmap(jax.random.fold_in, in_axes=(0, None))
 
     def init(seeds):
@@ -151,7 +151,10 @@ def make_rollout(env, env_params, network, variables, eps, num_envs):
             diamond_t = jnp.where((diamond_t < 0) & got_diamond, t, diamond_t)
             done_t = jnp.where((done_t < 0) & done, t, done_t)
             carry = (hs, obs, action, state, t + 1, diamond_t, done_t)
-            return carry, (action.astype(jnp.int8), reward, ach.sum(-1).astype(jnp.int8))
+            return carry, (
+                action.astype(jnp.int8), reward, ach.sum(-1).astype(jnp.int8),
+                state.player_position.astype(jnp.int16), state.player_health.astype(jnp.int8),
+            )  # fmt: skip
 
         return jax.lax.scan(step, carry, None, length=ROLLOUT_CHUNK)
 
@@ -168,13 +171,13 @@ def make_rollout(env, env_params, network, variables, eps, num_envs):
                 finished |= (diamond_t >= 0) & (t_run - 1 >= diamond_t + tail_steps)
             if finished.all():
                 break
-        actions, rewards, ach_counts = (np.concatenate(x) for x in zip(*chunks))
+        actions, rewards, ach_counts, positions, health = (np.concatenate(x) for x in zip(*chunks))
         length = np.minimum(np.where(done_t >= 0, done_t + 1, t_run), max_steps)
         has_diamond = (diamond_t >= 0) & (diamond_t < length)
         if stop_at_diamond:
             length = np.where(has_diamond, np.minimum(length, diamond_t + 1 + tail_steps), length)
         return dict(
-            actions=actions, rewards=rewards, ach_counts=ach_counts,
+            actions=actions, rewards=rewards, ach_counts=ach_counts, positions=positions, health=health,
             length=length, has_diamond=has_diamond, diamond_t=diamond_t,
         )  # fmt: skip
 
@@ -375,6 +378,10 @@ def check_replay(seed, length, rendered, rollout, i):
     """The replay must reproduce the rollout; otherwise episodes are not replayable."""
     ok = np.allclose(rendered["reward"][1:], rollout["rewards"][:length, i], atol=1e-6)
     ok &= np.array_equal(rendered["achievements"][1:].sum(-1), rollout["ach_counts"][:length, i])
+    # the player's path and health also depend on the mobs, so a divergence of the random
+    # stream shows here even when no reward or achievement changes
+    ok &= np.array_equal(rendered["position"][1:], rollout["positions"][:length, i])
+    ok &= np.array_equal(rendered["vitals"][1:, 0], rollout["health"][:length, i])
     if not ok:
         raise RuntimeError(
             f"Replay of seed={seed} differs from the rollout; the environment "

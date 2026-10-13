@@ -30,7 +30,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
   a_t..t+s ──sequence encoder──VQ──► token ────────┘         token = code indices [+ one-hot k]
 ```
 
-- **Levels.** Level 1 encodes a 63×63 frame with a ViT (patch 7, one patch per tile). Each level above encodes a chunk of `stride` latents of the level below: with a latent MLP in H-JEPA, with the identity in HWM (one shared latent space). LeWM is level 1 alone.
+- **Levels.** Level 1 encodes a 63×63 frame with a ViT (patch 7, one patch per tile). Each level above encodes one latent of the level below every `stride` steps (`window_size` 1; a window of several latents is possible): with a latent MLP in H-JEPA, with the identity in HWM (one shared latent space). Its actions are the pooled chunk of `stride` lower-level actions. LeWM is level 1 alone, the same code with `num_levels: 1`.
 - **Predictor.** A causal transformer over a history of 3 latents, conditioned on the embedded action token, predicts the next latent.
 - **Action tokens.** Level 1: one-hot of the 17 actions. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (band of horizons, E7).
 - **Losses per level.** Next-latent MSE, SIGReg on the latents (not above level 1 in HWM), an inverse-dynamics cross-entropy (action index at level 1, code indices above), and the VQ commitment loss above level 1.
@@ -43,7 +43,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 **Expert.** PQN-RNN from [purejaxql](purejaxql), trained on `Craftax-Classic-Symbolic-v1`. Rolled-out episodes are filtered to the successful ones (diamond collected), and the collector renders pixels from the same state.
 
-**Data.** Expert episodes that reach the diamond, plus 25% non-expert episodes (half noised expert with epsilon 0.3, half uniform random) for level-1 dynamics coverage and for actions the expert never takes. Seeds are the split: training from 0, validation from 1,000,000, test from 2,000,000 (the non-expert episodes start 500,000 into each range). Exploration takes its tasks from the validation worlds, headline results (`--final`) from the test worlds. `experiments/run.py plan D1 --expert-checkpoint <ckpt>` prints the collection commands. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
+**Data.** Expert episodes that reach the diamond, plus 25% non-expert episodes (half noised expert with epsilon 0.3, half uniform random) for level-1 dynamics coverage and for actions the expert never takes. Seeds are the split: training from 0, validation from 1,000,000, test from 2,000,000 (noised-expert episodes start 500,000 into each range, random ones 750,000). Exploration takes its tasks from the validation worlds, headline results (`--final`) from the test worlds. `experiments/run.py plan D1 --expert-checkpoint <ckpt>` prints the collection commands. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
 
 ## Models
 
@@ -72,7 +72,7 @@ All achievements count, including those a random agent gets by itself (wake up, 
 | E2 | 1 | Depth: 2 vs 3 levels, strides derived from the data (event durations, frequency gap) | planned |
 | E3 | 1, 2 | Rollout loss on/off, set per model (not per level), on H-JEPA and LeWM | planned |
 | E4 | 2 | Per-level probes, frequency gap, cost geometry | planned |
-| E5 | 1, 2 | IDM on/off, set per model (not per level), reported with collapse diagnostics (within-episode variance share, effective rank, action sensitivity) and planning. Run on LeWM first, then on H-JEPA at the chosen depth. HWM follows the H-JEPA outcome (run it too if budget allows). One seed for the ablation, three seeds only for the setting used in the headline results. | planned |
+| E5 | 1, 2 | IDM on/off, set per model (not per level), reported with collapse diagnostics (within-clip variance share, effective rank, action sensitivity) and planning. Run on LeWM first, then on H-JEPA at the chosen depth. HWM follows the H-JEPA outcome (run it too if budget allows). One seed for the ablation, three seeds only for the setting used in the headline results. | planned |
 | E6 | 1 | Cost-only: level-1 planning with native vs projected upper-level cost (evaluation only, optional) | optional |
 | E7 | 3 | Variable band vs fixed stride, including band width | planned |
 | E8 | 4 | Learned jumps vs fixed vs band, including the jump constraint type | planned |
@@ -114,7 +114,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 ```
 
 - The collector keeps episodes that reach diamond and ends them `--tail-steps` (500) after it, or earlier on death (margin for long planning horizons). `--no-stop-at-diamond` keeps full episodes, `--eps` in (0, 1) gives noised-expert episodes. A second run on an existing file appends and skips seeds already in it.
-- Pixels are rendered by replaying the kept episodes. The replay is checked against the rollout for every episode.
+- Pixels are rendered by replaying the kept episodes. The replay is checked against the rollout for every episode (rewards, achievement counts, player position and health).
 
 **Episode file.** One flat HDF5 in the layout of H-JEPA's `HDF5Dataset` (`ep_len`, `ep_offset`, one array per column). Per episode there are L+1 frames and L actions; `action[t]` belongs to frame `t`, the last one is NaN.
 
@@ -126,7 +126,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 | `reward` | (N,) float32 | reward of the transition into this frame |
 | `achievements` | (N, 22) uint8 | cumulative flags, Craftax-Classic order |
 | `full_state` | (N, 20952) uint8 | snapshot of the complete env state (about 1.5 KB per frame on disk) |
-| `inventory` (12), `vitals` (4), `facing`, `daylight`, `position` (2), `mobs_in_view` (4) | (N, k) small ints | symbolic state for probing and data analysis: item counts, health/food/drink/energy, direction 1-4, light, player row/col, zombies/cows/skeletons/arrows in the 7x9 view |
+| `inventory` (12), `vitals` (4), `facing`, `daylight`, `position` (2), `mobs_in_view` (4) | (N, k) small ints, `daylight` float32 | symbolic state for probing and data analysis: item counts, health/food/drink/energy, direction 1-4, light, player row/col, zombies/cows/skeletons/arrows in the 7x9 view |
 | `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random |
 
 - **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
@@ -163,7 +163,7 @@ python time_run.py --config-name craftax_hjepa_l2 --eval-config-name craftax_l2 
 python ../../experiments/run.py plan E1                                                                                       # the whole experiment
 ```
 
-Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built) and a compute-scaling probe C1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
+Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built), a compute-scaling probe C1, the dataset analysis D0 and the data collection plan D1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
 
 ### Design notes
 
@@ -191,7 +191,7 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 
 ### Tests
 
-`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 96 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `collect_craftax_episodes.py --eps 1.0 --seed-start 0 --max-steps 60 --num-envs 1 --no-require-diamond --no-stop-at-diamond`) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
+`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 132 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `tests/data/make_fixture.py`, its docstring has the collector command) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
 
 ## Compute and roadmap
 

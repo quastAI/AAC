@@ -102,3 +102,25 @@ def test_append_after_an_interrupted_run(collect, monkeypatch, tmp_path):
     # the rows of every episode belong to its seed
     for offset, length in zip(offsets, f["ep_len"][:]):
         assert len(set(f["seed"][offset : offset + length].tolist())) == 1
+
+
+def test_replay_check_sees_a_diverging_path_without_reward_change(collect):
+    length = 5
+    rendered = dict(
+        reward=np.zeros(length + 1, np.float32),
+        achievements=np.zeros((length + 1, 22), np.uint8),
+        position=np.tile(np.arange(length + 1, dtype=np.int16)[:, None], (1, 2)),
+        vitals=np.full((length + 1, 4), 9, np.int8),
+    )
+    rollout = dict(
+        rewards=np.zeros((length, 1), np.float32),
+        ach_counts=np.zeros((length, 1), np.int8),
+        positions=rendered["position"][1:][:, None, :].copy(),
+        health=np.full((length, 1), 9, np.int8),
+    )
+    collect.check_replay(7, length, rendered, rollout, 0)  # the same run: fine
+    for key, change in (("positions", 1), ("health", 8)):
+        broken = {k: v.copy() for k, v in rollout.items()}
+        broken[key][3] = change  # rewards and achievements still agree
+        with pytest.raises(RuntimeError, match="not deterministic"):
+            collect.check_replay(7, length, rendered, broken, 0)
