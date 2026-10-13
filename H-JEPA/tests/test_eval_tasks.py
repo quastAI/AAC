@@ -155,8 +155,11 @@ def test_payload_is_loadable_with_variable_lengths(dataset):
     assert payload['goal_offset_steps'] == max(t['distance'] for t in tasks)
     assert payload['task_info']['tasks'] == tasks
     for t, ep in zip(tasks, payload['data']):
-        assert ep['pixels'].shape[0] == t['distance'] + 1
+        # only the start and the goal frame are stored, not the frames between
+        assert ep['pixels'].shape[0] == 2
         assert int(ep['pixels'][0, 0, 0, 0]) == t['episode']  # the right world
+        assert ep['step_idx'].tolist() == [t['start'], t['goal']]
+        assert ep['full_state'].shape[0] == 2
 
     padded = _pad_loaded_eval_trajectories(payload['data'], payload['columns'])
     lengths = {int(ep['pixels'].shape[0]) for ep in padded}

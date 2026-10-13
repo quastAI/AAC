@@ -154,12 +154,24 @@ def make_tasks(
     return tasks
 
 
+def _start_and_goal(dataset, task: dict) -> dict:
+    """The two frames of a task, as one length-2 sequence per column (start, goal)."""
+    episode = np.array([task["episode"]])
+    first = dataset.load_chunk(episode, np.array([task["start"]]), np.array([task["start"] + 1]))[0]
+    last = dataset.load_chunk(episode, np.array([task["goal"]]), np.array([task["goal"] + 1]))[0]
+    return {
+        key: torch.cat([value, last[key]]) if torch.is_tensor(value) else value for key, value in first.items()
+    }
+
+
 def build_payload(dataset, tasks: list[dict], eval_budget: int, seed: int = 0) -> dict:
-    """The task file: frames [start, goal] of every task, in the format the evaluation loads."""
-    data = [
-        dataset.load_chunk(np.array([t["episode"]]), np.array([t["start"]]), np.array([t["goal"] + 1]))[0]
-        for t in tasks
-    ]
+    """The task file: the start and the goal frame of every task, in the format the evaluation loads.
+
+    The evaluation only reads the first and the last frame of a task. The frames in between would
+    cost about 38 KB each (full_state, pixels, state) and the file is loaded for every evaluation:
+    several GB for full episodes. The distance of a task is in `task_info`.
+    """
+    data = [_start_and_goal(dataset, t) for t in tasks]
     return {
         "data": data,
         "columns": list(dataset.column_names),
