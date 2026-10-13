@@ -155,11 +155,30 @@ def frame_of_step(level: int, steps: torch.Tensor, cfg) -> torch.Tensor:
     return index
 
 
+def common_frames(model, cfg, num_frames: int, thin: int) -> torch.Tensor:
+    """Level-1 frames at which every level has a latent, so all levels are probed on the same states.
+
+    Probing each level on its own steps gave the levels different numbers of samples (33 / 9 / 3
+    per clip for strides of 4) and different frames, which confounds the comparison between them
+    (RQ2) with sample size, and ridge probes on 192 dimensions need many samples.
+    """
+    common = None
+    for n in range(1, model.num_levels + 1):
+        steps = torch.arange(num_frames)
+        frames = frame_of_step(n, steps, cfg)
+        frames = frames[frames < num_frames]
+        common = frames if common is None else common[torch.isin(common, frames)]
+    if not len(common):
+        raise ValueError("the levels have no level-1 frame in common (check stride and window_size)")
+    return common[::thin]
+
+
 @torch.no_grad()
-def collect(model, loader, cfg, device, normalize, thin: int):
+def collect(model, loader, cfg, device, normalize, thin: int = 1):
     levels = range(1, model.num_levels + 1)
     jepas = [model.get_level(n) for n in levels]
     saved = [j.target_length for j in jepas]
+    was_training = model.training
     for j in jepas:
         j.target_length = None
     model.eval()
@@ -170,11 +189,12 @@ def collect(model, loader, cfg, device, normalize, thin: int):
             batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
             normalize(batch)
             out = model.encode_hierarchical(batch)
+            common = common_frames(model, cfg, batch["pixels_level1"].shape[1], thin)
             for n in levels:
                 emb = out[f"embed_{n}"].float().cpu()
                 steps = torch.arange(emb.shape[1])
                 frames = frame_of_step(n, steps, cfg)
-                keep = (frames < batch["pixels_level1"].shape[1]) & (steps % thin == 0)
+                keep = torch.isin(frames, common)
                 z[n].append(emb[:, steps[keep]].flatten(0, 1))
                 for c in COLUMNS:
                     col = batch[f"{c}_level1"].float().cpu()
@@ -184,6 +204,7 @@ def collect(model, loader, cfg, device, normalize, thin: int):
     finally:
         for j, t in zip(jepas, saved):
             j.target_length = t
+        model.train(was_training)
     return {n: (torch.cat(z[n]), {c: torch.cat(y[n][c]) for c in COLUMNS}) for n in levels}
 
 
@@ -192,7 +213,7 @@ def collect(model, loader, cfg, device, normalize, thin: int):
 
 
 def run_probing(
-    model, cfg, cache_dir, *, transform, normalize, device, frames=129, max_clips=256, thin=4,
+    model, cfg, cache_dir, *, transform, normalize, device, frames=129, max_clips=256, thin=1,
     control=True, batch_size=16, seed=0,
 ):  # fmt: skip
     """Probe every level on held-out worlds, with an untrained control. Returns (summary, findings)."""
@@ -219,8 +240,10 @@ def run_probing(
     if control:
         from hjepa_utils import create_world_model
 
-        torch.manual_seed(seed)
-        random_model = create_world_model(cfg)[0].to(device)
+        with torch.random.fork_rng(devices=[]):  # a seeded control, without reseeding the caller's RNG
+            torch.manual_seed(seed)
+            random_model = create_world_model(cfg)[0]
+        random_model = random_model.to(device)
         random_levels = probe_levels(
             collect(random_model, loaders["train"], cfg, device, normalize, thin),
             collect(random_model, loaders["val"], cfg, device, normalize, thin),

@@ -186,6 +186,7 @@ def test_run_probing_end_to_end(tmp_path):
             ],
         )
     model = create_world_model(cfg)[0]
+    model.train()
 
     def float_pixels(batch):
         for key, value in batch.items():
@@ -213,8 +214,31 @@ def test_run_probing_end_to_end(tmp_path):
         assert (
             entry['control_groups'] and 'control' in entry['targets']['vitals']
         )
-    assert (
-        summary['n_train'][1] > summary['n_train'][2]
-    )  # fewer upper-level steps
+    # every level is probed on the same states: the same number of samples
+    assert summary['n_train'][1] == summary['n_train'][2]
+    assert summary['n_val'][1] == summary['n_val'][2]
+    assert model.training  # the model is left in the mode it was in
     report = health.render_probing_report(summary, findings)
     assert '# Probing report' in report and 'untrained' in report
+
+
+def test_levels_are_probed_on_the_frames_they_share():
+    from types import SimpleNamespace
+
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.create(
+        {
+            'level2': {'stride': 4, 'window_size': 1},
+            'level3': {'stride': 4, 'window_size': 1},
+        }
+    )
+    model = SimpleNamespace(num_levels=3)
+    frames = pe.common_frames(model, cfg, 129, thin=1)
+    assert frames.tolist() == list(range(0, 129, 16))  # level 3 steps
+    assert pe.common_frames(model, cfg, 129, thin=2).tolist() == list(
+        range(0, 129, 32)
+    )
+    assert pe.common_frames(
+        SimpleNamespace(num_levels=1), cfg, 8, thin=1
+    ).tolist() == list(range(8))
