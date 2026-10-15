@@ -101,6 +101,8 @@ level1:
     embed_dim: 192
     use_proprio: false
     num_actions: 17  # discrete actions, one-hot encoded (see data.OneHotColumn)
+  action_embed:
+    patch_embed: false  # one action per step: the 1x1 conv (17 -> 10 by default) would only be a bottleneck
   encoder:
     type: vit
     scale: ${encoder_scale}
