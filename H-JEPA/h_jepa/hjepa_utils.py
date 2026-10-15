@@ -258,7 +258,7 @@ def create_world_model(cfg):
     from models.encoders.seq_encoder import SequenceEncoder, SequenceMLPEncoder
     from models.hjepa import HJEPA
     from models.jepa import FusionEncoder, JEPA, ProjectedEncoder, ProjectedPredictor
-    from models.module import Embedder, build_projector
+    from models.module import Embedder, LinearEmbedder, build_projector
     from models.predictors.predictors import ARPredictor, CausalTransformerPredictor
     from models.vq import VQActionEncoder
 
@@ -379,8 +379,18 @@ def create_world_model(cfg):
                 action_encoder = VQActionEncoder(action_encoder, **dict(vq_cfg))
 
         action_embed_kwargs = dict(level_cfg.get("action_embed", {}))
-        if action_embed_kwargs.pop("type", None) == "identity":
+        embed_type = action_embed_kwargs.pop("type", None)
+        if embed_type == "identity":
             action_embed = torch.nn.Identity()
+        elif embed_type == "linear":
+            # one layer, a lookup table for one-hot actions
+            if level == 1:
+                input_dim = int(cfg.data.dataset.level1.frameskip) * int(
+                    cfg.level1.wm.get("num_actions") or cfg.level1.wm.action_dim
+                )
+            else:
+                input_dim = getattr(action_encoder, "token_dim", None) or action_embed_kwargs["input_dim"]
+            action_embed = LinearEmbedder(input_dim=int(input_dim), emb_dim=embed_dim)
         else:
             if hasattr(action_encoder, "token_dim"):
                 action_embed_kwargs["input_dim"] = action_encoder.token_dim

@@ -490,8 +490,7 @@ def test_training_step_with_one_hot_actions(train_cfg, world_model):
 
     model, losses = world_model
     embedder = model.get_level(1).action_embed
-    assert embedder.patch_embed is None
-    assert embedder.embed[0].in_features == 17
+    assert embedder.embed.in_features == 17
 
     steps = 4  # history 3 + rollout 1
     index = torch.randint(0, 17, (2, steps))
@@ -508,7 +507,7 @@ def test_training_step_with_one_hot_actions(train_cfg, world_model):
     )
     assert torch.isfinite(out['loss'])
     out['loss'].backward()
-    assert embedder.embed[0].weight.grad is not None
+    assert embedder.embed.weight.grad is not None
 
 
 def test_cem_plans_with_the_real_model(world_model):

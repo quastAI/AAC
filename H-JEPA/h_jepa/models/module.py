@@ -231,6 +231,20 @@ class Embedder(nn.Module):
         return x
 
 
+class LinearEmbedder(nn.Module):
+    """One linear layer from the action vector to the embedding: for one-hot actions a lookup table."""
+
+    def __init__(self, input_dim, emb_dim):
+        super().__init__()
+        self.embed = nn.Linear(input_dim, emb_dim)
+
+    def forward(self, x):
+        """
+        x: (B, T, D)
+        """
+        return self.embed(x.float())
+
+
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
