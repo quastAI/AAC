@@ -35,7 +35,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 - **Action tokens.** Level 1: one-hot of the 17 actions. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (band of horizons, E7).
 - **Losses per level.** Next-latent MSE, SIGReg on the latents (not above level 1 in HWM), an inverse-dynamics cross-entropy (action index at level 1, code indices above), and the VQ commitment loss above level 1.
 - **Planning.** Top-down CEM over the discrete tokens of every level, forward passes only. The top level minimises the latent distance to the goal frame, its predicted latents become the subgoals of the level below, and level 1 outputs environment actions (receding horizon).
-- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (proposals, trust regions, learned actors). The diagnostics for it exist from the start (see Diagnostics): plans replayed in the simulator against the model's prediction and against random plans, success against planner compute (experiment C1), and the distance of predicted latents to the data.
+- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (trust regions, learned actors); for now the upper-level CEM mixes in code sequences of the training data. The diagnostics for it exist from the start (see Diagnostics): plans replayed in the simulator against the model's prediction and against random plans, success against planner compute (experiment C1), and the distance of predicted latents to the data.
 
 ## Setup
 
@@ -206,7 +206,7 @@ About 15 A100-hours per month (~180 in total). One seed for exploration, three s
 
 ## Open decisions
 
-- Planner: proposals, trust region, learned actors (stay with discrete CEM until decided)
+- Planner: trust region, learned actors (discrete CEM with data-sequence proposals until decided)
 - Numbers to set from the data analysis and the timing run: the offsets and budgets of the task sets, the episode counts, the strides
 - Goal sequence for protocol B (the final goal only is built; key states need goal switching in the policy)
 - Band ranges for E7, and whether the planner may choose k freely
