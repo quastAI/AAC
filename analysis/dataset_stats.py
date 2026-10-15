@@ -79,6 +79,8 @@ class Data:
             self.all_seeds = f["seed"][all_offsets] if "seed" in f else None
             last = all_offsets + self.all_lengths - 1
             self.all_final_achievements = f["achievements"][last] if "achievements" in f else None
+            self.all_final_dead = f["dead"][last].astype(bool) if "dead" in f else None
+            self.all_final_vitals = f["vitals"][last] if "vitals" in f else None
 
             step = max(1, -(-self.total_all // max(1, max_frames)))  # ceil
             keep = np.arange(0, len(self.all_lengths), step)
@@ -125,10 +127,41 @@ def composition(d: Data) -> dict:
         out["by_source"] = {n: int((d.all_sources == i).sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
         out["frames_by_source"] = {n: int(lengths[d.all_sources == i].sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
         out["frame_share_by_source"] = {n: v / d.total_all for n, v in out["frames_by_source"].items()}
+    if d.all_final_dead is not None:
+        out["deaths"] = death_statistics(d)
     if d.all_final_achievements is not None:
         final = d.all_final_achievements.astype(bool)
         out["diamond_episodes"] = int(final[:, ACHIEVEMENTS.index("collect_diamond")].sum())
         out["achievements_per_episode_mean"] = float(final.sum(1).mean())
+    return out
+
+
+def death_statistics(d: Data) -> dict:
+    """How the episodes end, per source: deaths, their causes and when they happen.
+
+    Cause from the last frame: lava (dead with health left), exhaustion (health used up while food,
+    drink or energy was 0: it takes about 330 steps from a fresh start) or damage (health used up
+    with all three above 0). The ends that are not deaths are the diamond cut and the horizon.
+    """
+    dead, lengths = d.all_final_dead, d.all_lengths
+    sources = d.all_sources if d.all_sources is not None else np.zeros(len(lengths), np.int8)
+    names = {0: "expert", 1: "noised_expert", 2: "random"}
+    out = {}
+    for code, name in names.items():
+        here = sources == code
+        if not here.any():
+            continue
+        died = here & dead
+        entry = {"episodes": int(here.sum()), "died": int(died.sum()), "died_share": float(died.sum() / here.sum())}
+        if died.any():
+            entry["steps_to_death"] = {q: float(np.percentile(lengths[died] - 1, p)) for q, p in (("p25", 25), ("median", 50), ("p75", 75))}
+            if d.all_final_vitals is not None:
+                vitals = d.all_final_vitals[died].astype(int)
+                lava = vitals[:, 0] > 0
+                exhausted = (vitals[:, 0] <= 0) & (vitals[:, 1:].min(1) <= 0)
+                entry["causes"] = {"lava": int(lava.sum()), "exhaustion": int(exhausted.sum()),
+                                   "damage": int((~lava & ~exhausted).sum())}
+        out[name] = entry
     return out
 
 
@@ -345,6 +378,13 @@ def render(result: dict) -> str:
         if "by_source" in c:
             out.append("Sources (episodes, share of frames): " + ", ".join(
                 f"{k} {v} ({c['frame_share_by_source'][k]:.1%})" for k, v in c["by_source"].items()) + ".")
+        for name, dth in (c.get("deaths") or {}).items():
+            line = f"Deaths, {name}: {dth['died']} of {dth['episodes']} episodes ({dth['died_share']:.1%})"
+            if "steps_to_death" in dth:
+                line += f", median {_f(dth['steps_to_death']['median'])} steps to death"
+            if "causes" in dth:
+                line += ", causes " + ", ".join(f"{k} {v}" for k, v in dth["causes"].items())
+            out.append(line + ".")
         if "diamond_episodes" in c:
             out.append(f"Episodes with a diamond: {c['diamond_episodes']}; achievements per episode (mean): {_f(c['achievements_per_episode_mean'])}.")
 

@@ -213,3 +213,45 @@ def test_a_frame_budget_samples_over_the_whole_file(tmp_path):
 
     full = ds.Data(path)
     assert full.sampled is None and full.total == sum(lengths)
+
+
+def test_death_statistics_by_source_and_cause(tmp_path):
+    lengths = [50, 50, 50, 50, 30]
+    path = write(tmp_path / 'deaths.h5', lengths=lengths)
+    offsets = np.concatenate([[0], np.cumsum(lengths)[:-1]])
+    last = offsets + np.array(lengths) - 1
+    dead = np.zeros(sum(lengths), np.uint8)
+    vitals = np.full((sum(lengths), 4), 9, np.int8)
+    # expert: lives; noised: damage; random: lava, exhaustion, damage
+    for episode, health, food in ((1, 0, 5), (2, 4, 5), (3, 0, 0), (4, 0, 5)):
+        dead[last[episode]] = 1
+        vitals[last[episode], 0] = health
+        vitals[last[episode], 1] = food
+    source = np.repeat(np.array([0, 1, 2, 2, 2], np.int8), lengths)
+    with h5py.File(path, 'r+') as f:
+        f.create_dataset('dead', data=dead)
+        del f['vitals'], f['source']
+        f.create_dataset('vitals', data=vitals)
+        f.create_dataset('source', data=source)
+
+    d = ds.Data(path)
+    out = ds.composition(d)['deaths']
+    assert out['expert'] == {'episodes': 1, 'died': 0, 'died_share': 0.0}
+    assert out['noised_expert']['died'] == 1
+    assert out['noised_expert']['causes'] == {
+        'lava': 0,
+        'exhaustion': 0,
+        'damage': 1,
+    }
+    assert out['random']['died'] == 3
+    assert out['random']['causes'] == {
+        'lava': 1,
+        'exhaustion': 1,
+        'damage': 1,
+    }
+    assert out['random']['steps_to_death']['median'] == 49  # 50 frames
+    assert 'Deaths, random: 3 of 3 episodes' in ds.render(
+        ds.analyse({'deaths': d})
+    )
+    # files collected before the column existed have no death statistics
+    assert 'deaths' not in ds.composition(ds.Data(write(tmp_path / 'old.h5')))

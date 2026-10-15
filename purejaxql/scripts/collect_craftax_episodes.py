@@ -23,6 +23,8 @@ Columns (N = total frames):
     daylight      (N, 1)          float32  light level
     position      (N, 2)          int16    player (row, col) on the 64x64 map
     mobs_in_view  (N, 4)          int8     zombies, cows, skeletons, arrows inside the 7x9 view
+    dead          (N,)            uint8    1 where the player is dead (health 0 or in lava): the last frame of an
+                                           episode that ended in death, else 0
     step_idx      (N,)            int32
     ep_idx        (N,)            int32
     seed          (N,)            int64    world seed of the episode
@@ -57,7 +59,7 @@ import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
 
-from craftax.craftax_classic.constants import BLOCK_PIXEL_SIZE_AGENT, OBS_DIM, Achievement
+from craftax.craftax_classic.constants import BLOCK_PIXEL_SIZE_AGENT, OBS_DIM, Achievement, BlockType
 from craftax.craftax_classic.renderer import make_craftax_pixel_renderer
 from craftax.craftax_env import make_craftax_env_from_name
 
@@ -213,6 +215,9 @@ def derived_columns(state):
         return (mobs.mask & inside).sum()
 
     mobs = jnp.stack([in_view(m) for m in (state.zombies, state.cows, state.skeletons, state.arrows)])
+    # the player died: health used up, or walked into lava (which leaves the health as it was)
+    in_lava = state.map[state.player_position[0], state.player_position[1]] == BlockType.LAVA.value
+    dead = (state.player_health <= 0) | in_lava
     return (
         inventory,
         vitals,
@@ -220,6 +225,7 @@ def derived_columns(state):
         state.light_level.astype(jnp.float32)[None],
         state.player_position.astype(jnp.int16),
         mobs.astype(jnp.int8),
+        dead.astype(jnp.uint8),
     )
 
 
@@ -262,7 +268,7 @@ def make_replay(env, env_params):
                 acc.append(np.asarray(x))
         obs, reward, *rest = (np.concatenate(c)[: length + 1] for c in columns)
         names = ("pixels", "achievements", "full_state", "inventory", "vitals", "facing",
-                 "daylight", "position", "mobs_in_view")  # fmt: skip
+                 "daylight", "position", "mobs_in_view", "dead")  # fmt: skip
         return dict(state=obs.astype(np.float32), reward=reward.astype(np.float32), **dict(zip(names, rest)))
 
     return replay
@@ -368,6 +374,7 @@ def build_episode(seed, actions, rendered, source):
         daylight=rendered["daylight"],
         position=rendered["position"],
         mobs_in_view=rendered["mobs_in_view"],
+        dead=rendered["dead"],
         step_idx=np.arange(length + 1, dtype=np.int32),
         seed=np.full(length + 1, seed, dtype=np.int64),
         source=np.full(length + 1, source, dtype=np.int8),

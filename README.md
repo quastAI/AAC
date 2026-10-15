@@ -127,6 +127,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
 | `achievements` | (N, 22) uint8 | cumulative flags, Craftax-Classic order |
 | `full_state` | (N, 20952) uint8 | snapshot of the complete env state (about 1.5 KB per frame on disk) |
 | `inventory` (12), `vitals` (4), `facing`, `daylight`, `position` (2), `mobs_in_view` (4) | (N, k) small ints, `daylight` float32 | symbolic state for probing and data analysis: item counts, health/food/drink/energy, direction 1-4, light, player row/col, zombies/cows/skeletons/arrows in the 7x9 view |
+| `dead` | (N,) uint8 | 1 on the last frame of an episode that ended in death (health 0, or walked into lava), else 0 |
 | `step_idx`, `ep_idx`, `seed`, `source` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random |
 
 - **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.

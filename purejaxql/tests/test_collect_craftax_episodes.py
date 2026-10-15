@@ -60,6 +60,14 @@ def test_layout_and_replayability(collect, monkeypatch, tmp_path):
     assert np.isnan(action).sum() == len(last) and np.isnan(action[last]).all()
     assert set(np.unique(action[~np.isnan(action)])) <= set(range(17))
 
+    # `dead` marks the last frame of an episode that ended in death, and nothing else.
+    dead = a["dead"][:]
+    assert dead.shape == (n,) and dead.dtype == np.uint8
+    assert dead[:].sum() == dead[last].sum()  # only ever on a last frame
+    health = a["vitals"][:, 0]
+    assert ((health[last] > 0) | (dead[last] == 1)).all()  # no health left means dead
+    assert (dead[last] == 1).any()  # random play dies within 500 steps
+
     # The same world seed gives the same episode regardless of the batch size.
     for key in a:
         np.testing.assert_array_equal(a[key][:], b[key][:], err_msg=key)
@@ -149,3 +157,17 @@ def test_target_frames_stop_after_the_episode_that_reaches_them(collect, monkeyp
 def test_collection_needs_a_stopping_rule(collect, monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="num-episodes or --target-frames"):
         run(collect, monkeypatch, tmp_path / "n.h5", num_episodes=None, no_require_diamond=True)
+
+
+def test_dead_flag_covers_health_and_lava(collect):
+    import jax
+
+    env = collect.make_craftax_env_from_name(collect.ENV_NAME, auto_reset=False)
+    _, state = env.reset(jax.random.PRNGKey(0), env.default_params)
+    dead = lambda st: int(collect.derived_columns(st)[-1])  # noqa: E731
+    assert dead(state) == 0
+    assert dead(state.replace(player_health=0)) == 1
+    row, col = (int(x) for x in state.player_position)
+    lava = state.map.at[row, col].set(collect.BlockType.LAVA.value)
+    # lava kills at once and leaves the health as it was
+    assert dead(state.replace(map=lava)) == 1
