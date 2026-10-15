@@ -394,7 +394,10 @@ def parse_args():
     p.add_argument("--out", required=True, help="HDF5 file; created, or appended to if it exists")
     p.add_argument("--checkpoint", help="expert .safetensors (not needed for --eps 1.0)")
     p.add_argument("--config", help="expert config yaml (default: derived from the checkpoint name)")
-    p.add_argument("--num-episodes", type=int, required=True, help="episodes to add to the file")
+    p.add_argument("--num-episodes", type=int, default=None, help="episodes to add to the file")
+    p.add_argument("--target-frames", type=int, default=None,
+                   help="stop once this run has added this many frames (the last episode is finished, so "
+                        "the run overshoots by less than one episode); with --num-episodes, whichever comes first")  # fmt: skip
     p.add_argument("--seed-start", type=int, required=True, help="first world seed; seeds already in the file are skipped")
     p.add_argument("--seed-end", type=int, default=None,
                    help="stop before this seed (exclusive): the end of the range of this split and source, "
@@ -413,6 +416,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.num_episodes is None and args.target_frames is None:
+        raise SystemExit("give --num-episodes or --target-frames")
     if args.eps < 1.0 and args.checkpoint is None:
         raise SystemExit("--checkpoint is required unless --eps 1.0")
     source = SOURCE_EXPERT if args.eps == 0 else SOURCE_RANDOM if args.eps >= 1 else SOURCE_NOISED
@@ -428,8 +433,14 @@ def main():
     writer = EpisodeWriter(args.out)
     skip, seed, kept, tried, t0 = writer.existing_seeds(), args.seed_start, 0, 0, time.time()
 
-    exhausted = False
-    while kept < args.num_episodes and not exhausted:
+    exhausted, frames = False, 0
+
+    def done():
+        return (args.num_episodes is not None and kept >= args.num_episodes) or (
+            args.target_frames is not None and frames >= args.target_frames
+        )
+
+    while not done() and not exhausted:
         seeds = []
         while len(seeds) < args.num_envs:
             if seed not in skip:
@@ -441,21 +452,26 @@ def main():
             keep = keep & (np.asarray(seeds) < args.seed_end)
             exhausted = seed >= args.seed_end
         tried += len(seeds)
-        for i in np.flatnonzero(keep)[: args.num_episodes - kept]:
+        for i in np.flatnonzero(keep):
+            if done():
+                break
             length = int(result["length"][i])
             actions = result["actions"][:length, i].astype(np.int32)
             rendered = replay(seeds[i], actions)
             check_replay(seeds[i], length, rendered, result, i)
             writer.append(build_episode(seeds[i], actions, rendered, source))
             kept += 1
+            frames += length + 1  # L actions, L + 1 frames
         print(
-            f"[{time.time() - t0:7.1f}s] tried {tried} | kept {kept}/{args.num_episodes} | "
+            f"[{time.time() - t0:7.1f}s] tried {tried} | kept {kept}"
+            + (f"/{args.num_episodes}" if args.num_episodes is not None else "")
+            + f" | {frames}" + (f"/{args.target_frames}" if args.target_frames is not None else "") + " frames | "
             f"diamond rate {result['has_diamond'].mean():.2%} | "
             f"mean length {result['length'].mean():.0f} | next seed {seed}",
             flush=True,
         )
-    if kept < args.num_episodes:
-        print(f"WARNING: seeds [{args.seed_start}, {args.seed_end}) are used up: kept {kept} of {args.num_episodes}")
+    if not done():
+        print(f"WARNING: seeds [{args.seed_start}, {args.seed_end}) are used up: kept {kept} episodes, {frames} frames")
     total = writer.num_episodes
     writer.close()
     print(f"Wrote {kept} episodes to {args.out} ({total} in file)")

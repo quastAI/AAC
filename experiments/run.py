@@ -70,20 +70,21 @@ def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str =
     script = "scripts/collect_craftax_episodes.py"
     jobs = []
     for split, dataset in (("train", st["train_dataset"]), ("val", st["val_dataset"]), ("test", st["test_dataset"])):
-        total, share = int(c["episodes"][split]), float(c["nonexpert_share"])
-        n_non = round(total * share)
-        n_expert = total - n_non
-        n_noised, n_random = n_non - n_non // 2, n_non // 2
+        frames, share = int(c["frames"][split]), c["share"]
+        if abs(sum(share.values()) - 1.0) > 1e-6:
+            raise SystemExit(f"collection shares must sum to 1, got {dict(share)}")
+        target = {name: round(frames * float(share[name])) for name in ("expert", "noised", "random")}
         out = f"{home}/{dataset}.h5"
         start = int(c["seed_start"][split])
         base = [python, script, "--out", out]
         steps = [
-            ("expert", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--num-episodes", str(n_expert),
-                        "--seed-start", str(start), "--seed-end", str(start + 500_000)], n_expert),
+            ("expert", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--target-frames", str(target["expert"]),
+                        "--seed-start", str(start), "--seed-end", str(start + 500_000)], target["expert"]),
             ("noised", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--eps", str(c["noise_eps"]), "--no-require-diamond",
-                        "--num-episodes", str(n_noised), "--seed-start", str(start + 500_000), "--seed-end", str(start + 750_000)], n_noised),
-            ("random", [*base, "--eps", "1.0", "--no-require-diamond", "--num-episodes", str(n_random),
-                        "--seed-start", str(start + 750_000), "--seed-end", str(start + 1_000_000)], n_random),
+                        "--target-frames", str(target["noised"]), "--seed-start", str(start + 500_000),
+                        "--seed-end", str(start + 750_000)], target["noised"]),
+            ("random", [*base, "--eps", "1.0", "--no-require-diamond", "--target-frames", str(target["random"]),
+                        "--seed-start", str(start + 750_000), "--seed-end", str(start + 1_000_000)], target["random"]),
         ]  # fmt: skip
         previous = None
         for name, command, count in steps:

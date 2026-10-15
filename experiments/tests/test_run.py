@@ -210,15 +210,18 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
     assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 
-def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):
+def test_collection_mixes_the_sources_by_frames(spec):
     jobs = run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/ckpt/expert.safetensors')
     c = spec['collection']
     for split, dataset in (('train', 'craftax_expert_train'), ('val', 'craftax_expert_val'), ('test', 'craftax_expert_test')):
         expert, noised, rand = (by_name(jobs)[f'collect_{split}_{k}'] for k in ('expert', 'noised', 'random'))
-        total = c['episodes'][split]
-        count = lambda job: int(job.command[job.command.index('--num-episodes') + 1])  # noqa: E731
-        assert count(expert) + count(noised) + count(rand) == total
-        assert count(noised) + count(rand) == round(total * c['nonexpert_share'])
+        total = c['frames'][split]
+        count = lambda job: int(job.command[job.command.index('--target-frames') + 1])  # noqa: E731
+        # the mix is a share of frames, not of episodes (episodes differ a lot in length)
+        assert abs(count(expert) + count(noised) + count(rand) - total) <= 2
+        for job, name in ((expert, 'expert'), (noised, 'noised'), (rand, 'random')):
+            assert count(job) == round(total * c['share'][name])
+            assert '--num-episodes' not in job.command
         assert all('/data/' + dataset + '.h5' in j.command for j in (expert, noised, rand))
         # one file, so the runs are chained; seeds of the three runs do not overlap
         assert noised.after == [expert.name] and rand.after == [noised.name]
@@ -244,3 +247,9 @@ def test_dataset_analysis_checks_the_seed_overlap_of_all_three_files(spec):
     assert command.count('--data') == 3
     labels = [command[i + 1] for i, c in enumerate(command) if c == '--label']
     assert labels == ['train', 'val', 'test']
+
+
+def test_collection_shares_must_sum_to_one(spec):
+    spec['collection']['share'] = {'expert': 0.5, 'noised': 0.1, 'random': 0.1}
+    with pytest.raises(SystemExit, match='sum to 1'):
+        run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/c')

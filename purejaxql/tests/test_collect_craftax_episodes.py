@@ -22,9 +22,11 @@ def collect():
 
 
 def run(collect, monkeypatch, out, **flags):
-    args = ["--out", str(out), "--eps", "1.0", "--num-episodes", "4", "--seed-start", "0",
-            "--max-steps", "500"]  # fmt: skip
+    flags = {"num_episodes": 4, **flags}
+    args = ["--out", str(out), "--eps", "1.0", "--seed-start", "0", "--max-steps", "500"]  # fmt: skip
     for key, value in flags.items():
+        if value is None:
+            continue
         args += [f"--{key.replace('_', '-')}"] + ([] if value is True else [str(value)])
     monkeypatch.setattr(sys, "argv", ["collect"] + args)
     collect.main()
@@ -132,3 +134,18 @@ def test_seed_end_stops_at_the_end_of_the_range(collect, monkeypatch, tmp_path, 
     f = run(collect, monkeypatch, tmp_path / "r.h5", seed_end=3, **kwargs)  # asks for 4 episodes
     assert f["seed"][f["ep_offset"][:]].tolist() == [0, 1, 2]
     assert "used up" in capsys.readouterr().out
+
+
+def test_target_frames_stop_after_the_episode_that_reaches_them(collect, monkeypatch, tmp_path):
+    kwargs = dict(num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
+    f = run(collect, monkeypatch, tmp_path / "t.h5", num_episodes=None, target_frames=150, **kwargs)
+    lengths = f["ep_len"][:]
+    assert lengths.sum() >= 150  # the target is reached ...
+    assert lengths[:-1].sum() < 150  # ... by the last episode and not before
+    # without a cap on episodes it keeps going until the frames are there
+    assert len(lengths) >= 2
+
+
+def test_collection_needs_a_stopping_rule(collect, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit, match="num-episodes or --target-frames"):
+        run(collect, monkeypatch, tmp_path / "n.h5", num_episodes=None, no_require_diamond=True)
