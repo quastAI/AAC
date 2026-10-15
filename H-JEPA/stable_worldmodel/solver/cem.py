@@ -54,6 +54,12 @@ class CategoricalCEMSolver(torch.nn.Module):
             per-class floor: a per-class floor grows with the number of classes
             (0.01 per class caps a 64-code slot at 0.55), so large slots never
             converged.
+        proposal_fraction: Share of the samples of every iteration that are
+            whole code sequences from the proposal bank (`set_proposal`), the
+            sequences of the training data. They keep the joint structure of
+            codes (which codes occur together and in what order) that the
+            independent per-slot distributions lose, and keep candidates on the
+            data support; without a bank this has no effect. Upper levels only.
         allowed_durations: 'default' (pin k to the default duration), 'all',
             or a list of allowed durations. Only used by models with durations.
         device: Device for tensor computations.
@@ -69,6 +75,7 @@ class CategoricalCEMSolver(torch.nn.Module):
         batch_size: int | None = None,
         alpha: float = 0.5,
         min_prob: float = 0.05,
+        proposal_fraction: float = 0.0,
         allowed_durations: str | list[int] = 'default',
         device: str | torch.device = 'cpu',
         seed: int = 1234,
@@ -85,6 +92,12 @@ class CategoricalCEMSolver(torch.nn.Module):
         self.batch_size = batch_size
         self.alpha = float(alpha)
         self.min_prob = float(min_prob)
+        if not 0.0 <= float(proposal_fraction) < 1.0:
+            raise ValueError(
+                f'proposal_fraction must be in [0, 1), got {proposal_fraction}'
+            )
+        self.proposal_fraction = float(proposal_fraction)
+        self._bank = None  # (M, H_bank, groups) code sequences, or None
         # a list from a Hydra config is a ListConfig: keep plain values (it ends up in JSON records)
         self.allowed_durations = (
             allowed_durations
@@ -143,6 +156,18 @@ class CategoricalCEMSolver(torch.nn.Module):
         self._config = config
         self._slot_sizes = slot_sizes
 
+    def set_proposal(self, bank: torch.Tensor | None) -> None:
+        """Code sequences of the data, (M, H_bank, groups) integer indices, or None to remove them."""
+        if bank is None:
+            self._bank = None
+            return
+        bank = torch.as_tensor(bank, dtype=torch.long, device=self.device)
+        if bank.ndim != 3 or bank.shape[0] == 0:
+            raise ValueError(
+                f'proposal bank must be (M, H, groups) with M > 0, got {tuple(bank.shape)}'
+            )
+        self._bank = bank
+
     def _resolve_durations(self, spec) -> list[int]:
         """Classes of the duration slot the planner may choose from."""
         mode = self.allowed_durations
@@ -160,6 +185,32 @@ class CategoricalCEMSolver(torch.nn.Module):
                 f'allowed_durations {mode} not within {spec.durations}'
             )
         return [spec.durations.index(k) for k in mode]
+
+    def _mix_in_proposals(self, samples, bs: int, horizon: int) -> None:
+        """Replace the code slots of some samples by sequences of the proposal bank (in place).
+
+        The incumbent (sample 0) stays; a duration slot keeps what the distribution drew.
+        Positions beyond the bank's horizon keep the distribution's draw.
+        """
+        if self._bank is None or self.proposal_fraction <= 0:
+            return
+        k = min(self.num_samples - 1, round(self.proposal_fraction * self.num_samples))
+        if k <= 0:
+            return
+        groups = self._bank.shape[2]
+        if self.level == 1 or groups != self._n_code_slots():
+            raise ValueError(
+                f'the proposal bank has {groups} code slots, the model has {self._n_code_slots()}'
+            )
+        pick = torch.randint(
+            0, self._bank.shape[0], (bs, k), generator=self.torch_gen, device=self.device
+        )
+        length = min(horizon, self._bank.shape[1])
+        samples[:, 1 : 1 + k, :length, :groups] = self._bank[pick][:, :, :length]
+
+    def _n_code_slots(self) -> int:
+        """Slots that are codes: all but a trailing duration slot."""
+        return len(self._slot_sizes) - (1 if self._duration_classes is not None else 0)
 
     @property
     def n_envs(self) -> int:
@@ -322,6 +373,7 @@ class CategoricalCEMSolver(torch.nn.Module):
                     it > 0
                 ):  # keep the incumbent: the best cost never gets worse
                     samples[:, 0] = best
+                self._mix_in_proposals(samples, bs, planning_horizon)
 
                 current = expanded.copy()
                 current['cost_last_n'] = cost_last_n
@@ -373,6 +425,7 @@ class CategoricalCEMSolver(torch.nn.Module):
                 'horizon': int(planning_horizon),
                 'num_samples': int(self.num_samples),
                 'allowed_durations': self.allowed_durations,
+                'proposal_fraction': self.proposal_fraction if self._bank is not None else 0.0,
                 'n_iters': [self.n_iters] * self.n_envs,
                 'first_cost': curve[:, 0].tolist(),
                 'best_cost': curve[:, -1].tolist(),

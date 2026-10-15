@@ -227,6 +227,37 @@ def _support_bank(cfg, metrics_cfg, model, transform):
     return build_support_bank(jepa1, path, transform["pixels"], int(metrics_cfg.get("support_bank_frames", 4096)))
 
 
+def _attach_proposals(cfg, model, solver, transform) -> None:
+    """Give the upper-level CEM solvers whole code sequences of the training data (see code_bank.py)."""
+    spec = cfg.get("planning_proposals", None)
+    if not spec or not spec.get("dataset", None) or not _is_hierarchical_solver(cfg):
+        return
+    inner = getattr(solver, "_solver", solver)
+    levels = [n for n, s in inner.level_solvers.items() if n >= 2 and getattr(s, "proposal_fraction", 0) > 0]
+    if not levels:
+        return
+    from code_bank import build_code_bank
+
+    plan = cfg.hierarchical_plan_config
+    top = model.num_levels
+    # the top level plans its own horizon, a level below one step of the level above
+    horizons = {
+        n: int(plan[f"level{n}"].horizon) if n == top else int(model.get_level(n + 1).temporal_stride) for n in levels
+    }
+    path = Path(cfg.cache_dir or swm.data.utils.get_cache_dir()) / f"{spec.dataset}.h5"
+    if not path.exists():
+        print(f"planning proposals: dataset {path} not found, the upper levels search uniformly")
+        return
+    bank = build_code_bank(
+        model, path, transform["pixels"], num_actions=int(spec.num_actions), horizons=horizons,
+        n_clips=int(spec.get("clips", 512)), exclude_sources=list(spec.get("exclude_sources", [2])),
+        seed=int(cfg.get("seed", 0)),
+    )  # fmt: skip
+    for n, sequences in bank.items():
+        inner.level_solvers[n].set_proposal(sequences)
+        print(f"planning proposals: level {n}: {len(sequences)} code sequences of {horizons[n]} steps")
+
+
 def _task_info(load_eval_trajs_path) -> list | None:
     """Per-task description stored in a task file made by eval_tasks.py, if any."""
     if not load_eval_trajs_path:
@@ -288,6 +319,7 @@ def _build_policy(
         _drop_levels_above_model(cfg, model.num_levels)
     policy_config = _build_policy_plan_config(cfg)
     solver = build_solver(cfg, model)
+    _attach_proposals(cfg, model, solver, transform)
 
     metrics_cfg = cfg.get("planning_metrics", None)
     if metrics_cfg is not None and metrics_cfg.get("enabled", False):

@@ -42,6 +42,7 @@ solver:
       batch_size: 5
       device: cuda
       seed: ${seed}
+      proposal_fraction: 0.5  # share of the samples that are code sequences of the data (planning_proposals)
     level3:
       _target_: stable_worldmodel.solver.CategoricalCEMSolver
       num_samples: 300
@@ -50,6 +51,7 @@ solver:
       batch_size: 5
       device: cuda
       seed: ${seed}
+      proposal_fraction: 0.5  # share of the samples that are code sequences of the data (planning_proposals)
     level4:
       _target_: stable_worldmodel.solver.CategoricalCEMSolver
       num_samples: 300
@@ -58,6 +60,7 @@ solver:
       batch_size: 5
       device: cuda
       seed: ${seed}
+      proposal_fraction: 0.5  # share of the samples that are code sequences of the data (planning_proposals)
 hierarchical_plan_config:
   receding_horizon: 2
   level1:
@@ -81,6 +84,11 @@ hierarchical_plan_config:
     horizon_schedule: fixed
     action_block: 1
     cost_last_n: 1
+planning_proposals:  # whole code sequences of the training data, mixed into the upper-level CEM (code_bank.py)
+  dataset: craftax_expert_train  # null = the upper levels search all code combinations uniformly
+  clips: 512  # clips encoded to collect the sequences
+  exclude_sources: [2]  # uniform random episodes
+  num_actions: 17
 planning_metrics:  # what the planner did and whether to trust it, see planning_metrics.py
   enabled: true
   diag_every: 1  # plan diagnostics (open-loop replay in the simulator) every k-th replanning, 0 = off

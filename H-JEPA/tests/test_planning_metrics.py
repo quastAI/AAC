@@ -384,3 +384,63 @@ def test_recorder_end_to_end_through_build_policy(dataset, depth):
         assert (
             summary['subgoals']['n'] >= 1
         )  # the upper-level subgoal was followed up
+
+
+def test_upper_levels_search_code_sequences_of_the_data(dataset):
+    depth = 2
+    model = create_world_model(compose_train('craftax_hjepa'))[0]
+    model.eval()
+    cfg = planning_eval.load_eval_config(config_name='craftax_plan')
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+    for level in range(1, depth + 1):
+        cfg.solver.solvers[f'level{level}'].update(
+            device='cpu', num_samples=12, n_iters=2, topk=3, batch_size=2
+        )
+    cfg.planning_metrics.support_bank_dataset = None
+    cfg.planning_metrics.rank_candidates = 4
+    cfg.eval.eval_budget = 8
+    cfg.cache_dir = str(dataset.h5_path.parent)
+    cfg.planning_proposals.dataset = 'craftax'
+    cfg.planning_proposals.clips = 8
+    cfg.planning_proposals.exclude_sources = []  # the fixture episode is a random one
+    policy = planning_eval._build_policy(
+        cfg, {}, image_transforms(), model=model
+    )
+    levels = policy.inner.level_solvers
+    assert levels[1]._bank is None  # primitive actions: no proposals
+    bank = levels[2]._bank
+    assert bank.shape[1:] == (4, 2)  # horizon 4 (the top level), 2 groups
+    assert bank.shape[0] >= 8 and bank.min() >= 0 and bank.max() < 64
+    tasks = run_eval(policy, dataset)  # plans with the bank in the loop
+    check_records(policy, tasks, levels=[1, 2])
+
+    # a source filter that leaves nothing falls back to uniform search
+    cfg.planning_proposals.exclude_sources = [2]
+    policy = planning_eval._build_policy(
+        cfg, {}, image_transforms(), model=model
+    )
+    assert policy.inner.level_solvers[2]._bank is None
+
+
+def test_code_windows_of_a_clip_are_consecutive_steps(dataset):
+    from code_bank import build_code_bank, clip_frames
+
+    model = create_world_model(compose_train('craftax_hjepa'))[0]
+    model.eval()
+    horizons = {2: 3}
+    frames = clip_frames(model, horizons)
+    assert frames == 3 * 4 + 4 + 1  # three steps of 4, one more, one frame
+    cfg = OmegaConf.create({'eval': {'img_size': 63}})
+    transform = planning_eval.img_transform(cfg)
+    bank = build_code_bank(
+        model,
+        dataset.h5_path,
+        transform,
+        num_actions=17,
+        horizons=horizons,
+        n_clips=1,  # one clip: all windows are neighbours
+        exclude_sources=[],
+    )[2]
+    assert bank.shape[1:] == (3, 2) and bank.shape[0] >= 2
+    # window w + 1 is window w shifted by one step
+    assert torch.equal(bank[1:, :-1], bank[:-1, 1:])

@@ -46,7 +46,7 @@ Settled on 2026-10-13 (review session): tasks and all planning evaluation come f
 
 ## Not built yet
 
-Code-sequence proposals for CEM, E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data mix, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
+E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data mix, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
 
 ## Configs
 

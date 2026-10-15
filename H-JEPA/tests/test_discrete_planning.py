@@ -269,6 +269,80 @@ def test_cem_restricts_durations_to_a_subset():
     assert set(out['durations'].flatten().tolist()) <= {2, 3}
 
 
+def test_cem_proposals_bring_data_sequences_into_the_search():
+    # 2 groups of 40 codes over 4 steps: 1600 ** 4 plans, far too many for a
+    # few hundred uniform samples, but the plan we want is a data sequence
+    groups, num_codes, horizon = 2, 40, 4
+    generator = torch.Generator().manual_seed(0)
+    bank = torch.randint(0, num_codes, (25, horizon, groups), generator=generator)
+    target = bank[7].unsqueeze(0)  # (1, H, groups)
+    model = ToySlotCost(groups, num_codes)
+
+    _, plain = solve_slots(model, target, horizon, n_iters=3)
+    assert not torch.equal(plain['action_indices'], target)  # uniform CEM does not find it
+
+    solver = CategoricalCEMSolver(
+        model, num_samples=300, n_iters=3, topk=30, seed=0,
+        proposal_fraction=0.5,
+    )  # fmt: skip
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17]),
+        n_envs=1,
+        config=PlanConfig(horizon=horizon, receding_horizon=1),
+        level=2,
+    )
+    solver.set_proposal(bank)
+    out = solver.solve({'target': target}, planning_horizon=horizon)
+    assert torch.equal(out['action_indices'], target)
+    assert solver.solve_records[-1]['proposal_fraction'] == 0.5
+
+    solver.set_proposal(None)  # removed: back to the distribution alone
+    assert solver._bank is None
+
+
+def test_cem_proposals_longer_horizon_keeps_the_distribution_beyond_the_bank():
+    bank = torch.zeros(5, 2, 1, dtype=torch.long)  # sequences of 2 steps
+    model = ToySlotCost(1, 6)
+    solver = CategoricalCEMSolver(
+        model, num_samples=40, n_iters=2, topk=4, seed=0, proposal_fraction=0.9
+    )
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17]),
+        n_envs=1,
+        config=PlanConfig(horizon=4, receding_horizon=1),
+        level=2,
+    )
+    solver.set_proposal(bank)
+    seen, cost = [], model.get_cost
+
+    def spy(info, candidates):
+        seen.append(candidates.argmax(-1))
+        return cost(info, candidates)
+
+    model.get_cost = spy
+    solver.solve({'target': torch.zeros(1, 4, 1, dtype=torch.long)}, planning_horizon=4)
+    first = seen[0][0]  # (S, H, groups) of the first iteration
+    assert (first[1:37, :2] == 0).all()  # 36 proposals: the first two steps
+    assert first[1:37, 2:].unique().numel() > 1  # the rest is still random
+
+
+def test_cem_proposals_must_match_the_model_and_the_level():
+    with pytest.raises(ValueError, match='proposal_fraction'):
+        CategoricalCEMSolver(ToyCost(5, 1), proposal_fraction=1.0)
+    solver = CategoricalCEMSolver(ToySlotCost(2, 5), proposal_fraction=0.5)
+    solver.configure(
+        action_space=gym.spaces.MultiDiscrete([17]),
+        n_envs=1,
+        config=PlanConfig(horizon=3, receding_horizon=1),
+        level=2,
+    )
+    with pytest.raises(ValueError, match='M > 0|must be'):
+        solver.set_proposal(torch.zeros(0, 3, 2))
+    solver.set_proposal(torch.zeros(4, 3, 1, dtype=torch.long))  # 1 group, 2 expected
+    with pytest.raises(ValueError, match='code slots'):
+        solver.solve({'target': torch.zeros(1, 3, 2, dtype=torch.long)}, planning_horizon=3)
+
+
 def test_cem_keeps_a_configured_duration_list_plain():
     # a list from a Hydra config is a ListConfig; it is written to JSON records
     import json
