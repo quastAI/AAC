@@ -37,6 +37,7 @@ ACHIEVEMENTS = [
     "collect_coal", "collect_iron", "collect_diamond", "make_iron_pickaxe",
     "make_iron_sword",
 ]  # fmt: skip
+DIAMOND_INDEX = 19  # collect_diamond in the Craftax-Classic achievement order
 ACTIONS = [
     "noop", "left", "right", "up", "down", "do", "sleep", "place_stone", "place_table",
     "place_furnace", "place_plant", "make_wood_pickaxe", "make_stone_pickaxe",
@@ -217,6 +218,39 @@ def event_durations(d: Data) -> dict:
     return out
 
 
+def coverage(d: Data, horizons=(4, 8), depths=(1, 2, 3, 4), strides=(2, 3, 4, 5, 6, 8, 10, 12), quantiles=(50, 75, 90)) -> dict | None:
+    """How far the top level of a model reaches, against the time the expert takes to the diamond.
+
+    One step of the top level spans `stride ** (depth - 1)` environment steps (equal strides), so its
+    plan of `horizon` steps reaches `horizon * stride ** (depth - 1)` steps. The rule is that the top
+    level comfortably covers the typical time to the diamond (a quantile of the expert's frame of the
+    first diamond). Only expert episodes (source 0) count when the file has sources.
+    """
+    flags = d.episodes("achievements")
+    keep = np.ones(len(flags), bool) if "source" not in d.cols else d.cols["source"][d.offsets] == 0
+    times = [int(np.argmax(f[:, DIAMOND_INDEX])) for f, k in zip(flags, keep) if k and f[:, DIAMOND_INDEX].any()]
+    if not times:
+        return None
+    target = {f"p{q}": float(np.percentile(times, q)) for q in quantiles}
+    rows = []
+    for depth in depths:
+        for stride in strides if depth > 1 else (1,):
+            step = stride ** (depth - 1)
+            reach = {h: h * step for h in horizons}
+            covered = [q for q, t in target.items() if reach[horizons[0]] >= t]
+            rows.append({"depth": depth, "stride": stride, "top_step": step, "reach": reach,
+                         "covers": covered[-1] if covered else None})  # fmt: skip
+    smallest = {}  # per depth and horizon: the smallest equal stride whose reach covers each quantile
+    for depth in depths:
+        if depth == 1:
+            continue
+        for h in horizons:
+            smallest[f"depth{depth}_horizon{h}"] = {
+                q: next(s for s in range(2, 10_000) if h * s ** (depth - 1) >= t) for q, t in target.items()
+            }
+    return {"episodes": len(times), "steps_to_diamond": target, "rows": rows, "smallest_stride": smallest}
+
+
 def _group_matrix(d: Data, columns) -> np.ndarray:
     parts = [d.cols[c].reshape(d.total, -1).astype(np.float32) for c in columns]
     x = np.concatenate(parts, axis=1)
@@ -349,6 +383,7 @@ def analyse(datas: dict[str, Data]) -> dict:
         entry = {"composition": composition(d), "clip_counts": clip_counts(d)}
         if d.has("achievements"):
             entry["events"] = event_durations(d)
+            entry["coverage"] = coverage(d)
         if d.has("inventory", "vitals", "facing", "daylight", "position", "mobs_in_view", "achievements"):
             entry["time_scales"] = time_scales(d)
         else:
@@ -401,6 +436,25 @@ def render(result: dict) -> str:
                 g = ev["gap_between_unlocks"]
                 out += ["", "Steps between consecutive unlocks: " + ", ".join(f"{k} {_f(v)}" for k, v in g.items()) + ".",
                         f"Stride hint (equal strides): {ev['stride_hint']} ({ev['stride_hint_note']}). A hint, not a decision."]
+
+        cov = e.get("coverage")
+        if cov:
+            horizons = list(cov["rows"][0]["reach"])
+            out += ["", "### Reach of the top level against the time to the diamond", "",
+                    f"Expert steps to the first diamond ({cov['episodes']} episodes): "
+                    + ", ".join(f"{q} {_f(v)}" for q, v in cov["steps_to_diamond"].items())
+                    + ". A top step spans stride^(depth-1) steps; its plan reaches horizon x that. "
+                    f"`covers` is the highest quantile reached at horizon {horizons[0]}.", "",
+                    "| depth | stride | steps per top-level step | " + " | ".join(f"reach, horizon {h}" for h in horizons) + " | covers |",
+                    "|---|---|---|" + "---|" * len(horizons) + "---|"]
+            out += [f"| {r['depth']} | {r['stride']} | {r['top_step']} | " + " | ".join(str(r["reach"][h]) for h in horizons)
+                    + f" | {r['covers'] or '-'} |" for r in cov["rows"]]
+            out += ["", "Smallest equal stride whose top level reaches the quantile:", "",
+                    "| depth, horizon | " + " | ".join(next(iter(cov["smallest_stride"].values()))) + " |",
+                    "|---|" + "---|" * len(cov["steps_to_diamond"])]
+            out += [f"| {k.replace('depth', '').replace('_horizon', ', ')} | " + " | ".join(str(v) for v in q.values()) + " |"
+                    for k, q in cov["smallest_stride"].items()]
+            out.append("The clip counts above say whether that depth and stride still leave enough clips.")
 
         ts = e.get("time_scales")
         if ts:

@@ -255,3 +255,40 @@ def test_death_statistics_by_source_and_cause(tmp_path):
     )
     # files collected before the column existed have no death statistics
     assert 'deaths' not in ds.composition(ds.Data(write(tmp_path / 'old.h5')))
+
+
+def test_coverage_of_the_top_level_against_the_time_to_diamond(tmp_path):
+    lengths = [100, 200, 150, 60]
+    path = write(tmp_path / 'cov.h5', lengths=lengths)
+    diamond = {0: 60, 1: 120, 2: 40}  # the last episode never gets one
+    flags = np.zeros((sum(lengths), 22), np.uint8)
+    offsets = np.concatenate([[0], np.cumsum(lengths)[:-1]])
+    for e, frame in diamond.items():
+        flags[offsets[e] + frame : offsets[e] + lengths[e], 19] = 1
+    source = np.repeat(np.array([0, 0, 0, 2], np.int8), lengths)
+    with h5py.File(path, 'r+') as f:
+        del f['achievements'], f['source']
+        f.create_dataset('achievements', data=flags)
+        f.create_dataset('source', data=source)
+
+    cov = ds.coverage(ds.Data(path), horizons=(4,), strides=(2, 4))
+    assert cov['episodes'] == 3
+    assert cov['steps_to_diamond'] == {'p50': 60.0, 'p75': 90.0, 'p90': 108.0}
+    rows = {(r['depth'], r['stride']): r for r in cov['rows']}
+    assert rows[(1, 1)]['reach'] == {4: 4} and rows[(1, 1)]['covers'] is None
+    assert rows[(2, 4)]['reach'] == {4: 16}
+    assert rows[(3, 4)]['reach'] == {4: 64}
+    assert rows[(3, 4)]['covers'] == 'p50'  # 64 >= 60, not >= 90
+    assert rows[(3, 4)]['top_step'] == 16
+    assert rows[(4, 4)]['reach'] == {4: 256} and rows[(4, 4)]['covers'] == 'p90'
+    # smallest equal stride: horizon x stride^(depth - 1) >= quantile
+    assert cov['smallest_stride']['depth2_horizon4'] == {
+        'p50': 15,
+        'p75': 23,
+        'p90': 27,
+    }
+    assert cov['smallest_stride']['depth3_horizon4']['p75'] == 5  # 4 * 25 = 100
+    text = ds.render(ds.analyse({'cov': ds.Data(path)}))
+    assert 'Reach of the top level' in text and 'p90' in text
+    # a file without diamond episodes has no coverage
+    assert ds.coverage(ds.Data(write(tmp_path / 'none.h5'))) is None
