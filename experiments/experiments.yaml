@@ -43,14 +43,14 @@ experiments:
     analysis: true
 
   E1:
-    title: LeWM vs HWM vs H-JEPA at matched depth
+    title: Level 1 alone (LeWM) vs HWM vs H-JEPA at matched depth (the depth is `num_levels`)
     rq: [1]
     protocols: [A, B]
     baseline: true  # a random policy on the same tasks
     runs:
-      - {name: e1_lewm, config: craftax_lewm, eval: craftax_flat}
-      - {name: e1_hwm_l2, config: craftax_hwm_l2, eval: craftax_l2}
-      - {name: e1_hjepa_l2, config: craftax_hjepa_l2, eval: craftax_l2}
+      - {name: e1_l1, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
+      - {name: e1_hwm_l2, config: craftax_hwm, eval: craftax_plan, overrides: [num_levels=2]}
+      - {name: e1_hjepa_l2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=2]}
 
   E2:
     title: Depth, 2 vs 3 levels (set the strides from D0 with --override level2.stride=.. level3.stride=..)
@@ -58,9 +58,9 @@ experiments:
     protocols: [A, B]
     baseline: true
     runs:
-      - {name: e1_hjepa_l2, train: false, model: e1_hjepa_l2, eval: craftax_l2}
-      - {name: e2_hjepa_l3, config: craftax_hjepa_l3, eval: craftax_l3}
-      - {name: e2_hwm_l3, config: craftax_hwm_l3, eval: craftax_l3, optional: true}
+      - {name: e1_hjepa_l2, train: false, model: e1_hjepa_l2, eval: craftax_plan}
+      - {name: e2_hjepa_l3, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=3]}
+      - {name: e2_hwm_l3, config: craftax_hwm, eval: craftax_plan, overrides: [num_levels=3], optional: true}
 
   E3:
     title: Rollout loss on/off, set per model (off is the E1 run with rollout_n 1)
@@ -68,32 +68,32 @@ experiments:
     protocols: [A]
     baseline: true
     runs:
-      - {name: e3_lewm_rollout4, config: craftax_lewm, eval: craftax_flat, overrides: [level1.wm.rollout_n=4]}
+      - {name: e3_l1_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.rollout_n=4]}
       - name: e3_hjepa_l2_rollout4
-        config: craftax_hjepa_l2
-        eval: craftax_l2
-        overrides: [level1.wm.rollout_n=4, level2.wm.rollout_n=4]
+        config: craftax_hjepa
+        eval: craftax_plan
+        overrides: [num_levels=2, level1.wm.rollout_n=4, level2.wm.rollout_n=4]
 
   E4:
     title: Per-level probes (larger probe sets than the end of training), frequency gap, cost geometry
     rq: [2]
-    probe: [e1_lewm, e1_hwm_l2, e1_hjepa_l2, e2_hjepa_l3]
+    probe: [e1_l1, e1_hwm_l2, e1_hjepa_l2, e2_hjepa_l3]
 
   E5:
-    title: IDM on/off, set per model (on is the E1 run; LeWM first, then H-JEPA, HWM if the budget allows)
+    title: IDM on/off, set per model (on is the E1 run; level 1 alone first, then H-JEPA, HWM if the budget allows)
     rq: [1, 2]
     protocols: [A]
     baseline: true
     runs:
-      - {name: e5_lewm_noidm, config: craftax_lewm, eval: craftax_flat, overrides: [level1.idm_coeff=0]}
+      - {name: e5_l1_noidm, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.idm_coeff=0]}
       - name: e5_hjepa_l2_noidm
-        config: craftax_hjepa_l2
-        eval: craftax_l2
-        overrides: [level1.idm_coeff=0, level2.idm_coeff=0]
+        config: craftax_hjepa
+        eval: craftax_plan
+        overrides: [num_levels=2, level1.idm_coeff=0, level2.idm_coeff=0]
       - name: e5_hwm_l2_noidm
-        config: craftax_hwm_l2
-        eval: craftax_l2
-        overrides: [level1.idm_coeff=0, level2.idm_coeff=0]
+        config: craftax_hwm
+        eval: craftax_plan
+        overrides: [num_levels=2, level1.idm_coeff=0, level2.idm_coeff=0]
         optional: true
 
   E6:
@@ -118,6 +118,6 @@ experiments:
     title: Planner compute scaling of the E1 H-JEPA model (success or progress falling with compute means exploitation)
     protocols: [A]
     runs:
-      - {name: c1_x0.25, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 0.25}
-      - {name: c1_x1, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 1}
-      - {name: c1_x4, train: false, model: e1_hjepa_l2, eval: craftax_l2, planner_scale: 4}
+      - {name: c1_x0.25, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 0.25}
+      - {name: c1_x1, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 1}
+      - {name: c1_x4, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 4}

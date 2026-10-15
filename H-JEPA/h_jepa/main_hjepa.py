@@ -28,6 +28,7 @@ from data import (
     build_normalizer_artifact,
     build_column_transforms,
     build_hdf5_dataset,
+    dataset_kwargs,
     save_normalizer_artifact,
 )
 
@@ -159,7 +160,7 @@ def run(cfg):
 
     cache_dir = os.environ.get("HJEPA_HOME", None)
 
-    dataset_cfg = {k: v for k, v in cfg.data.dataset.items() if k != "val_name"}
+    dataset_cfg = dataset_kwargs(cfg)
     val_total_transitions = dataset_cfg.pop("val_total_transitions", None)
     val_name = cfg.data.dataset.get("val_name", None)
     train_dataset = build_hdf5_dataset(dataset_cfg, cache_dir=cache_dir)

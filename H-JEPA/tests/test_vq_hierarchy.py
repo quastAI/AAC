@@ -262,10 +262,11 @@ def test_discrete_idm_uses_the_duration_input():
 # --- whole hierarchical models ---------------------------------------------
 
 CONFIGS = [
-    ('craftax_hjepa_l2', 2),
-    ('craftax_hwm_l2', 2),
-    ('craftax_hjepa_l3', 3),
-    ('craftax_hwm_l3', 3),
+    ('craftax_hjepa', 2),
+    ('craftax_hwm', 2),
+    ('craftax_hjepa', 3),
+    ('craftax_hwm', 3),
+    ('craftax_hjepa', 4),
 ]
 
 
@@ -301,11 +302,26 @@ def level1_frames(cfg):
     return frames
 
 
+@pytest.mark.parametrize('levels', [1, 2, 3, 4])
+def test_the_dataset_gets_clip_blocks_of_the_used_levels_only(levels):
+    # the depth is a setting: the config defines levels 2 to 4 and the
+    # dataset must not build clips for the ones above num_levels
+    from data import dataset_kwargs
+
+    cfg = compose_train('craftax_hjepa', [f'num_levels={levels}'])
+    assert 'level4' in cfg.data.dataset  # defined, not used
+    kwargs = dataset_kwargs(cfg)
+    assert {k for k in kwargs if k.startswith('level')} == {
+        f'level{n}' for n in range(1, levels + 1)
+    }
+    assert 'val_name' not in kwargs and 'name' in kwargs
+
+
 @pytest.mark.parametrize('name,levels', CONFIGS)
 def test_hierarchical_training_step(name, levels):
     from hjepa_utils import create_world_model, hjepa_forward
 
-    cfg = compose_train(name)
+    cfg = compose_train(name, [f'num_levels={levels}'])
     model, losses = create_world_model(cfg)
     assert model.num_levels == levels
     for level in range(2, levels + 1):
@@ -351,9 +367,9 @@ def test_hierarchical_cem_plans_with_codes():
     from hierarchical_solver import build_hierarchical_solver
     from hjepa_utils import create_world_model
 
-    model, _ = create_world_model(compose_train('craftax_hjepa_l2'))
+    model, _ = create_world_model(compose_train('craftax_hjepa'))
     model.eval()
-    cfg = planning_eval.load_eval_config(config_name='craftax_l2')
+    cfg = planning_eval.load_eval_config(config_name='craftax_plan')
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
     for level in (1, 2):
         solver_cfg = cfg.solver.solvers[f'level{level}']
@@ -394,7 +410,7 @@ BAND = [
 def test_training_step_with_a_duration_band():
     from hjepa_utils import create_world_model, hjepa_forward
 
-    cfg = compose_train('craftax_hjepa_l2', BAND)
+    cfg = compose_train('craftax_hjepa', BAND)
     model, losses = create_world_model(cfg)
     top = model.get_level(2)
     assert top.get_action_spec().durations == (2, 4, 8)
@@ -430,9 +446,9 @@ def test_hierarchical_cem_plans_codes_and_durations():
     from hierarchical_solver import build_hierarchical_solver
     from hjepa_utils import create_world_model
 
-    model, _ = create_world_model(compose_train('craftax_hjepa_l2', BAND))
+    model, _ = create_world_model(compose_train('craftax_hjepa', BAND))
     model.eval()
-    cfg = planning_eval.load_eval_config(config_name='craftax_l2')
+    cfg = planning_eval.load_eval_config(config_name='craftax_plan')
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
     for level in (1, 2):
         cfg.solver.solvers[f'level{level}'].update(
@@ -461,7 +477,7 @@ def test_projected_cost_planning_runs_with_vq_levels():
     from hierarchical_solver import build_hierarchical_solver
     from hjepa_utils import create_world_model
 
-    model, _ = create_world_model(compose_train('craftax_hjepa_l2'))
+    model, _ = create_world_model(compose_train('craftax_hjepa'))
     model.eval()
     cfg = planning_eval.load_eval_config(config_name='craftax_l2_project')
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))

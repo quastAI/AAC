@@ -161,7 +161,7 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
         for p in protocols:
             t = spec["tasks"][p]
             directory = f"{home}/ckpts/craftax/random/eval_{p}_{split}"
-            cmd = [python, "eval.py", "--config-name", "craftax_flat", "policy=random", f"load_eval_trajs_path={task_jobs[p].output}",
+            cmd = [python, "eval.py", "--config-name", "craftax_plan", "policy=random", f"load_eval_trajs_path={task_jobs[p].output}",
                    f"eval.num_eval={t['num_tasks']}", f"eval.goal_offset_steps={t['eval_budget']}",
                    f"eval.eval_budget={t['eval_budget']}", f"eval.chunk_size={st['chunk_size']}",
                    f"eval.dataset_name={task_ds}", f"output.dir={directory}"]  # fmt: skip

@@ -46,12 +46,16 @@ Settled on 2026-10-13 (review session): tasks and all planning evaluation come f
 
 ## Not built yet
 
-Depth as a setting 1-4 with strides (one config instead of one per depth), the per-source loss mask for uniform random episodes, frame-based data shares in the collector and the runner, code-sequence proposals for CEM, terminal-frame padding with a per-frame `dead` flag from the collector, a coverage table (levels x strides x horizon against the time to diamond) in D0, E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data mix, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
+The per-source loss mask for uniform random episodes, frame-based data shares in the collector and the runner, code-sequence proposals for CEM, terminal-frame padding with a per-frame `dead` flag from the collector, a coverage table (levels x strides x horizon against the time to diamond) in D0, E7 code (irregular-spacing sampler, `action_duration` through the hierarchical encode, horizon coupling in the hierarchical solver), E8 (learned jumps), protocol B with key states (needs goal switching in the policy), planner proposals/trust region/actors (decision deferred). Open: the final goal test and offsets, data mix, level-1 step size, a real lock file and the SLURM settings for the cluster. The expert is trained by the user.
+
+## Configs
+
+One training config per model type (`craftax_hjepa`, `craftax_hwm`) and one planning config (`craftax_plan`) serve every depth: `num_levels=1..4` and `levelN.stride=..` are settings (level 1 alone is the flat model, LeWM). The blocks of levels above `num_levels` stay in the config and are ignored (`data.dataset_kwargs` for the dataset, `_drop_levels_above_model` for planning). In `craftax_plan` the top level plans its own `horizon`; a level below plans one upper step, so its horizon is the stride of the level above (`horizon_schedule: fixed`).
 
 ## Pitfalls seen
 
 - The expert checkpoint must contain BatchRenorm `batch_stats` (the training script saves them now); older checkpoints cannot be used.
-- A level that follows the plan of the one above must have a horizon in [stride, 2 x stride) with one subgoal (`check_subgoal_horizon` raises otherwise); change a stride and the lower horizons with it. The Craftax eval configs use `horizon_schedule: fixed` (the Push-T `decreasing` default shrinks the horizon over the budget and skips upper levels late). `receding_horizon` counts level-1 steps.
+- A level that follows the plan of the one above must have a horizon in [stride, 2 x stride) with one subgoal (`check_subgoal_horizon` raises otherwise); `craftax_plan` derives it from the stride. The Craftax eval configs use `horizon_schedule: fixed` (the Push-T `decreasing` default shrinks the horizon over the budget and skips upper levels late). `receding_horizon` counts level-1 steps.
 - Evaluation needs a task file (`eval_tasks.py`) passed as `load_eval_trajs_path`; `eval.chunk_size` must be null without it. `output.dir` is relative to the parent of the policy directory (or absolute for `policy=random`).
 - Tasks are one per world seed (the evaluation asserts distinct seeds). Random agents solve some tasks (wake_up, drink, sapling): always compare with the random baseline. Smoke runs on untrained models only check plumbing.
 - Probe scores below zero mean too few samples for the latent dimension (`PROBE_FEW_SAMPLES`).

@@ -179,7 +179,7 @@ def test_run_probing_end_to_end(tmp_path):
         config_dir=str(H_JEPA / 'config' / 'train'), version_base=None
     ):
         cfg = hydra.compose(
-            config_name='craftax_hjepa_l2',
+            config_name='craftax_hjepa',
             overrides=[
                 'data.dataset.name=probe_train',
                 'data.dataset.val_name=probe_val',

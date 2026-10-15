@@ -385,7 +385,9 @@ def train_cfg():
     with hydra.initialize_config_dir(
         config_dir=str(H_JEPA / 'config' / 'train'), version_base=None
     ):
-        return hydra.compose(config_name='craftax_lewm')
+        return hydra.compose(
+            config_name='craftax_hjepa', overrides=['num_levels=1']
+        )
 
 
 @pytest.fixture(scope='module')

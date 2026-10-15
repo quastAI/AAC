@@ -1,8 +1,0 @@
-# Craftax-Classic: flat LeWM baseline (a single level).
-defaults:
-- base/craftax
-- _self_
-output_model_name: craftax_lewm
-num_levels: 1
-planning_eval:
-  config_name: craftax_flat

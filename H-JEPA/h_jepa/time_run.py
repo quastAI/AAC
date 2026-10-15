@@ -9,8 +9,8 @@ planner only; stepping the simulator is not included.
 
 Meaningful on the GPU of the real runs; it also runs on the CPU as a smoke test.
 
-    python time_run.py --config-name craftax_hjepa_l2 --eval-config-name craftax_l2 \
-        --batch-size 128 --clips 200000 --num-eval 100
+    python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan \
+        --batch-size 128 --clips 200000 --num-eval 100 num_levels=2
 """
 
 from __future__ import annotations
@@ -189,10 +189,11 @@ def main():
     parser.add_argument("--num-envs", type=int, default=8, help="environments per timed solve")
     parser.add_argument("--solves", type=int, default=3)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("overrides", nargs="*", help="Hydra overrides of the training config, e.g. num_levels=3")
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    cfg = compose("train", args.config_name)
+    cfg = compose("train", args.config_name, args.overrides)
     batch_size = args.batch_size or int(cfg.loader.batch_size)
     epochs = args.epochs or int(cfg.trainer.max_epochs)
     print(f"device {device}; config {args.config_name}; batch size {batch_size}")

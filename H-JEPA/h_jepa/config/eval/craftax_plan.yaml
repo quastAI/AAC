@@ -1,7 +1,10 @@
-# Craftax-Classic: 3-level hierarchical planning, shared by H-JEPA and HWM. CEM over discrete
-# actions at level 1 and over VQ codes above. Sample counts and horizons are placeholders;
-# the level-1 horizon must lie in [stride, 2 * stride) (one subgoal per upper step).
-# Tasks: see craftax_flat.yaml.
+# Craftax-Classic planning for a model of any depth (1 to 4 levels, H-JEPA and HWM): the blocks of the
+# levels above the model are dropped when it is loaded. CEM over discrete actions at level 1 and over
+# VQ codes above. Sample counts and horizons are placeholders.
+# Horizons: the top level plans `horizon` steps of its own. A level below follows the plan of the one
+# above and plans exactly one upper step, so its horizon is the stride of the level above (the value
+# under `horizon` is ignored for it). Level 1 alone (the flat model) plans its own horizon 10.
+# Tasks: see eval_tasks.py (protocols A and B).
 cache_dir: ${oc.env:HJEPA_HOME}
 world:
   env_name: swm/CraftaxClassic-v1
@@ -47,10 +50,18 @@ solver:
       batch_size: 5
       device: cuda
       seed: ${seed}
+    level4:
+      _target_: stable_worldmodel.solver.CategoricalCEMSolver
+      num_samples: 300
+      n_iters: 10
+      topk: 30
+      batch_size: 5
+      device: cuda
+      seed: ${seed}
 hierarchical_plan_config:
   receding_horizon: 2
   level1:
-    horizon: 4
+    horizon: 10  # only used when level 1 is the top level (the flat model)
     horizon_schedule: fixed
     action_block: 1
     cost_last_n: 1
@@ -59,13 +70,16 @@ hierarchical_plan_config:
     horizon: 4
     horizon_schedule: fixed
     action_block: 1
-    action_dim: 16
     cost_last_n: 1
   level3:
     horizon: 4
     horizon_schedule: fixed
     action_block: 1
-    action_dim: 16
+    cost_last_n: 1
+  level4:
+    horizon: 4
+    horizon_schedule: fixed
+    action_block: 1
     cost_last_n: 1
 planning_metrics:  # what the planner did and whether to trust it, see planning_metrics.py
   enabled: true

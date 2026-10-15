@@ -41,13 +41,14 @@ def test_every_experiment_builds_or_is_blocked(spec):
 def test_e1_commands_and_dependencies(spec):
     jobs = by_name(jobs_of(spec, 'E1'))
     train = jobs['train_e1_hjepa_l2_s42']
-    assert train.command[:4] == ['python', 'main_hjepa.py', '--config-name', 'craftax_hjepa_l2']
+    assert train.command[:4] == ['python', 'main_hjepa.py', '--config-name', 'craftax_hjepa']
+    assert 'num_levels=2' in train.command  # the depth is a setting
     assert 'output_model_name=e1_hjepa_l2' in train.command and 'seed=42' in train.command
     assert 'data.dataset.name=craftax_expert_train' in train.command
     ev = jobs['eval_e1_hjepa_l2_s42_A']
     assert ev.after == ['tasks_A', 'train_e1_hjepa_l2_s42']
     assert 'policy=ckpts/craftax/e1_hjepa_l2/seed42' in ev.command
-    assert 'output.dir=seed42/eval_A_val_craftax_l2' in ev.command
+    assert 'output.dir=seed42/eval_A_val_craftax_plan' in ev.command
     assert 'load_eval_trajs_path=/data/eval_tasks/A_val.pt' in ev.command
     # tasks A (offsets with progress) and B (full episodes) and a random baseline for each
     assert '--offsets' in jobs['tasks_A'].command and '--mode' in jobs['tasks_B'].command
@@ -81,7 +82,7 @@ def test_reused_models_are_not_retrained(spec):
 
 def test_ablations_set_their_overrides(spec):
     e5 = by_name(jobs_of(spec, 'E5'))
-    assert 'level1.idm_coeff=0' in e5['train_e5_lewm_noidm_s42'].command
+    assert 'level1.idm_coeff=0' in e5['train_e5_l1_noidm_s42'].command
     e3 = by_name(jobs_of(spec, 'E3'))
     assert 'level2.wm.rollout_n=4' in e3['train_e3_hjepa_l2_rollout4_s42'].command
 
@@ -90,20 +91,28 @@ def test_probe_experiment_has_no_training(spec):
     jobs = jobs_of(spec, 'E4')
     probes = [j for j in jobs if j.kind == 'probe']
     assert len(probes) == 4 and not any(j.kind == 'train' for j in jobs)
-    assert '--run' in probes[0].command and '/data/ckpts/craftax/e1_lewm/seed42' in probes[0].command
+    assert '--run' in probes[0].command and '/data/ckpts/craftax/e1_l1/seed42' in probes[0].command
 
 
-def test_planner_scale_changes_samples_and_iterations_together(spec):
-    assert run.scaled_overrides('craftax_l2', 1) == run.scaled_overrides('craftax_l2', 1.0)
-    base = {o.split('=')[0]: int(o.split('=')[1]) for o in run.scaled_overrides('craftax_l2', 1)}
-    big = {o.split('=')[0]: int(o.split('=')[1]) for o in run.scaled_overrides('craftax_l2', 4)}
+def test_planner_scale_changes_samples_and_iterations_together(spec, tmp_path, monkeypatch):
+    assert run.scaled_overrides('craftax_plan', 1) == run.scaled_overrides('craftax_plan', 1.0)
+    base = {o.split('=')[0]: int(o.split('=')[1]) for o in run.scaled_overrides('craftax_plan', 1)}
+    big = {o.split('=')[0]: int(o.split('=')[1]) for o in run.scaled_overrides('craftax_plan', 4)}
     assert big['solver.solvers.level1.num_samples'] == 2 * base['solver.solvers.level1.num_samples']
     assert big['solver.solvers.level2.n_iters'] == 2 * base['solver.solvers.level2.n_iters']
-    flat = [o.split('=')[0] for o in run.scaled_overrides('craftax_flat', 0.25)]
+    # an eval config with a single solver (the other benchmarks' flat configs)
+    flat_dir = tmp_path / 'config' / 'eval'
+    flat_dir.mkdir(parents=True)
+    (flat_dir / 'flat.yaml').write_text(
+        'solver: {num_samples: 100, n_iters: 4, topk: 10}\n'
+    )
+    monkeypatch.setattr(run, 'H_JEPA', tmp_path)
+    flat = [o.split('=')[0] for o in run.scaled_overrides('flat', 0.25)]
     assert flat == ['solver.num_samples', 'solver.n_iters', 'solver.topk']
+    monkeypatch.undo()
     jobs = by_name(jobs_of(spec, 'C1'))
     ev = jobs['eval_c1_x4_s42_A']
-    assert 'output.dir=seed42/eval_A_val_craftax_l2_x4' in ev.command
+    assert 'output.dir=seed42/eval_A_val_craftax_plan_x4' in ev.command
     assert 'solver.solvers.level1.num_samples=%d' % big['solver.solvers.level1.num_samples'] in ev.command
     assert '--scaling' in jobs['compare_C1_A'].command
 
@@ -198,7 +207,7 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
             continue  # probes and training reports do not depend on the task split
         assert out_e[name] != out_f[name], name
     ev = {j.name: j for j in final}['eval_e1_hjepa_l2_s42_A']
-    assert 'output.dir=seed42/eval_A_test_craftax_l2' in ev.command
+    assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 
 def test_collection_mixes_experts_with_a_quarter_of_other_episodes(spec):

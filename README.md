@@ -154,16 +154,16 @@ callables:
 
 ```bash
 cd H-JEPA/h_jepa
-python main_hjepa.py --config-name craftax_lewm        # or craftax_hjepa_l2/l3, craftax_hwm_l2/l3
+python main_hjepa.py --config-name craftax_hjepa num_levels=2 level2.stride=4      # craftax_hwm for HWM; num_levels=1 is the flat model (LeWM), up to 4
 python eval_tasks.py --dataset craftax_expert_val --mode offset --offsets 25 50 100 --num-tasks 200 --eval-budget 400 --out tasks.pt
-python eval.py --config-name craftax_flat policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
-python eval.py --config-name craftax_l2 policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...                    # craftax_flat/l3/l2_project
+python eval.py --config-name craftax_plan policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
+python eval.py --config-name craftax_plan policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...                   # any depth; craftax_l2_project for the projected cost
 python probe_eval.py --run <run dir> --train-dataset X --val-dataset Y                                                         # probes of every level
-python time_run.py --config-name craftax_hjepa_l2 --eval-config-name craftax_l2                                               # step and solve timing
+python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan                                                  # step and solve timing (overrides: num_levels=3)
 python ../../experiments/run.py plan E1                                                                                       # the whole experiment
 ```
 
-Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`; hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built), a compute-scaling probe C1, the dataset analysis D0 and the data collection plan D1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
+Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`: one training config per model type (`craftax_hjepa`, `craftax_hwm`) and one planning config (`craftax_plan`) for every depth, set with `num_levels` and `levelN.stride` (the blocks of levels above `num_levels` are ignored; a level below the top plans one upper step, so its horizon is the stride of the level above); hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built), a compute-scaling probe C1, the dataset analysis D0 and the data collection plan D1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
 
 ### Design notes
 
@@ -191,7 +191,7 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 
 ### Tests
 
-`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 132 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `tests/data/make_fixture.py`, its docstring has the collector command) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
+`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 138 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `tests/data/make_fixture.py`, its docstring has the collector command) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
 
 ## Compute and roadmap
 

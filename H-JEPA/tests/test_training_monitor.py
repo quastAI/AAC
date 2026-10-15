@@ -61,7 +61,7 @@ def setup(tmp_path_factory):
         config_dir=str(H_JEPA / 'config' / 'train'), version_base=None
     ):
         cfg = hydra.compose(
-            config_name='craftax_hjepa_l2',
+            config_name='craftax_hjepa',
             overrides=[
                 'data.dataset.val_name=craftax',
                 'health.drift_horizon=3',

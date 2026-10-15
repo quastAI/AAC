@@ -3,7 +3,7 @@
 # up to level 2 and compared with the real goal there. CEM over discrete
 # actions at level 1 and over VQ codes above. Sample counts and horizons are placeholders;
 # without upper-level subgoals the level-1 horizon is free.
-# Tasks: see craftax_flat.yaml.
+# Tasks: see eval_tasks.py.
 cache_dir: ${oc.env:HJEPA_HOME}
 world:
   env_name: swm/CraftaxClassic-v1

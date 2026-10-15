@@ -19,18 +19,19 @@ import time_run  # noqa: E402
 
 
 @pytest.mark.parametrize(
-    'name',
+    'name, levels',
     [
-        'craftax_lewm',
-        'craftax_hjepa_l2',
-        'craftax_hjepa_l3',
-        'craftax_hwm_l3',
+        ('craftax_hjepa', 1),
+        ('craftax_hjepa', 2),
+        ('craftax_hjepa', 3),
+        ('craftax_hjepa', 4),
+        ('craftax_hwm', 3),
     ],
 )
-def test_required_frames_match_the_dataset_span(name, dataset):
+def test_required_frames_match_the_dataset_span(name, levels, dataset):
     import stable_worldmodel as swm
 
-    cfg = time_run.compose('train', name)
+    cfg = time_run.compose('train', name, [f'num_levels={levels}'])
     levels = {
         f'level{n}': {
             'frameskip': int(cfg[f'level{n}'].stride),
@@ -49,7 +50,7 @@ def test_required_frames_match_the_dataset_span(name, dataset):
 
 
 def test_timings_run_on_cpu():
-    cfg = time_run.compose('train', 'craftax_hjepa_l2')
+    cfg = time_run.compose('train', 'craftax_hjepa')
     device = torch.device('cpu')
     t = time_run.time_training(
         cfg, batch_size=2, steps=1, warmup=0, device=device
@@ -57,7 +58,7 @@ def test_timings_run_on_cpu():
     assert t['step_seconds'] > 0 and t['tflops_per_step'] > 0
     assert t['frames_per_clip'] == 13 and t['parameters_m'] > 1
 
-    eval_cfg = time_run.compose('eval', 'craftax_l2')
+    eval_cfg = time_run.compose('eval', 'craftax_plan')
     for level in (1, 2):
         eval_cfg.solver.solvers[f'level{level}'].update(
             num_samples=6, n_iters=2, topk=2, batch_size=2
@@ -74,7 +75,7 @@ def test_timings_run_on_cpu():
 
 def test_training_timing_with_frameskip_above_one():
     # level-1 actions are one one-hot per frameskip step, concatenated
-    cfg = time_run.compose('train', 'craftax_lewm')
+    cfg = time_run.compose('train', 'craftax_hjepa', ['num_levels=1'])
     cfg.data.dataset.level1.frameskip = 2
     t = time_run.time_training(
         cfg, batch_size=2, steps=1, warmup=0, device=torch.device('cpu')

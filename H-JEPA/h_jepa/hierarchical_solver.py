@@ -282,10 +282,14 @@ class HierarchicalSolver:
                 continue
 
             if level_cfg.horizon_schedule == 'fixed':
-                # the configured horizon on every call; the subgoal check ties it to the stride
-                schedules[level] = horizon_schedule(
-                    'fixed', num_calls=calls, configured_horizon=horizon
-                )
+                # A level that follows the plan of the one above plans one upper step: the stride
+                # of the level above. Where that level is skipped (horizon 1, as in the projected
+                # cost configs) the configured horizon is used.
+                stride = int(self.level_models[level].temporal_stride)
+                schedules[level] = [
+                    stride if upper > 1 else horizon
+                    for upper in schedules[level + 1]
+                ]
                 continue
 
             upper_schedule = schedules[level + 1]

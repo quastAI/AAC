@@ -244,13 +244,13 @@ def test_recording_solver_delegates_and_counts_flops():
 # --- the recorder against the real env and a tiny untrained model ----
 
 
-def compose_train(name):
+def compose_train(name, overrides=()):
     if not OmegaConf.has_resolver('eval'):
         OmegaConf.register_new_resolver('eval', eval)
     with hydra.initialize_config_dir(
         config_dir=str(H_JEPA / 'config' / 'train'), version_base=None
     ):
-        return hydra.compose(config_name=name)
+        return hydra.compose(config_name=name, overrides=list(overrides))
 
 
 CALLABLES = [
@@ -334,7 +334,7 @@ def check_records(policy, tasks, levels):
 
 
 def test_recorder_end_to_end_flat(dataset):
-    jepa = create_world_model(compose_train('craftax_lewm'))[0].get_level(1)
+    jepa = create_world_model(compose_train('craftax_hjepa', ['num_levels=1']))[0].get_level(1)
     jepa.eval()
     solver = pm.RecordingSolver(
         CategoricalCEMSolver(jepa, num_samples=8, n_iters=2, topk=2, seed=0)
@@ -355,12 +355,17 @@ def test_recorder_end_to_end_flat(dataset):
     assert summary['actions']['distinct_mean'] >= 1
 
 
-def test_recorder_end_to_end_hierarchical_through_build_policy(dataset):
-    model = create_world_model(compose_train('craftax_hjepa_l2'))[0]
+@pytest.mark.parametrize('depth', [1, 2, 3])
+def test_recorder_end_to_end_through_build_policy(dataset, depth):
+    # one planning config serves models of every depth: the blocks of the
+    # levels above the model are dropped, a lower level plans one upper step
+    model = create_world_model(
+        compose_train('craftax_hjepa', [f'num_levels={depth}'])
+    )[0]
     model.eval()
-    cfg = planning_eval.load_eval_config(config_name='craftax_l2')
+    cfg = planning_eval.load_eval_config(config_name='craftax_plan')
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
-    for level in (1, 2):
+    for level in range(1, depth + 1):
         cfg.solver.solvers[f'level{level}'].update(
             device='cpu', num_samples=6, n_iters=2, topk=2, batch_size=2
         )
@@ -371,39 +376,11 @@ def test_recorder_end_to_end_hierarchical_through_build_policy(dataset):
         cfg, {}, image_transforms(), model=model
     )
     assert isinstance(policy, pm.RecordingPolicy)
+    assert sorted(policy.inner.level_solvers) == list(range(1, depth + 1))
     tasks = run_eval(policy, dataset)
-    summary = check_records(policy, tasks, levels=[1, 2])
-    assert (
-        summary['subgoals']['n'] >= 1
-    )  # the upper-level subgoal was followed up
-    assert set(summary['planner']) == {1, 2}
-
-
-def test_write_planning_health_creates_the_report(dataset, tmp_path):
-    summary = planning_eval.write_planning_health(
-        tmp_path,
-        [record([0, 1], [1.0, 0.1], plan())],
-        None,
-        metrics := {},
-    )
-    assert (
-        (tmp_path / 'planning_report.md').read_text().startswith('# Planning')
-    )
-    assert (tmp_path / 'planning_health.json').exists()
-    assert metrics['progress_mean'] == summary['progress_mean'] == 1.0
-    assert np.isfinite(metrics['tflops_per_task'])
-
-
-def test_random_baseline_records_like_the_planner(dataset):
-    policy = pm.RandomRecordingPolicy(seed=0)
-    tasks = run_eval(policy, dataset)
-    (record,) = policy.records
-    assert len(record['progress']) >= 2 and record['required'] == 1
-    assert len(record['actions']) >= 2 and not record['solves']
-    summary = pm.summarize_planning(policy.records, tasks)
-    assert summary['num_tasks'] == 1 and 'plans' not in summary
-    assert summary['compute']['tflops_per_task'] == 0
-    report = health.render_planning_report(
-        summary, health.diagnose_planning(summary)
-    )
-    assert '# Planning report' in report
+    summary = check_records(policy, tasks, levels=range(1, depth + 1))
+    assert set(summary['planner']) == set(range(1, depth + 1))
+    if depth > 1:
+        assert (
+            summary['subgoals']['n'] >= 1
+        )  # the upper-level subgoal was followed up

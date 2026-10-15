@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import re
 import numpy as np
 from omegaconf import OmegaConf
 import stable_worldmodel as swm
@@ -61,6 +62,22 @@ def discrete_num_actions(cfg) -> int | None:
     """Number of discrete level-1 actions (`level1.wm.num_actions`), None if continuous."""
     num_actions = cfg.level1.wm.get("num_actions", None)
     return None if num_actions is None else int(num_actions)
+
+
+def dataset_kwargs(cfg) -> dict:
+    """The dataset config without `val_name` and without the clip blocks of unused levels.
+
+    A config can define levels above `num_levels` (the depth is a setting); the dataset would
+    build clips for all of them, so their blocks are left out.
+    """
+    num_levels = int(cfg.num_levels)
+    out = {}
+    for key, value in cfg.data.dataset.items():
+        match = re.fullmatch(r"level(\d+)", str(key))
+        if key == "val_name" or (match and int(match.group(1)) > num_levels):
+            continue
+        out[key] = value
+    return out
 
 
 def build_column_transforms(cfg, dataset) -> list:

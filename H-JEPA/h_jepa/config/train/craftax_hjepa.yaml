@@ -1,11 +1,13 @@
-# Craftax-Classic: HWM baseline: upper levels have identity encoders and no SIGReg. 3 levels. The upper levels quantize their
-# latent actions (VQ), so the planner searches discrete codes at every level.
-# Stride 4 is a placeholder until it is derived from the data (E2).
+# Craftax-Classic: H-JEPA, trained end-to-end. Upper levels: latent MLP encoders, SIGReg on every level.
+# The depth is a setting: `num_levels=1` is the flat model (LeWM), 2 to 4 add levels (the blocks of the
+# levels above num_levels are ignored). The upper levels quantize their latent actions (VQ), so the
+# planner searches discrete codes at every level. Strides (`levelN.stride`) are placeholders until
+# they are derived from the data (D0 coverage, E2): `num_levels=3 level2.stride=6 level3.stride=5`.
 defaults:
 - base/craftax
 - _self_
-output_model_name: craftax_hwm_l3
-num_levels: 3
+output_model_name: craftax_hjepa
+num_levels: 2
 data:
   dataset:
     level2:
@@ -16,8 +18,12 @@ data:
       frameskip: ${level3.stride}
       window_size: ${level3.window_size}
       num_steps: ${eval:'${level3.wm.history_size} + ${level3.wm.rollout_n}'}
+    level4:
+      frameskip: ${level4.stride}
+      window_size: ${level4.window_size}
+      num_steps: ${eval:'${level4.wm.history_size} + ${level4.wm.rollout_n}'}
 planning_eval:
-  config_name: craftax_l3
+  config_name: craftax_plan
 level2:
   lr: 1.0e-05
   stride: 4
@@ -29,11 +35,14 @@ level2:
     history_size: 3
     rollout_n: 1
     rollout_loss_weight: 1.0
-    embed_dim: ${level1.wm.embed_dim}
+    embed_dim: 192
     use_proprio: false
   encoder:
-    type: identity
+    type: latent_mlp
     input_dim: ${level1.wm.embed_dim}
+    hidden_dim: 384
+    final_ln: false
+    output_dim: ${level2.wm.embed_dim}
     projector:
       type: identity
   action_encoder:
@@ -68,7 +77,7 @@ level2:
   loss:
     embed:
       sigreg:
-        enabled: false
+        enabled: true
         weight: 0.09
 level3:
   lr: 1.0e-05
@@ -81,11 +90,14 @@ level3:
     history_size: 3
     rollout_n: 1
     rollout_loss_weight: 1.0
-    embed_dim: ${level1.wm.embed_dim}
+    embed_dim: 192
     use_proprio: false
   encoder:
-    type: identity
+    type: latent_mlp
     input_dim: ${level2.wm.embed_dim}
+    hidden_dim: 384
+    final_ln: false
+    output_dim: ${level3.wm.embed_dim}
     projector:
       type: identity
   action_encoder:
@@ -120,5 +132,60 @@ level3:
   loss:
     embed:
       sigreg:
-        enabled: false
+        enabled: true
+        weight: 0.09
+level4:
+  lr: 1.0e-05
+  stride: 4
+  window_size: 1
+  idm_coeff: 0.1  # cross-entropy on the code of each chunk (E5: set per model)
+  idm:
+    hidden_dim: 256
+  wm:
+    history_size: 3
+    rollout_n: 1
+    rollout_loss_weight: 1.0
+    embed_dim: 192
+    use_proprio: false
+  encoder:
+    type: latent_mlp
+    input_dim: ${level3.wm.embed_dim}
+    hidden_dim: 384
+    final_ln: false
+    output_dim: ${level4.wm.embed_dim}
+    projector:
+      type: identity
+  action_encoder:
+    dropout: 0.0  # none before the quantiser: it would change the code of a chunk from step to step
+    output_dim: 16  # code dimension
+    input_dim: ${level3.wm.embed_dim}
+    max_chunk: ${eval:'${data.dataset.level4.frameskip} + 1'}
+    queue_size: 4000
+    vq:
+      num_codes: 64  # per group
+      groups: 2  # factorized codebook: an action is 2 indices, 64**2 combinations
+      decay: 0.99
+      commitment: 0.25
+      dead_threshold: 1.0
+      # Band of step durations (E7): the action token then also carries k.
+      # Needs action_encoder.max_chunk >= max(durations) (checked).
+      # durations: [2, 3, 4, 5, 6, 7, 8]
+      # default_duration: ${level4.stride}
+  action_embed:
+    patch_embed: false
+    input_dim: ${level4.action_encoder.output_dim}
+  predictor:
+    depth: 6
+    heads: 16
+    mlp_dim: 2048
+    dim_head: 64
+    dropout: 0.1
+    emb_dropout: 0.0
+    hidden_dim: 192
+    projector:
+      type: mlp
+  loss:
+    embed:
+      sigreg:
+        enabled: true
         weight: 0.09
