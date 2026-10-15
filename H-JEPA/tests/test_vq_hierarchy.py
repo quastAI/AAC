@@ -500,3 +500,119 @@ def test_projected_cost_planning_runs_with_vq_levels():
     assert out['actions'].shape[1] == 8  # the level-1 horizon
     assert solver.level_solvers[1].solve_records  # level 1 planned
     assert not solver.level_solvers[2].solve_records  # level 2 was skipped
+
+
+def source_batch(cfg, sources):
+    frames = level1_frames(cfg)
+    n = len(sources)
+    index = torch.randint(0, 17, (n, frames))
+    return {
+        'pixels_level1': torch.randn(n, frames, 3, 63, 63),
+        'action_level1': torch.nn.functional.one_hot(index, 17).float(),
+        'source_level1': torch.tensor(sources).reshape(n, 1).expand(n, frames),
+    }
+
+
+def forward(model, losses, cfg, batch):
+    from hjepa_utils import hjepa_forward
+
+    return hjepa_forward(
+        FakeModule(model, losses),
+        batch,
+        'train',
+        cfg,
+        normalize_batch=lambda b: None,
+    )
+
+
+def test_random_episodes_train_level_1_only():
+    from hjepa_utils import create_world_model, upper_clip_mask
+
+    cfg = compose_train('craftax_hjepa', ['num_levels=3'])
+    assert list(cfg.upper_loss_exclude_sources) == [2]
+    sources = [0, 2, 1, 2, 0, 0]
+    batch = source_batch(cfg, sources)
+    assert upper_clip_mask(batch, cfg).tolist() == [
+        True, False, True, False, True, True
+    ]  # fmt: skip
+
+    torch.manual_seed(0)
+    model, losses = create_world_model(cfg)
+    model.eval()  # no dropout, no codebook update: only the batch differs
+    torch.manual_seed(1)  # the clips are cropped at random
+    out = forward(model, losses, cfg, batch)
+    assert out['embed_1'].shape[0] == 6  # level 1 sees every clip
+    for level in (2, 3):
+        assert out[f'embed_{level}'].shape[0] == 4
+        assert out[f'action_index_{level}'].shape[0] == 4
+    assert float(out['upper_clip_share_loss']) == pytest.approx(4 / 6)
+
+    # the level-1 loss does not depend on which clips the upper levels use
+    unmasked = {k: v for k, v in batch.items() if k != 'source_level1'}
+    torch.manual_seed(1)
+    plain = forward(model, losses, cfg, unmasked)
+    # (SIGReg draws new random projections on every call, so compare the
+    # deterministic terms)
+    for key in ('pred_loss_level1', 'idm_loss_level1'):
+        assert torch.allclose(out[key], plain[key]), key
+
+
+def test_clips_of_other_sources_stay_out_of_the_codebook():
+    import copy
+
+    from hjepa_utils import create_world_model
+
+    cfg = compose_train('craftax_hjepa')
+    torch.manual_seed(0)
+    model, losses = create_world_model(cfg)
+    model.train()
+    vq = model.get_level(2).action_encoder
+    vq.dead_threshold = 0.0  # no re-seeding: the counts only grow with the data
+    forward(model, losses, cfg, source_batch(cfg, [0, 0, 0, 0]))  # init
+    state = copy.deepcopy(model.state_dict())
+
+    def growth(sources):
+        model.load_state_dict(state)
+        before = vq.ema_count.sum(-1).clone()
+        forward(model, losses, cfg, source_batch(cfg, sources) | {})
+        return (vq.ema_count.sum(-1) - 0.99 * before) / 0.01
+
+    all_clips = growth([0, 0, 0, 0])
+    half = growth([0, 2, 0, 2])
+    assert torch.allclose(half, all_clips / 2, atol=1e-3)  # 2 clips of 4 count
+    assert vq.clip_mask is None  # the mask lives for one forward only
+
+
+def test_too_few_kept_clips_fall_back_to_all_clips():
+    from hjepa_utils import upper_clip_mask
+
+    cfg = compose_train('craftax_hjepa')
+    only_one = source_batch(cfg, [0, 2, 2, 2])
+    assert upper_clip_mask(only_one, cfg) is None  # one clip: no statistics
+    everyone = source_batch(cfg, [0, 0, 1, 1])
+    assert upper_clip_mask(everyone, cfg).all()
+    cfg.upper_loss_exclude_sources = []
+    assert upper_clip_mask(source_batch(cfg, [2, 2, 2]), cfg) is None
+    no_source = {'pixels_level1': torch.zeros(2, 5, 3, 63, 63)}
+    assert upper_clip_mask(no_source, compose_train('craftax_hjepa')) is None
+
+
+def test_the_source_column_reaches_the_batch_unchanged(dataset):
+    import data as hjepa_data
+    from omegaconf import OmegaConf
+
+    cfg = compose_train(
+        'craftax_hjepa', ['num_levels=1', 'data.dataset.name=craftax']
+    )
+    assert 'source' in cfg.data.dataset.keys_to_load
+    kwargs = hjepa_data.dataset_kwargs(cfg)
+    kwargs['level1'] = {'frameskip': 1, 'num_steps': 4}
+    ds = hjepa_data.build_hdf5_dataset(
+        kwargs, cache_dir=dataset.h5_path.parent
+    )
+    assert OmegaConf.is_config(cfg)
+    item = ds[0]
+    assert item['source_level1'].tolist() == [2, 2, 2, 2]  # not z-scored
+    # no normalizer statistics are built for it either
+    artifact = hjepa_data.build_normalizer_artifact(cfg, ds)
+    assert 'source' not in artifact['stats']

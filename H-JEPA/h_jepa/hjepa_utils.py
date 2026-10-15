@@ -1,3 +1,5 @@
+import re
+
 import torch
 from torch.nn import functional as F
 
@@ -68,11 +70,52 @@ def _discrete_idm_target(output, level, level_cfg):
     return output.get(f"action_index_{level}")
 
 
+def upper_clip_mask(batch, cfg) -> torch.Tensor | None:
+    """(B,) bool: which clips train the levels above level 1; None if all of them do.
+
+    Uniform random episodes (source 2) are noise as chunks of actions and take codebook codes and
+    loss weight from the behaviour the upper levels should learn; they still train level 1 (dynamics
+    coverage, actions the expert never takes). A clip comes from one episode, so its source is the
+    source of its first frame. `upper_loss_exclude_sources` lists the sources to leave out.
+    """
+    exclude = list(cfg.get("upper_loss_exclude_sources", None) or [])
+    source = batch.get("source_level1")
+    if not exclude or source is None:
+        return None
+    keep = ~torch.isin(source.reshape(source.shape[0], -1)[:, 0].long(), torch.tensor(exclude, device=source.device))
+    # with fewer than two clips the batch statistics of the levels above are meaningless, and a
+    # level without any loss would leave unused parameters in a distributed run: use every clip
+    return keep if int(keep.sum()) >= 2 else None
+
+
+def _set_clip_mask(model, cfg, keep) -> None:
+    for level in range(2, int(cfg.num_levels) + 1):
+        encoder = model.get_level(level).action_encoder
+        if hasattr(encoder, "clip_mask"):
+            encoder.clip_mask = keep
+
+
+def _keep_clips(output, cfg, keep) -> None:
+    """Restrict the outputs of levels 2 and up (keys ending in _N) to the clips that train them."""
+    for key, value in list(output.items()):
+        match = re.fullmatch(r".*_(\d+)", key)
+        if match and int(match.group(1)) >= 2 and torch.is_tensor(value) and value.shape[:1] == keep.shape:
+            output[key] = value[keep]
+
+
 def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
     """Encode HJEPA inputs, predict next states, and compute per-level losses."""
     normalize_batch(batch)
 
-    output = self.model.encode_hierarchical(batch)
+    keep = upper_clip_mask(batch, cfg)
+    _set_clip_mask(self.model, cfg, keep)
+    try:
+        output = self.model.encode_hierarchical(batch)
+    finally:
+        _set_clip_mask(self.model, cfg, None)
+    if keep is not None:
+        _keep_clips(output, cfg, keep)
+        output["upper_clip_share_loss"] = keep.float().mean()  # logged: the share of clips that train the upper levels
 
     total_loss = None
     for level in range(1, int(cfg.num_levels) + 1):

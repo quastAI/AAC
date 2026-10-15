@@ -114,6 +114,9 @@ class VQActionEncoder(nn.Module):
         # moving average of the share of codes re-seeded per training step (monitoring only)
         self.register_buffer("reseed_rate", torch.zeros(()), persistent=False)
 
+        # (B,) bool, set by the training loss for one forward: clips that stay out of the codebook
+        # statistics and the commitment loss (see upper_loss_exclude_sources)
+        self.clip_mask = None
         self.last_indices = None  # (B, T, groups) code indices of the last forward
         self.last_duration_index = None  # (B, T, 1) index into `durations`, or None
         self._aux = None
@@ -132,6 +135,8 @@ class VQActionEncoder(nn.Module):
             # represent: it stays out of the codebook statistics, the re-seeding and the
             # commitment loss.
             counted = ~padding_mask.any(-1).reshape(-1)  # (N,)
+        if self.clip_mask is not None:
+            counted = counted & self.clip_mask.repeat_interleave(z.shape[1])
 
         if self.training and not bool(self.initialized) and counted.any():
             self._init_codebook(flat[counted])

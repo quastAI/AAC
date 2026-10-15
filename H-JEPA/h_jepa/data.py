@@ -64,6 +64,9 @@ def discrete_num_actions(cfg) -> int | None:
     return None if num_actions is None else int(num_actions)
 
 
+RAW_COLUMNS = ("source",)  # integer labels of the episode (0 expert, 1 noised, 2 random): never z-scored
+
+
 def dataset_kwargs(cfg) -> dict:
     """The dataset config without `val_name` and without the clip blocks of unused levels.
 
@@ -88,7 +91,7 @@ def build_column_transforms(cfg, dataset) -> list:
         if col == "action" and num_actions is not None
         else get_column_normalizer(dataset, col, col)
         for col in cfg.data.dataset.keys_to_load
-        if not col.startswith("pixels")
+        if not col.startswith("pixels") and col not in RAW_COLUMNS
     ]
 
 
@@ -215,7 +218,7 @@ def normalizer_columns_from_dataset_cfg(dataset_cfg) -> list[str]:
     columns = []
     for key in ("keys_to_load", "keys_to_cache"):
         for col in dataset_cfg.get(key, []) or []:
-            if col.startswith("pixels"):
+            if col.startswith("pixels") or col in RAW_COLUMNS:
                 continue
             if col not in columns:
                 columns.append(col)

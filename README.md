@@ -43,7 +43,7 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 **Expert.** PQN-RNN from [purejaxql](purejaxql), trained on `Craftax-Classic-Symbolic-v1`. Rolled-out episodes are filtered to the successful ones (diamond collected), and the collector renders pixels from the same state.
 
-**Data.** Expert episodes that reach the diamond, plus 25% non-expert episodes (half noised expert with epsilon 0.3, half uniform random) for level-1 dynamics coverage and for actions the expert never takes. Seeds are the split: training from 0, validation from 1,000,000, test from 2,000,000 (noised-expert episodes start 500,000 into each range, random ones 750,000; every collector run stops with `--seed-end` where the next range begins, so a low diamond rate cannot run into another split). Exploration takes its tasks from the validation worlds, headline results (`--final`) from the test worlds. `experiments/run.py plan D1 --expert-checkpoint <ckpt>` prints the collection commands. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
+**Data.** Expert episodes that reach the diamond, plus 25% non-expert episodes (half noised expert with epsilon 0.3, half uniform random) for level-1 dynamics coverage and for actions the expert never takes. Uniform random episodes train level 1 only (`upper_loss_exclude_sources: [2]`: a chunk of random actions is noise as a macro-action and would take codes and loss weight; the training batch carries the `source` column, and with fewer than two other clips in a batch all clips are used); noised-expert episodes, which may die, train every level. The final mix is set after D0. Seeds are the split: training from 0, validation from 1,000,000, test from 2,000,000 (noised-expert episodes start 500,000 into each range, random ones 750,000; every collector run stops with `--seed-end` where the next range begins, so a low diamond rate cannot run into another split). Exploration takes its tasks from the validation worlds, headline results (`--final`) from the test worlds. `experiments/run.py plan D1 --expert-checkpoint <ckpt>` prints the collection commands. We report a per-level clip count for each depth, to see early whether deeper levels still have enough data.
 
 ## Models
 
@@ -191,7 +191,7 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 
 ### Tests
 
-`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 138 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `tests/data/make_fixture.py`, its docstring has the collector command) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
+`pytest purejaxql/tests analysis/tests experiments/tests` (JAX environment, see `environment/`) and `cd H-JEPA && PYTHONPATH=. pytest tests` (H-JEPA environment, 142 tests). They include a frame-exact comparison of the environment with a collector episode (`tests/data/craftax_classic_episode.npz`, regenerate with `tests/data/make_fixture.py`, its docstring has the collector command) and a CPU smoke run of the full chain (training, task dump, planning on the real environment) whose success rates carry no meaning.
 
 ## Compute and roadmap
 
