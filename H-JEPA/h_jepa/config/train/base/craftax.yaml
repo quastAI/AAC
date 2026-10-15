@@ -12,6 +12,9 @@ data:
     - source  # 0 expert, 1 noised expert, 2 uniform random (not z-scored)
     keys_to_cache:
     - action
+    # Episodes that ended in death are extended by copies of their last (dead) frame, so that every level
+    # sees the death on its step grid ("auto": one top-level step minus one frame; 0 = off).
+    terminal_pad: auto
     level1:
       frameskip: 1  # open decision: 1 env step per level-1 step
       num_steps: ${eval:'${level1.wm.history_size} + ${level1.wm.rollout_n}'}

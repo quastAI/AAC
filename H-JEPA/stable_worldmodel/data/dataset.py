@@ -34,6 +34,7 @@ class HDF5Dataset:
         keys_to_merge: dict[str, list[str] | str] | None = None,
         cache_dir: str | Path | None = None,
         level1: dict | None = None,
+        terminal_pad: int = 0,
         **level_kwargs,
     ) -> None:
         self.h5_path = Path(cache_dir or get_cache_dir(), f'{name}.h5')
@@ -50,11 +51,29 @@ class HDF5Dataset:
                 self._cache[key] = f[key][:]
                 logging.info(f"Cached '{key}' from '{self.h5_path}'")
 
+            ended_dead = np.zeros(len(self.lengths), dtype=bool)
+            if int(terminal_pad) > 0:
+                if 'dead' in f:
+                    last = self.offsets + self.lengths - 1
+                    ended_dead = f['dead'][last].astype(bool)
+                else:
+                    logging.warning(
+                        f"terminal_pad={terminal_pad} but '{self.h5_path}' "
+                        "has no 'dead' column: no episode is padded"
+                    )
+
         self._setup_levels(level1, **level_kwargs)
+
+        # Episodes that ended in death are extended by copies of their last
+        # (dead) frame, an absorbing state, so that clips can end in it and
+        # every level sees the death on its own step grid. At most span - 1
+        # copies: a clip keeps at least one real frame.
+        pad = min(int(terminal_pad), self.last_level['span'] - 1)
+        self.pad_after = np.where(ended_dead, max(pad, 0), 0).astype(np.int64)
 
         self.clip_indices = [
             (ep, start)
-            for ep, length in enumerate(self.lengths)
+            for ep, length in enumerate(self.lengths + self.pad_after)
             if length >= self.last_level['span']
             for start in range(length - self.last_level['span'] + 1)
         ]
@@ -214,10 +233,14 @@ class HDF5Dataset:
             self.offsets[ep_idx] + start,
             self.offsets[ep_idx] + end,
         )
+        # frames past the end of a dead episode repeat its last frame
+        n_pad = max(0, int(g_end - (self.offsets[ep_idx] + self.lengths[ep_idx])))
         steps = {}
         for col in self._keys:
             src = self._cache if col in self._cache else self.h5_file
-            data = src[col][g_start:g_end]
+            data = src[col][g_start : g_end - n_pad]
+            if n_pad and data.dtype.kind not in ('O', 'S', 'U'):
+                data = np.concatenate([data, self._terminal_rows(col, data, n_pad)])
             if col != 'action':
                 data = data[:: frameskip]
 
@@ -232,6 +255,14 @@ class HDF5Dataset:
         if apply_transform and self.transform:
             return self.transform(steps)
         return steps
+
+    @staticmethod
+    def _terminal_rows(col: str, data: np.ndarray, n: int) -> np.ndarray:
+        """Rows after the end of an episode: its last row repeated; no action (NaN) for actions."""
+        if col == 'action':
+            fill = np.nan if data.dtype.kind == 'f' else 0
+            return np.full((n, *data.shape[1:]), fill, dtype=data.dtype)
+        return np.repeat(data[-1:], n, axis=0)
 
     def _get_col(self, col: str) -> np.ndarray:
         if col in self._cache:

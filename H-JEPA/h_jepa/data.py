@@ -80,6 +80,12 @@ def dataset_kwargs(cfg) -> dict:
         if key == "val_name" or (match and int(match.group(1)) > num_levels):
             continue
         out[key] = value
+    if out.get("terminal_pad") == "auto":
+        # one step of the top level, minus one frame: every level has a step on a padded frame
+        step = 1
+        for level in range(2, num_levels + 1):
+            step *= int(cfg.data.dataset[f"level{level}"].frameskip)
+        out["terminal_pad"] = step - 1
     return out
 
 

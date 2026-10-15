@@ -56,6 +56,7 @@ def build_health_loader(
     }
     base = {k: (dict(v) if hasattr(v, "items") else v) for k, v in base.items()}
     base = {k: v for k, v in base.items() if not (k.startswith("level") and k != "level1")}
+    base.pop("terminal_pad", None)  # the long validation clips are real frames only
     base["name"] = name or cfg.data.dataset.val_name
     base["keys_to_load"] = list(columns)
     base["keys_to_cache"] = ["action"]
