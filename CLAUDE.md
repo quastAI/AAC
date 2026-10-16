@@ -6,7 +6,7 @@ Hierarchical JEPA world models (LeWM, HWM, H-JEPA) on Craftax-Classic, planning 
 
 - `H-JEPA/` PyTorch: world models (`h_jepa/`), planning and environments (`stable_worldmodel/`), tests (`tests/`). Imported from a fork with `git subtree`.
 - `purejaxql/` JAX: PQN-RNN expert and the episode collector (`scripts/collect_craftax_episodes.py`). Also a subtree.
-- `analysis/` (numpy, h5py): `dataset_stats.py` (D0), `timescales.py` (its spectral and event estimators), `compare_runs.py`. `experiments/`: `experiments.yaml` (E1-E8, D0, D1, C1) and `run.py`. `environment/`: install lists, reference freezes. `.github/workflows/tests.yml` is untested (written without runner access).
+- `analysis/` (numpy, h5py): `dataset_stats.py` (D0), `timescales.py` (its spectral and event estimators), `compare_runs.py`. `experiments/`: `experiments.yaml` (E1-E8, D0, D1, C1) and `run.py`. `environment/`: install lists, reference freezes. `notebooks/`: the RunPod notebook for D1 (see `environment/README.md`, section RunPod). `.github/workflows/tests.yml` is untested (written without runner access).
 - `papers/` PDFs are gitignored. `Craftax/` and `stable-worldmodel-craftax/` are read-only reference clones, gitignored, never edit them.
 - The two code folders only share the HDF5 episode file (column table in the README).
 
@@ -62,4 +62,6 @@ One training config per model type (`craftax_hjepa`, `craftax_hwm`) and one plan
 - Tasks are one per world seed (the evaluation asserts distinct seeds). Random agents solve some tasks (wake_up, drink, sapling): always compare with the random baseline. Smoke runs on untrained models only check plumbing.
 - Probe scores below zero mean too few samples for the latent dimension (`PROBE_FEW_SAMPLES`).
 - Shell: zsh does not split unquoted variables; `timeout` is missing; `sleep` loops in the foreground are blocked, use `until ...; do sleep 5; done` as a background command; the safety check rejects `zsh -c "..."` wrappers, write a script file instead.
+- Collection: the collector appends and `--target-frames` counts the frames of one run, so a repeated run adds a full share on new seeds. `run.py` writes a marker `$HJEPA_HOME/collect_done/<job>` after each finished collect job (local and SLURM) and skips those; a killed run has none and starts again (its partial episodes stay).
+- GPU: `purejaxql[jax_envs]` alone installs the CPU jax on Linux; use `environment/jax-gpu-requirements.txt` (`jax[cuda12]==0.4.38`). Episodes collected on a GPU must pass `purejaxql/scripts/check_replay.py` on the CPU before anything is trained or planned on them. Never run the JAX tests with the python of `Craftax/.venv` (jax 0.11).
 - `hjepa_forward` logs only metrics whose key contains `loss`, which is why some statistics are named `*_loss_levelN`.

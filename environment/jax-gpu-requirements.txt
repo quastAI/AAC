@@ -1,0 +1,7 @@
+# JAX side on a Linux GPU machine (RunPod A100, CUDA 12). Install from the repository root:
+#   pip install -r environment/jax-gpu-requirements.txt
+# `purejaxql[jax_envs]` alone installs the CPU build of jax on Linux; the cuda12 extra adds the GPU plugin and the
+# CUDA 12 / cuDNN 9 libraries as pip packages (CUDA >= 12.1, cuDNN >= 9.1 and < 10; only the NVIDIA driver is needed).
+# 0.4.38 is the last release the pinned flax (<= 0.10.3) works with.
+-r jax-requirements.txt
+jax[cuda12]==0.4.38
