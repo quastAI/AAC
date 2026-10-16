@@ -9,6 +9,6 @@ Two Python projects with separate environments (JAX and PyTorch do not share one
 
 The `reference-freeze-*.txt` files list the exact versions of the environments the tests ran in (macOS arm64, Python 3.12). They are a record of what was known to work, not a cross-platform lock file: write a real lock for the cluster (`pip freeze` or `uv pip compile` on the target machine) when the first GPU runs start, and commit it here.
 
-Pins that matter: `jax<=0.4.38` needs `flax<=0.10.3` (newer flax crashes with it), `craftax==1.6.1`, `torch==2.7.1`, `gymnasium==1.2.3`, `stable-pretraining==0.1.7`.
+Pins that matter: `jax<=0.4.38` needs `flax<=0.10.3` (newer flax crashes with it), `craftax==1.6.1`, `torch==2.7.1`, `transformers==4.51.3` (a fresh resolve can pick a release that does not import with torch 2.7.1; the 153 tests passed with 4.51.3 on Python 3.11), `gymnasium==1.2.3`, `stable-pretraining==0.1.7`.
 
 If `pip` points at a private index with expired credentials, use `PIP_INDEX_URL=https://pypi.org/simple` for a throwaway environment instead of changing the configuration.
