@@ -38,6 +38,7 @@ def test_the_pod_notebook_runs_the_whole_chain():
         'check_replay.py',
         'JAX_PLATFORMS',
         'HDF5_USE_FILE_LOCKING',
+        'LD_LIBRARY_PATH',  # the image's CUDA crashes JAX's pip CUDA
         'upload_folder',
         'path_in_repo="checkpoints"',
         'path_in_repo="data"',
