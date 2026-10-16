@@ -3,8 +3,9 @@
 Reads the collector's HDF5 files (numpy and h5py only, no pixels) and reports:
 
 * composition: episodes, lengths, sources (and, for early-checkpoint episodes, the checkpoints), held-out seed check between files;
-* clip counts per depth and stride: how many training clips a level can still draw
-  (E2: strides, and whether deeper levels have enough data);
+* clip counts per top-level step T (the product of all strides, whatever the depth): how many training
+  clips remain, with the padding of episodes that ended in death, per source and for the levels above 1;
+* the top-level step T needed to reach the task offsets and the expert's time to the diamond, per planning horizon;
 * event durations: when achievements unlock and the gaps between unlocks;
 * time scales of the symbolic state (the frequency gap): how fast every group
   decorrelates, from the distance between states `lag` steps apart;
@@ -57,6 +58,13 @@ LAGS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 CHUNKS = (1, 2, 3, 4, 6, 8, 12, 16)
 MAX_FRAMES = 2_000_000
 SOURCES = {0: "expert", 1: "noised_expert", 2: "random", 3: "early"}  # the collector's `source` column
+# The top level of a model steps T environment steps, T = the product of all its strides. With window 1 and
+# `history + rollout` = 4 states at the top, a clip needs 3 T + 1 level-1 frames and a plan of H top-level steps
+# reaches H x T steps: clip counts and reach depend on T only, not on the depth or on how T splits into strides.
+TOP_STEPS = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512)
+HORIZONS = (2, 4, 8)  # top-level planning horizons (a planner setting)
+OFFSETS = (25, 50, 100, 200)  # task offsets of protocol A (experiments.yaml)
+UPPER_EXCLUDED_SOURCES = (2,)  # `upper_loss_exclude_sources` of the training config: they train level 1 only
 MIN_ACTION_STEPS = 500  # an action seen fewer times than this is reported as thin (placeholder, tune on the data)
 
 
@@ -176,24 +184,33 @@ def death_statistics(d: Data) -> dict:
     return out
 
 
-def clip_counts(d: Data, strides=(2, 3, 4, 6, 8), depths=(1, 2, 3), history=3, rollout=1) -> list[dict]:
-    """Clips a model of `depth` levels can draw from the file, for equal strides above level 1."""
+def clip_counts(d: Data, totals=TOP_STEPS, history=3, rollout=1, upper_excluded=UPPER_EXCLUDED_SOURCES) -> list[dict]:
+    """Clips a model whose top level steps T environment steps can draw, for every T in `totals`.
+
+    The same for any depth and any split of T into strides (window 1): a clip needs (history + rollout - 1) T + 1
+    level-1 frames. Episodes that ended in death are extended by T - 1 copies of the dead frame (`terminal_pad:
+    auto`, as in the training dataset). `clips_upper` leaves out the sources that train level 1 only.
+    """
     steps = history + rollout
+    lengths = d.all_lengths
+    dead = d.all_final_dead if d.all_final_dead is not None else np.zeros(len(lengths), bool)
+    sources = d.all_sources if d.all_sources is not None else np.zeros(len(lengths), np.int8)
+    present = {name: code for code, name in SOURCES.items() if (sources == code).any()}
     rows = []
-    for depth in depths:
-        for stride in (strides if depth > 1 else (1,)):
-            span = steps
-            for _ in range(depth - 1):
-                span = (span - 1) * stride + 1
-            starts = np.maximum(d.all_lengths - span + 1, 0)
-            rows.append(
-                {
-                    "depth": depth, "stride": stride, "span": int(span),
-                    "episodes_long_enough": int((d.all_lengths >= span).sum()),
-                    "clips": int(starts.sum()),
-                    "independent_clips": int((d.all_lengths // span).sum()),
-                }
-            )  # fmt: skip
+    for top in totals:
+        span = (steps - 1) * top + 1
+        padded = lengths + np.where(dead, top - 1, 0)
+        per_episode = np.maximum(padded - span + 1, 0)
+        row = {
+            "T": int(top), "span": int(span),
+            "episodes_long_enough": int((padded >= span).sum()),
+            "clips": int(per_episode.sum()),
+            "clips_upper": int(per_episode[~np.isin(sources, upper_excluded)].sum()) if top > 1 else None,
+            "independent_clips": int((padded // span).sum()),
+        }  # fmt: skip
+        if len(present) > 1:
+            row["by_source"] = {name: int(per_episode[sources == code].sum()) for name, code in present.items()}
+        rows.append(row)
     return rows
 
 
@@ -219,46 +236,28 @@ def event_durations(d: Data) -> dict:
     out = {"unlock_frames": table}
     if len(gaps):
         out["gap_between_unlocks"] = {f"p{p}": float(np.percentile(gaps, p)) for p in (10, 25, 50, 75, 90)}
-        median = float(np.median(gaps))
-        out["stride_hint"] = {
-            f"{levels}_levels": int(max(2, round(median ** (1 / (levels - 1)))))
-            for levels in (2, 3)
-        }  # a top-level step about one median gap between unlocks
-        out["stride_hint_note"] = "equal strides s with s^(levels-1) frames per top-level step close to the median gap"
     return out
 
 
-def coverage(d: Data, horizons=(4, 8), depths=(1, 2, 3, 4), strides=(2, 3, 4, 5, 6, 8, 10, 12), quantiles=(50, 75, 90)) -> dict | None:
-    """How far the top level of a model reaches, against the time the expert takes to the diamond.
+def required_top_step(d: Data, horizons=HORIZONS, offsets=OFFSETS, quantiles=(50, 75, 90)) -> dict | None:
+    """The top-level step T that a plan of `horizon` top-level steps needs to reach a distance: T >= distance / horizon.
 
-    One step of the top level spans `stride ** (depth - 1)` environment steps (equal strides), so its
-    plan of `horizon` steps reaches `horizon * stride ** (depth - 1)` steps. The rule is that the top
-    level comfortably covers the typical time to the diamond (a quantile of the expert's frame of the
-    first diamond). Only expert episodes (source 0) count when the file has sources.
+    Distances: the task offsets, and the expert's time to the first diamond (quantiles over the expert episodes,
+    source 0 when the file has sources). T is the product of all strides, so this does not assume a depth or strides;
+    how T is split into strides is a separate decision. A design rule (the plan covers the distance), not a measurement.
     """
     flags = d.episodes("achievements")
     keep = np.ones(len(flags), bool) if "source" not in d.cols else d.cols["source"][d.offsets] == 0
     times = [int(np.argmax(f[:, DIAMOND_INDEX])) for f, k in zip(flags, keep) if k and f[:, DIAMOND_INDEX].any()]
-    if not times:
-        return None
-    target = {f"p{q}": float(np.percentile(times, q)) for q in quantiles}
-    rows = []
-    for depth in depths:
-        for stride in strides if depth > 1 else (1,):
-            step = stride ** (depth - 1)
-            reach = {h: h * step for h in horizons}
-            covered = [q for q, t in target.items() if reach[horizons[0]] >= t]
-            rows.append({"depth": depth, "stride": stride, "top_step": step, "reach": reach,
-                         "covers": covered[-1] if covered else None})  # fmt: skip
-    smallest = {}  # per depth and horizon: the smallest equal stride whose reach covers each quantile
-    for depth in depths:
-        if depth == 1:
-            continue
-        for h in horizons:
-            smallest[f"depth{depth}_horizon{h}"] = {
-                q: next(s for s in range(2, 10_000) if h * s ** (depth - 1) >= t) for q, t in target.items()
-            }
-    return {"episodes": len(times), "steps_to_diamond": target, "rows": rows, "smallest_stride": smallest}
+    distances = {f"offset {o}": float(o) for o in offsets}
+    if times:
+        distances |= {f"diamond p{q}": float(np.percentile(times, q)) for q in quantiles}
+    rows = {name: {h: int(math.ceil(dist / h)) for h in horizons} for name, dist in distances.items()}
+    return {
+        "expert_episodes_with_diamond": len(times),
+        "steps_to_diamond": {f"p{q}": float(np.percentile(times, q)) for q in quantiles} if times else None,
+        "distances": distances, "horizons": list(horizons), "required_top_step": rows,
+    }  # fmt: skip
 
 
 def _group_matrix(d: Data, columns) -> np.ndarray:
@@ -439,13 +438,13 @@ def provenance(runs: list[dict]) -> list[dict]:
     return out
 
 
-def analyse(datas: dict[str, Data]) -> dict:
+def analyse(datas: dict[str, Data], horizons=HORIZONS, offsets=OFFSETS) -> dict:
     result = {"seed_overlap": seed_overlap(datas), "files": {}}
     for label, d in datas.items():
         entry = {"composition": composition(d), "clip_counts": clip_counts(d), "provenance": provenance(d.runs)}
         if d.has("achievements"):
             entry["events"] = event_durations(d)
-            entry["coverage"] = coverage(d)
+            entry["required_top_step"] = required_top_step(d, horizons=horizons, offsets=offsets)
         if d.has("inventory", "vitals", "facing", "daylight", "position", "mobs_in_view", "achievements"):
             entry["time_scales"] = time_scales(d)
         else:
@@ -499,9 +498,17 @@ def render(result: dict) -> str:
         if "diamond_episodes" in c:
             out.append(f"Episodes with a diamond: {c['diamond_episodes']}; achievements per episode (mean): {_f(c['achievements_per_episode_mean'])}.")
 
-        out += ["", "### Clips per depth and stride", "", "History 3, rollout 1. `span` is the number of level-1 frames one clip needs.", "",
-                "| depth | stride | span | episodes long enough | clips | independent clips |", "|---|---|---|---|---|---|"]
-        out += [f"| {r['depth']} | {r['stride']} | {r['span']} | {r['episodes_long_enough']} | {r['clips']} | {r['independent_clips']} |" for r in e["clip_counts"]]
+        rows = e["clip_counts"]
+        by_source = list(rows[0].get("by_source", {})) if rows else []
+        out += ["", "### Clips per top-level step T", "",
+                "T is the product of all strides: the environment steps of one top-level step. A clip needs 3 T + 1 level-1 frames "
+                "(history 3, rollout 1, window 1); episodes that ended in death are extended by T - 1 copies of the dead frame. "
+                "The counts hold for any depth and any split of T into strides. `clips above 1` leaves out the sources "
+                "that train level 1 only.", "",
+                "| T | span | episodes long enough | clips | clips above 1 | independent clips |" + "".join(f" {n} |" for n in by_source),
+                "|---|---|---|---|---|---|" + "---|" * len(by_source)]
+        out += [f"| {r['T']} | {r['span']} | {r['episodes_long_enough']} | {r['clips']} | {_f(r['clips_upper'])} | {r['independent_clips']} |"
+                + "".join(f" {r['by_source'][n]} |" for n in by_source) for r in rows]
 
         ev = e.get("events")
         if ev and ev.get("unlock_frames"):
@@ -510,27 +517,21 @@ def render(result: dict) -> str:
             out += [f"| {n} | {v['episodes']} | {_f(v['median'])} | {_f(v['p25'])} | {_f(v['p75'])} |" for n, v in ev["unlock_frames"].items()]
             if "gap_between_unlocks" in ev:
                 g = ev["gap_between_unlocks"]
-                out += ["", "Steps between consecutive unlocks: " + ", ".join(f"{k} {_f(v)}" for k, v in g.items()) + ".",
-                        f"Stride hint (equal strides): {ev['stride_hint']} ({ev['stride_hint_note']}). A hint, not a decision."]
+                out += ["", "Steps between consecutive unlocks: " + ", ".join(f"{k} {_f(v)}" for k, v in g.items()) + "."]
 
-        cov = e.get("coverage")
-        if cov:
-            horizons = list(cov["rows"][0]["reach"])
-            out += ["", "### Reach of the top level against the time to the diamond", "",
-                    f"Expert steps to the first diamond ({cov['episodes']} episodes): "
-                    + ", ".join(f"{q} {_f(v)}" for q, v in cov["steps_to_diamond"].items())
-                    + ". A top step spans stride^(depth-1) steps; its plan reaches horizon x that. "
-                    f"`covers` is the highest quantile reached at horizon {horizons[0]}.", "",
-                    "| depth | stride | steps per top-level step | " + " | ".join(f"reach, horizon {h}" for h in horizons) + " | covers |",
-                    "|---|---|---|" + "---|" * len(horizons) + "---|"]
-            out += [f"| {r['depth']} | {r['stride']} | {r['top_step']} | " + " | ".join(str(r["reach"][h]) for h in horizons)
-                    + f" | {r['covers'] or '-'} |" for r in cov["rows"]]
-            out += ["", "Smallest equal stride whose top level reaches the quantile:", "",
-                    "| depth, horizon | " + " | ".join(next(iter(cov["smallest_stride"].values()))) + " |",
-                    "|---|" + "---|" * len(cov["steps_to_diamond"])]
-            out += [f"| {k.replace('depth', '').replace('_horizon', ', ')} | " + " | ".join(str(v) for v in q.values()) + " |"
-                    for k, q in cov["smallest_stride"].items()]
-            out.append("The clip counts above say whether that depth and stride still leave enough clips.")
+        req = e.get("required_top_step")
+        if req:
+            hs = req["horizons"]
+            out += ["", "### Top-level step T needed to reach a distance", "",
+                    "A plan of H top-level steps reaches H x T environment steps, so it reaches a distance D when T >= D / H. "
+                    "T is the product of all strides; this does not assume a depth or strides. "
+                    + (f"Expert steps to the first diamond ({req['expert_episodes_with_diamond']} episodes): "
+                       + ", ".join(f"{q} {_f(v)}" for q, v in req["steps_to_diamond"].items()) + "." if req["steps_to_diamond"]
+                       else "No expert episode with a diamond in this file."), "",
+                    "| distance | steps | " + " | ".join(f"T for H = {h}" for h in hs) + " |", "|---|---|" + "---|" * len(hs)]
+            out += [f"| {n} | {_f(req['distances'][n])} | " + " | ".join(str(v[h]) for h in hs) + " |"
+                    for n, v in req["required_top_step"].items()]
+            out.append("The clip counts above say how large T can get before too few clips remain.")
 
         ts = e.get("time_scales")
         if ts:
@@ -590,12 +591,14 @@ def main():
     parser.add_argument("--data", action="append", required=True, help="HDF5 episode file (repeat for several)")
     parser.add_argument("--label", action="append", help="name of each file (default: the file name)")
     parser.add_argument("--max-frames", type=int, default=MAX_FRAMES, help="frames read per file")
+    parser.add_argument("--offsets", type=int, nargs="+", default=list(OFFSETS), help="task offsets of protocol A (experiments.yaml)")
+    parser.add_argument("--horizons", type=int, nargs="+", default=list(HORIZONS), help="top-level planning horizons to tabulate")
     parser.add_argument("--out", default="analysis_report")
     args = parser.parse_args()
     labels = args.label or [Path(p).stem for p in args.data]
     if len(labels) != len(args.data):
         parser.error("--label must be given once per --data")
-    result = analyse({label: Data(path, args.max_frames) for label, path in zip(labels, args.data)})
+    result = analyse({label: Data(path, args.max_frames) for label, path in zip(labels, args.data)}, args.horizons, args.offsets)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "dataset_stats.md").write_text(render(result))

@@ -303,3 +303,9 @@ def test_unknown_collection_sources_are_rejected(spec):
     spec['collection']['share']['train'] = {'expert': 0.5, 'early': 0.4, 'noisy': 0.1}
     with pytest.raises(SystemExit, match='unknown collection sources'):
         run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/c')
+
+
+def test_dataset_analysis_gets_the_task_offsets_of_protocol_a(spec):
+    command = run.build_jobs(spec, 'D0', [42], home='/data')[0].command
+    i = command.index('--offsets')
+    assert [int(x) for x in command[i + 1 :]] == spec['tasks']['A']['offsets']

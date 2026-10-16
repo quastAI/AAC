@@ -78,19 +78,42 @@ def test_composition(data):
 
 
 def test_clip_counts_follow_the_span_formula(data):
-    rows = {(r['depth'], r['stride']): r for r in ds.clip_counts(data)}
-    one = rows[(1, 1)]
+    rows = {r['T']: r for r in ds.clip_counts(data)}
+    one = rows[1]
     assert one['span'] == 4 and one['clips'] == sum(n - 3 for n in LENGTHS)
     assert one['independent_clips'] == sum(n // 4 for n in LENGTHS)
-    two = rows[(2, 4)]
-    assert two['span'] == (4 - 1) * 4 + 1 == 13
-    assert two['clips'] == sum(n - 12 for n in LENGTHS)
-    three = rows[(3, 4)]
-    assert three['span'] == (13 - 1) * 4 + 1 == 49
-    assert three['episodes_long_enough'] == 3  # 50 >= 49
-    # a longer span than the shortest episode leaves it out
-    assert rows[(3, 8)]['span'] == (25 - 1) * 8 + 1 == 193
-    assert rows[(3, 8)]['episodes_long_enough'] == 1
+    assert one['clips_upper'] is None  # no level above 1
+    # the span depends on T only: (4 - 1) T + 1, whatever the depth or the strides
+    assert rows[4]['span'] == 13 and rows[4]['clips'] == sum(n - 12 for n in LENGTHS)
+    assert rows[16]['span'] == 49 and rows[16]['episodes_long_enough'] == 3  # 50 >= 49
+    assert rows[64]['span'] == 193 and rows[64]['episodes_long_enough'] == 1  # only the 200-frame episode
+    assert rows[64]['clips'] == 200 - 193 + 1 and rows[64]['independent_clips'] == 1
+
+
+def test_episodes_that_ended_in_death_are_padded_by_T_minus_one(tmp_path):
+    path = write(tmp_path / 'dead.h5', lengths=[100, 50])
+    with h5py.File(path, 'r+') as f:
+        dead = np.zeros(150, np.uint8)
+        dead[149] = 1  # the 50-frame episode ended in death
+        f.create_dataset('dead', data=dead)
+    rows = {r['T']: r for r in ds.clip_counts(ds.Data(path))}
+    # T = 16: span 49, the dead episode gets 15 copies: 65 frames -> 17 clips, 50 alone would give 2
+    assert rows[16]['clips'] == (100 - 48) + (50 + 15 - 48)
+    # T = 64: span 193, 50 + 63 = 113 is still too short
+    assert rows[64]['episodes_long_enough'] == 0
+    # a living episode is never padded
+    assert rows[8]['clips'] == (100 - 24) + (50 + 7 - 24)
+
+
+def test_clips_above_level_one_leave_out_the_random_episodes(tmp_path):
+    lengths = [100, 100, 100]
+    path = write(tmp_path / 'src.h5', lengths=lengths)
+    with h5py.File(path, 'r+') as f:
+        del f['source']
+        f.create_dataset('source', data=np.repeat(np.array([0, 2, 3], np.int8), lengths))
+    row = {r['T']: r for r in ds.clip_counts(ds.Data(path))}[4]
+    assert row['clips'] == 3 * 88 and row['clips_upper'] == 2 * 88
+    assert row['by_source'] == {'expert': 88, 'random': 88, 'early': 88}
 
 
 def test_event_durations(data):
@@ -104,8 +127,7 @@ def test_event_durations(data):
     assert (
         ev['gap_between_unlocks']['p50'] == 20
     )  # table - wood in every episode
-    assert ev['stride_hint']['2_levels'] == 20
-    assert ev['stride_hint']['3_levels'] == round(20**0.5)
+    assert 'stride_hint' not in ev  # D0 assumes no strides
 
 
 def test_time_scales_separate_fast_from_slow(data):
@@ -166,7 +188,7 @@ def test_old_files_skip_what_they_lack_and_report_renders(tmp_path):
     new = ds.Data(write(tmp_path / 'new.h5'))
     text = ds.render(ds.analyse({'train': new}))
     for heading in (
-        'Clips per depth',
+        'Clips per top-level step T',
         'When achievements unlock',
         'Time scales',
         'Action chunks',
@@ -207,7 +229,7 @@ def test_a_frame_budget_samples_over_the_whole_file(tmp_path):
     )
     assert set(d.cols['source'].tolist()) == {0, 2}  # both sources are in
     # clip counts use every episode, not the sampled ones
-    rows = ds.clip_counts(d, strides=(2,), depths=(1,))
+    rows = ds.clip_counts(d, totals=(1,))
     assert rows[0]['episodes_long_enough'] == 12
     assert 'every k-th episode' in ds.render(ds.analyse({'mixed': d}))
 
@@ -257,7 +279,7 @@ def test_death_statistics_by_source_and_cause(tmp_path):
     assert 'deaths' not in ds.composition(ds.Data(write(tmp_path / 'old.h5')))
 
 
-def test_coverage_of_the_top_level_against_the_time_to_diamond(tmp_path):
+def test_required_top_step_from_the_time_to_diamond_and_the_offsets(tmp_path):
     lengths = [100, 200, 150, 60]
     path = write(tmp_path / 'cov.h5', lengths=lengths)
     diamond = {0: 60, 1: 120, 2: 40}  # the last episode never gets one
@@ -271,27 +293,21 @@ def test_coverage_of_the_top_level_against_the_time_to_diamond(tmp_path):
         f.create_dataset('achievements', data=flags)
         f.create_dataset('source', data=source)
 
-    cov = ds.coverage(ds.Data(path), horizons=(4,), strides=(2, 4))
-    assert cov['episodes'] == 3
-    assert cov['steps_to_diamond'] == {'p50': 60.0, 'p75': 90.0, 'p90': 108.0}
-    rows = {(r['depth'], r['stride']): r for r in cov['rows']}
-    assert rows[(1, 1)]['reach'] == {4: 4} and rows[(1, 1)]['covers'] is None
-    assert rows[(2, 4)]['reach'] == {4: 16}
-    assert rows[(3, 4)]['reach'] == {4: 64}
-    assert rows[(3, 4)]['covers'] == 'p50'  # 64 >= 60, not >= 90
-    assert rows[(3, 4)]['top_step'] == 16
-    assert rows[(4, 4)]['reach'] == {4: 256} and rows[(4, 4)]['covers'] == 'p90'
-    # smallest equal stride: horizon x stride^(depth - 1) >= quantile
-    assert cov['smallest_stride']['depth2_horizon4'] == {
-        'p50': 15,
-        'p75': 23,
-        'p90': 27,
-    }
-    assert cov['smallest_stride']['depth3_horizon4']['p75'] == 5  # 4 * 25 = 100
+    req = ds.required_top_step(ds.Data(path), horizons=(2, 4), offsets=(25, 200))
+    assert req['expert_episodes_with_diamond'] == 3
+    assert req['steps_to_diamond'] == {'p50': 60.0, 'p75': 90.0, 'p90': 108.0}
+    table = req['required_top_step']
+    # T >= distance / horizon
+    assert table['offset 25'] == {2: 13, 4: 7}
+    assert table['offset 200'] == {2: 100, 4: 50}
+    assert table['diamond p75'] == {2: 45, 4: 23}
+    assert table['diamond p90'] == {2: 54, 4: 27}
     text = ds.render(ds.analyse({'cov': ds.Data(path)}))
-    assert 'Reach of the top level' in text and 'p90' in text
-    # a file without diamond episodes has no coverage
-    assert ds.coverage(ds.Data(write(tmp_path / 'none.h5'))) is None
+    assert 'Top-level step T needed' in text and 'diamond p90' in text and 'stride^' not in text
+    assert 'Clips per top-level step T' in text and 'Clips per depth' not in text
+    # a file without a diamond episode still gives the offsets
+    none = ds.required_top_step(ds.Data(write(tmp_path / 'none.h5')), horizons=(4,), offsets=(100,))
+    assert none['steps_to_diamond'] is None and none['required_top_step'] == {'offset 100': {4: 25}}
 
 
 def test_provenance_of_the_collector_is_reported(tmp_path):
@@ -360,3 +376,10 @@ def test_early_checkpoints_and_action_coverage_per_source(tmp_path, monkeypatch)
 def test_a_file_without_early_checkpoints_has_no_checkpoint_section(data):
     comp = ds.composition(data)
     assert 'early_checkpoints' not in comp
+
+
+def test_offsets_and_horizons_are_arguments(tmp_path):
+    path = write(tmp_path / 'o.h5')
+    result = ds.analyse({'a': ds.Data(path)}, horizons=(3,), offsets=(90,))
+    table = result['files']['a']['required_top_step']['required_top_step']
+    assert table == {'offset 90': {3: 30}}

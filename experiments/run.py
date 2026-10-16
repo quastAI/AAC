@@ -145,7 +145,8 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
         out = f"{home}/reports/dataset_stats"
         jobs.append(Job("analysis", "analysis", [python, str(ROOT / "analysis" / "dataset_stats.py"),
                         "--data", f"{home}/{train_ds}.h5", "--label", "train", "--data", f"{home}/{val_ds}.h5",
-                        "--label", "val", "--data", f"{home}/{st['test_dataset']}.h5", "--label", "test", "--out", out], output=f"{out}/dataset_stats.md", cwd=ROOT))  # fmt: skip
+                        "--label", "val", "--data", f"{home}/{st['test_dataset']}.h5", "--label", "test", "--out", out,
+                        "--offsets", *map(str, spec["tasks"]["A"]["offsets"])], output=f"{out}/dataset_stats.md", cwd=ROOT))  # fmt: skip
         return jobs
 
     protocols = exp.get("protocols", [])
