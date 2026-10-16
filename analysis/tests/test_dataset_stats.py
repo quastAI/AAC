@@ -1,5 +1,6 @@
 """dataset_stats on a synthetic file with known answers."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -130,9 +131,9 @@ def test_event_durations(data):
     assert 'stride_hint' not in ev  # D0 assumes no strides
 
 
-def test_time_scales_separate_fast_from_slow(data):
-    ts = ds.time_scales(data, min_pairs=1)
-    assert ts['facing']['speed'] == 'fast'
+def test_distance_horizon_separates_fast_from_slow(data):
+    ts = ds.distance_horizon(data, min_pairs=1)
+    assert ts['facing']['probe_group'] == 'fast'
     assert ts['facing']['ratio'][1] == pytest.approx(1.0, abs=0.2)  # iid
     assert ts['facing']['saturation_lag'] == 1
     assert ts['vitals']['ratio'][8] == 0 or ts['vitals']['ratio'][8] < 0.01
@@ -181,7 +182,7 @@ def test_seed_overlap_is_reported(tmp_path):
 def test_old_files_skip_what_they_lack_and_report_renders(tmp_path):
     old = ds.Data(write(tmp_path / 'old.h5', derived=False))
     result = ds.analyse({'old': old})
-    assert result['files']['old']['time_scales'] is None
+    assert result['files']['old']['spectral'] is None
     text = ds.render(result)
     assert 'skipped' in text and '# Dataset statistics' in text
 
@@ -190,7 +191,10 @@ def test_old_files_skip_what_they_lack_and_report_renders(tmp_path):
     for heading in (
         'Clips per top-level step T',
         'When achievements unlock',
-        'Time scales',
+        'Distance horizon',
+        'Is a hierarchy useful',
+        'Task feasibility',
+        'Achievement ladder',
         'Action chunks',
         'What the actions do',
     ):
@@ -204,7 +208,7 @@ def test_max_frames_keeps_whole_episodes(tmp_path):
 
 
 def test_noisy_lags_are_left_out_by_default(data):
-    ts = ds.time_scales(data)  # 350 frames: no lag has 1000 pairs
+    ts = ds.distance_horizon(data)  # 350 frames: no lag has 1000 pairs
     assert all(not v['ratio'] for v in ts.values())
 
 
@@ -383,3 +387,307 @@ def test_offsets_and_horizons_are_arguments(tmp_path):
     result = ds.analyse({'a': ds.Data(path)}, horizons=(3,), offsets=(90,))
     table = result['files']['a']['required_top_step']['required_top_step']
     assert table == {'offset 90': {3: 30}}
+
+
+# --------------------------------------------------------------------------
+# the structure of the data: frequency gap, events, ladder, tasks, survival
+
+
+def write_dynamics(
+    path, lengths=(700,) * 4, state=True, sources=None, dead=None, updates=None
+):
+    """Episodes with known dynamics: iid facing and mobs, a random walk, the
+    environment's clocks (food every 26 steps, drink 21, energy 31), a day of
+    300 steps, and staircases (wood at 100 + e, table at 250 + e)."""
+    rng = np.random.default_rng(0)
+    cols = {k: [] for k in ds.Data.COLUMNS + ['dead', 'policy_updates']}
+    states = []
+    for e, n in enumerate(lengths):
+        t = np.arange(n)
+        action = rng.integers(0, 17, n).astype(np.float32)
+        action[-1] = np.nan
+        flags = np.zeros((n, 22), np.uint8)
+        flags[100 + e :, 0] = 1
+        flags[250 + e :, 1] = 1
+        inventory = np.zeros((n, 12), np.int16)
+        for start in (100, 250, 400, 550):
+            inventory[start + e :, 0] += 1
+        vitals = np.stack(
+            [
+                np.full(n, 9),
+                9 - (t // 26) % 9,
+                9 - (t // 21) % 9,
+                9 - (t // 31) % 9,
+            ],
+            1,
+        ).astype(np.int8)
+        progress = (t / 300) % 1 + 0.3
+        light = (1 - np.abs(np.cos(np.pi * progress)) ** 3).astype(np.float32)
+        position = np.cumsum(rng.integers(-1, 2, (n, 2)), 0).astype(np.int16)
+        cols['action'].append(action[:, None])
+        cols['achievements'].append(flags)
+        cols['inventory'].append(inventory)
+        cols['vitals'].append(vitals)
+        cols['facing'].append(rng.integers(1, 5, (n, 1)).astype(np.int8))
+        cols['daylight'].append(light[:, None])
+        cols['position'].append(position)
+        cols['mobs_in_view'].append(rng.integers(0, 3, (n, 4)).astype(np.int8))
+        cols['source'].append(np.full(n, 0 if sources is None else sources[e]))
+        cols['seed'].append(np.full(n, e, np.int64))
+        died = np.zeros(n, np.uint8)
+        died[-1] = bool(dead is not None and dead[e])
+        cols['dead'].append(died)
+        cols['policy_updates'].append(
+            np.full(n, -1 if updates is None else updates[e], np.int32)
+        )
+        if state:
+            row = np.zeros((n, 1345), np.float32)
+            blocks = np.zeros((n, 63, 21), np.float32)
+            tiles = rng.integers(0, 17, (n, 63, 1))
+            np.put_along_axis(blocks[:, :, :17], tiles, 1.0, 2)
+            row[:, :1323] = blocks.reshape(n, -1)
+            states.append(row)
+    with h5py.File(path, 'w') as f:
+        for name, parts in cols.items():
+            f.create_dataset(name, data=np.concatenate(parts))
+        if state:
+            f.create_dataset('state', data=np.concatenate(states))
+        f.create_dataset('ep_len', data=np.array(lengths, np.int32))
+        f.create_dataset(
+            'ep_offset', data=np.concatenate([[0], np.cumsum(lengths)[:-1]])
+        )
+    return path
+
+
+@pytest.fixture(scope='module')
+def dynamics(tmp_path_factory):
+    path = write_dynamics(tmp_path_factory.mktemp('dyn') / 'dyn.h5')
+    return ds.Data(path)
+
+
+@pytest.fixture(scope='module')
+def spectral(dynamics):
+    return ds.spectral_analysis(dynamics, windows=(64, 256), n_boot=40)
+
+
+def test_the_gap_of_known_dynamics(spectral):
+    gap = spectral['gap']['all']
+    assert gap['ratio'] > 10
+    assert gap['fastest'] in ('facing', 'mobs_in_view')  # iid: period ~4
+    assert gap['slowest'] == 'daylight'
+    assert gap['lower_bound']  # the slowest entity is limited by the window
+    assert gap['ci']['p5'] <= gap['ratio'] * 1.05
+    assert gap['ci']['p5'] <= gap['ci']['p50'] <= gap['ci']['p95']
+    assert spectral['gap']['without_daylight']['slowest'] != 'daylight'
+    entities = spectral['entities']
+    assert entities['facing']['period'] == pytest.approx(4, rel=0.1)
+    assert not entities['facing']['limited']
+    for slow in ('inventory', 'achievements', 'daylight'):
+        assert entities[slow]['limited']  # staircases and a day of 300 steps
+    assert spectral['subset'] == 'expert' and spectral['episodes_used'] == 4
+    assert spectral['probe_groups_ordered']
+    assert spectral['daylight_check'] == {'window': 256, 'limited': True}
+
+
+def test_a_shorter_window_gives_a_smaller_gap_when_it_limits(spectral):
+    sensitivity = spectral['sensitivity']
+    gaps = {w: v['gap']['all']['ratio'] for w, v in sensitivity.items()}
+    assert set(gaps) == {64, 256} and gaps[64] < gaps[256]
+
+
+def test_the_view_comes_from_the_state_column(spectral, tmp_path):
+    for name in ('terrain', 'view'):
+        assert spectral['extra'][name]['period'] == pytest.approx(4, rel=0.15)
+    plain = ds.Data(write_dynamics(tmp_path / 'n.h5', state=False))
+    assert ds.spectral_analysis(plain, windows=(64,), n_boot=5)['extra'] == {}
+    no_view = ds.spectral_analysis(
+        plain, windows=(64,), n_boot=5, use_view=False
+    )
+    assert no_view['extra'] == {}
+
+
+def test_episodes_shorter_than_the_window_have_no_segment(data):
+    result = ds.spectral_analysis(data, windows=(64,), n_boot=5)
+    assert result['primary_window'] == 256 and result['episodes_used'] == 0
+    assert result['gap']['all'] is None and result['entities'] == {}
+    assert ds.timescale_ladder(data, result, {}) is None
+
+
+def test_the_clocks_of_the_environment_are_recovered(dynamics):
+    events = ds.event_table(ds.event_masks(dynamics, np.arange(4)))
+    checks = {c['event']: c for c in ds.clock_check(events)}
+    assert set(checks) == {'food_drop', 'drink_drop', 'energy_drop'}
+    assert all(c['ok'] and c['mode_share'] > 0.8 for c in checks.values())
+    assert events['entities']['inventory']['p50'] == 150
+    assert events['entities']['position']['rate'] > 0.8
+    assert 'daylight' not in events['entities']  # a clock, no events
+
+
+def test_a_wrong_clock_is_flagged(dynamics):
+    events = ds.event_table(ds.event_masks(dynamics, np.arange(4)))
+    events['types']['food_drop']['mode'] = 25
+    bad = [c for c in ds.clock_check(events) if not c['ok']]
+    assert [c['event'] for c in bad] == ['food_drop']
+
+
+def test_the_ladder_orders_entities_by_their_events(dynamics, spectral):
+    masks = ds.event_masks(dynamics, np.arange(4))
+    ladder = ds.timescale_ladder(dynamics, spectral, masks)
+    clusters = [c['entities'] for c in ladder['clusters']]
+    assert clusters == [
+        ['position', 'facing', 'mobs_in_view'],
+        ['vitals'],
+        ['inventory', 'achievements'],
+    ]
+    assert ladder['levels_upper_bound'] == 3
+    fast, vitals, slow = ladder['clusters']
+    assert fast['events']['p50'] == 1 and slow['events']['p50'] == 150
+    assert 2 <= vitals['events']['p50'] <= 16
+    assert slow['regularity'] == 'regular'
+    assert slow['clips_at_p90']['T'] == 150
+    assert [(b['from'], b['to']) for b in ladder['boundaries']][1] == (
+        vitals['events']['p50'],
+        150,
+    )
+    assert set(ladder['without_events']) == {'daylight'}
+    verdict = ladder['verdict']
+    assert verdict['gap_at_least_threshold'] and verdict['ci_above_threshold']
+    assert verdict['slow_end_has_progress']
+
+
+def test_gap_per_source_and_snapshot_and_for_a_mix(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds, 'MIN_GROUP_EPISODES', 1)
+    path = write_dynamics(
+        tmp_path / 'm.h5',
+        lengths=(700,) * 4,
+        state=False,
+        sources=[0, 0, 3, 3],
+        updates=[-1, -1, 100, 200],
+    )
+    result = ds.spectral_analysis(
+        ds.Data(path),
+        windows=(256,),
+        n_boot=5,
+        mix={'expert': 0.7, 'early': 0.3},
+        use_view=False,
+    )
+    groups = {'expert', 'early', 'early@100', 'early@200'}
+    assert set(result['groups']) == groups
+    assert result['groups']['expert']['episodes'] == 2
+    assert result['subset'] == 'expert' and result['episodes'] == 2
+    assert result['mix']['shares'] == {'expert': 0.7, 'early': 0.3}
+    assert result['mix']['gap']['all']['ratio'] > 10
+
+
+def test_mutual_information_of_chunk_and_effect():
+    rng = np.random.default_rng(0)
+    chunk = rng.integers(0, 5, 20000)
+    same = ds.mutual_information(chunk, chunk.copy())
+    assert same['mi_bits'] == pytest.approx(np.log2(5), abs=0.01)
+    assert same['coverage'] == 1 and same['chunk_classes'] == 5
+    noise = ds.mutual_information(chunk, rng.integers(0, 5, 20000))
+    assert abs(noise['mi_bits']) < 0.01  # the correction removes the bias
+    assert ds.mutual_information(chunk, chunk, min_count=10**6) is None
+    rare = np.concatenate([chunk, np.arange(100, 130)])  # 30 unique chunks
+    info = ds.mutual_information(rare, rare.copy(), min_count=20)
+    assert info['coverage'] == pytest.approx(20000 / 20030, abs=1e-4)
+
+
+def test_chunk_information_is_reported_per_length(still):
+    info = ds.chunk_diversity(still)[1]['information']
+    # do gives wood, noop does nothing: the chunk tells most of the effect
+    assert info['interaction']['mi_bits'] > 0.5
+    mi = info['interaction']
+    assert mi['mi_bits'] <= mi['h_effect_bits']
+
+
+def test_task_feasibility_per_offset(dynamics):
+    result = ds.task_feasibility(dynamics, np.arange(4), (25, 200), 10)
+    assert result['possible_tasks'] == 4 and result['short']  # 10 wanted
+    o25 = result['offsets'][25]
+    assert o25['episodes_with_progress'] == 4
+    assert o25['share_of_starts'] == pytest.approx(50 / 675)  # 25 + 25 starts
+    assert o25['required_median'] == 1
+    assert dict(o25['most_required']) == {
+        'collect_wood': pytest.approx(0.5),
+        'place_table': pytest.approx(0.5),
+    }
+    assert not ds.task_feasibility(dynamics, np.arange(4), (25,), 4)['short']
+    assert result['offsets'][200]['share_of_starts'] > o25['share_of_starts']
+
+
+def test_achievement_ladder_per_source(tmp_path):
+    path = write_dynamics(
+        tmp_path / 'l.h5', state=False, sources=[0, 0, 3, 3]
+    )
+    ladder = ds.achievement_ladder(ds.Data(path))
+    assert ladder['expert']['episodes'] == 2
+    wood = ladder['expert']['achievements']['collect_wood']
+    assert wood == {'share': 1.0, 'median_frame': 100.5}
+    table = ladder['early']['achievements']['place_table']
+    assert table['median_frame'] == 252.5
+    assert ladder['early']['achievements']['collect_diamond']['share'] == 0
+
+
+def test_survival_critical_runs_and_the_run_into_death(tmp_path):
+    path = write_dynamics(
+        tmp_path / 's.h5',
+        lengths=(300, 300, 300),
+        state=False,
+        dead=[False, True, True],
+    )
+    with h5py.File(path, 'r+') as f:
+        vitals = np.full((900, 4), 9, np.int8)
+        vitals[100:110, 1] = 0  # episode 0: food 0 for 10 frames, recovers
+        vitals[300 + 280 : 300 + 300, 1] = 1  # episode 1: 20 critical frames
+        vitals[300 + 299, 0] = 0  # ... and dies of it
+        f['vitals'][:] = vitals  # episode 2 dies at full health (lava)
+    s = ds.survival(ds.Data(path))['expert']
+    assert s['episodes'] == 3 and s['deaths'] == 2
+    assert s['critical_share'] == pytest.approx(30 / 900)
+    assert s['critical_runs'] == 2 and s['recovered_share'] == 0.5
+    assert s['deaths_after_critical'] == 0.5
+    assert s['terminal_run']['p50'] == 20
+
+
+def test_survival_needs_the_dead_flag(data):
+    assert ds.survival(data) is None  # the plain file has no `dead` column
+
+
+def test_the_report_has_every_section_and_serialises(tmp_path):
+    path = write_dynamics(
+        tmp_path / 'r.h5', lengths=(600,) * 3, dead=[False, True, False]
+    )
+    result = ds.analyse(
+        {'train': ds.Data(path)},
+        windows=(64, 256),
+        n_boot=10,
+        num_tasks=2,
+        mix={'expert': 1.0},
+    )
+    text = ds.render(result)
+    for heading in (
+        'Is a hierarchy useful',
+        'Gap of the mix',
+        'Distance horizon',
+        'Inter-event times',
+        'Time scale ladder',
+        'Task feasibility',
+        'Achievement ladder',
+        'Survival',
+        'information (interaction)',
+    ):
+        assert heading in text
+    assert 'WARNING' not in text  # the clocks and the daylight check pass
+    json.dumps(ds.to_jsonable(result))
+
+
+def test_parse_mix():
+    assert ds.parse_mix(None) is None
+    assert ds.parse_mix(['expert=0.7', 'early=0.3']) == {
+        'expert': 0.7,
+        'early': 0.3,
+    }
+    assert ds.parse_mix(['noised=0.5', 'random=0']) == {'noised_expert': 0.5}
+    with pytest.raises(SystemExit, match='unknown source'):
+        ds.parse_mix(['nope=1'])

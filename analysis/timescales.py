@@ -196,32 +196,30 @@ def inter_event_stats(masks: list[np.ndarray]) -> dict:
 
 
 # --------------------------------------------------------------------------
-# ladder
+# clusters
 
 
-def cluster_periods(periods: dict[str, float], ratio: float = CLUSTER_RATIO) -> list[list[str]]:
-    """Entities sorted by period, split wherever two neighbours are at least `ratio` apart (fast cluster first)."""
-    order = sorted(periods, key=periods.get)
+def cluster_scales(values: dict[str, float], ratio: float = CLUSTER_RATIO) -> list[list[str]]:
+    """Names sorted by a time scale (a period, a median gap), split wherever two neighbours are `ratio` apart.
+
+    The fast cluster comes first. Equal values (all 1) stay together.
+    """
+    order = sorted(values, key=values.get)
     clusters = [[order[0]]] if order else []
     for prev, cur in zip(order, order[1:]):
-        if periods[cur] / periods[prev] >= ratio:
+        if values[cur] / values[prev] >= ratio:
             clusters.append([])
         clusters[-1].append(cur)
     return clusters
 
 
-def boundaries(clusters: list[list[str]], periods: dict[str, float], summaries: dict[str, dict]) -> list[dict]:
-    """Between two neighbouring clusters: the interval of periods between them, and whether their power bands overlap.
+def boundaries(clusters: list[list[str]], values: dict[str, float]) -> list[dict]:
+    """Between two neighbouring clusters: from the slowest scale of the faster one to the fastest of the slower.
 
-    The interval runs from the slowest period of the faster cluster to the fastest of the slower one; a cumulative
-    step of a level boundary lies inside it. Bands that overlap are expected for spectra that fall like 1 / f^2, so the
-    overlap is information and not a failure.
+    A cumulative step of a level boundary lies inside it (one event per step of the slower cluster is its median).
     """
     out = []
     for fast, slow in zip(clusters, clusters[1:]):
-        low, high = max(periods[n] for n in fast), min(periods[n] for n in slow)
-        fast_slow_edge = max(summaries[n]["band"]["slow_edge"] for n in fast)
-        slow_fast_edge = min(summaries[n]["band"]["fast_edge"] for n in slow)
-        out.append({"fast": fast, "slow": slow, "from": low, "to": high, "ratio": high / low,
-                    "bands_overlap": bool(fast_slow_edge > slow_fast_edge)})  # fmt: skip
+        low, high = max(values[n] for n in fast), min(values[n] for n in slow)
+        out.append({"fast": fast, "slow": slow, "from": low, "to": high, "ratio": high / low})
     return out

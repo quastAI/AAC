@@ -131,24 +131,18 @@ def test_masks_of_changes_rises_and_drops():
 
 
 def test_clusters_split_where_neighbours_are_two_times_apart():
-    periods = {'a': 2.0, 'b': 3.0, 'c': 20.0, 'd': 21.0, 'e': 100.0}
-    clusters = ts.cluster_periods(periods)
-    assert clusters == [['a', 'b'], ['c', 'd'], ['e']]
-    assert ts.cluster_periods({'a': 5.0, 'b': 6.0, 'c': 7.0}) == [
-        ['a', 'b', 'c']
-    ]
-    assert ts.cluster_periods({}) == []
+    values = {'a': 2.0, 'b': 3.0, 'c': 20.0, 'd': 21.0, 'e': 100.0}
+    assert ts.cluster_scales(values) == [['a', 'b'], ['c', 'd'], ['e']]
+    same = {'a': 5.0, 'b': 6.0, 'c': 7.0}
+    assert ts.cluster_scales(same) == [['a', 'b', 'c']]
+    assert ts.cluster_scales({'a': 1, 'b': 1, 'c': 8}) == [['a', 'b'], ['c']]
+    assert ts.cluster_scales({}) == []
 
 
 def test_boundaries_give_the_interval_between_clusters():
-    periods = {'a': 2.0, 'b': 3.0, 'c': 20.0}
-    band = lambda lo, hi: {'band': {'fast_edge': lo, 'slow_edge': hi}}  # noqa: E731
-    summaries = {'a': band(1, 8), 'b': band(2, 10), 'c': band(5, 40)}
-    out = ts.boundaries(ts.cluster_periods(periods), periods, summaries)
-    assert len(out) == 1
-    b = out[0]
-    assert (b['from'], b['to']) == (3.0, 20.0) and b['ratio'] == pytest.approx(
-        20 / 3
-    )
-    # the fast cluster reaches 10, the slow one starts at 5
-    assert b['bands_overlap']
+    values = {'a': 2.0, 'b': 3.0, 'c': 20.0, 'd': 90.0}
+    out = ts.boundaries(ts.cluster_scales(values), values)
+    assert len(out) == 2
+    assert (out[0]['from'], out[0]['to']) == (3.0, 20.0)
+    assert out[0]['ratio'] == pytest.approx(20 / 3)
+    assert out[1]['fast'] == ['c'] and out[1]['slow'] == ['d']
