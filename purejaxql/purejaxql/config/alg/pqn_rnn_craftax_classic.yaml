@@ -54,3 +54,10 @@ alg:
 
 # where to save the params (if None, will not save)
 SAVE_PATH: "./models"
+
+# intermediate checkpoints (need SAVE_PATH). Every CHECKPOINT_INTERVAL x the total updates (0 = only at the
+# end) the run saves a policy snapshot with its greedy-test metrics (<name>_vmap0_u<updates>.safetensors
+# and .json) and the full resumable state (<name>_state.safetensors). RESUME: true continues from that
+# state after a kill; it needs the same training configuration. Pick the expert from the .json files.
+CHECKPOINT_INTERVAL: 0.05 # = TEST_INTERVAL, so every snapshot holds fresh test metrics
+RESUME: False

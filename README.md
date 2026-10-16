@@ -113,6 +113,7 @@ python scripts/collect_craftax_episodes.py --out data/random.h5 --eps 1.0 --no-r
     --num-episodes 1000 --seed-start 5000000        # uniform random, no checkpoint
 ```
 
+- **Expert checkpoints.** Training runs in chunks of `CHECKPOINT_INTERVAL` (0.05) of the updates. After each chunk it saves a policy snapshot `..._vmap0_u<updates>.safetensors` with a `.json` (updates, env steps, latest greedy-test metrics, so the expert can be picked by its diamond rate) and the full state `..._state.safetensors` (overwritten). After a kill, `RESUME=true` with the same configuration continues and ends with the same policy as an uninterrupted run (tested). The final policy is also saved as `..._vmap0.safetensors`, the path the collector takes.
 - The collector keeps episodes that reach diamond and ends them `--tail-steps` (500) after it, or earlier on death (margin for long planning horizons). `--no-stop-at-diamond` keeps full episodes, `--eps` in (0, 1) gives noised-expert episodes. A second run on an existing file appends and skips seeds already in it.
 - Pixels are rendered by replaying the kept episodes. The replay is checked against the rollout for every episode (rewards, achievement counts, player position and health).
 

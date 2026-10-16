@@ -25,6 +25,7 @@ from purejaxql.utils.craftax_wrappers import (
     BatchEnvWrapper,
 )
 from purejaxql.utils.batch_renorm import BatchRenorm
+from purejaxql.utils import checkpoint as ckpt
 
 
 class ScannedRNN(nn.Module):
@@ -183,7 +184,12 @@ def make_train(config):
         return chosed_actions
 
 
-    def train(rng):
+    def train(rng, runner_state=None, num_updates=None):
+        """Initialise (runner_state=None) and run `num_updates` updates (default: all of them).
+
+        With a runner_state it continues from there, so a run can be cut into chunks that are saved
+        in between (see single_run). num_updates=0 only initialises.
+        """
 
         original_rng = rng[0]
         eps_scheduler = optax.linear_schedule(
@@ -558,85 +564,112 @@ def make_train(config):
             )
             return done_infos
 
-        rng, _rng = jax.random.split(rng)
-        test_metrics = get_test_metrics(train_state, _rng)
+        if runner_state is None:
+            rng, _rng = jax.random.split(rng)
+            test_metrics = get_test_metrics(train_state, _rng)
 
-        rng, _rng = jax.random.split(rng)
-        obs, env_state = env.reset(_rng, env_params)
-        init_dones = jnp.zeros((config["NUM_ENVS"]), dtype=bool)
-        init_action = jnp.zeros((config["NUM_ENVS"]), dtype=int)
-        init_hs = network.initialize_carry(config["NUM_ENVS"])
-        expl_state = (init_hs, obs, init_dones, init_action, env_state)
+            rng, _rng = jax.random.split(rng)
+            obs, env_state = env.reset(_rng, env_params)
+            init_dones = jnp.zeros((config["NUM_ENVS"]), dtype=bool)
+            init_action = jnp.zeros((config["NUM_ENVS"]), dtype=int)
+            init_hs = network.initialize_carry(config["NUM_ENVS"])
+            expl_state = (init_hs, obs, init_dones, init_action, env_state)
 
-        # step randomly to have the initial memory window
-        def _random_step(carry, _):
-            hs, last_obs, last_done, last_action, env_state, rng = carry
-            rng, rng_a, rng_s = jax.random.split(rng, 3)
-            _obs = last_obs[np.newaxis]  # (1 (dummy time), num_envs, obs_size)
-            _done = last_done[np.newaxis]  # (1 (dummy time), num_envs)
-            _last_action = last_action[np.newaxis]  # (1 (dummy time), num_envs)
-            new_hs, q_vals = network.apply(
-                {
-                    "params": train_state.params,
-                    "batch_stats": train_state.batch_stats,
-                },
-                hs,
-                _obs,
-                _done,
-                _last_action,
-                train=False,
-            )  # (num_envs, hidden_size), (1, num_envs, num_actions)
-            q_vals = q_vals.squeeze(
-                axis=0
-            )  # (num_envs, num_actions) remove the time dim
-            _rngs = jax.random.split(rng_a, config["NUM_ENVS"])
-            eps = jnp.full(config["NUM_ENVS"], 1.0)  # random actions
-            new_action = jax.vmap(eps_greedy_exploration)(_rngs, q_vals, eps)
-            new_obs, new_env_state, reward, new_done, info = env.step(
-                rng_s, env_state, new_action, env_params
+            # step randomly to have the initial memory window
+            def _random_step(carry, _):
+                hs, last_obs, last_done, last_action, env_state, rng = carry
+                rng, rng_a, rng_s = jax.random.split(rng, 3)
+                _obs = last_obs[np.newaxis]  # (1 (dummy time), num_envs, obs_size)
+                _done = last_done[np.newaxis]  # (1 (dummy time), num_envs)
+                _last_action = last_action[np.newaxis]  # (1 (dummy time), num_envs)
+                new_hs, q_vals = network.apply(
+                    {
+                        "params": train_state.params,
+                        "batch_stats": train_state.batch_stats,
+                    },
+                    hs,
+                    _obs,
+                    _done,
+                    _last_action,
+                    train=False,
+                )  # (num_envs, hidden_size), (1, num_envs, num_actions)
+                q_vals = q_vals.squeeze(
+                    axis=0
+                )  # (num_envs, num_actions) remove the time dim
+                _rngs = jax.random.split(rng_a, config["NUM_ENVS"])
+                eps = jnp.full(config["NUM_ENVS"], 1.0)  # random actions
+                new_action = jax.vmap(eps_greedy_exploration)(_rngs, q_vals, eps)
+                new_obs, new_env_state, reward, new_done, info = env.step(
+                    rng_s, env_state, new_action, env_params
+                )
+                transition = Transition(
+                    last_hs=hs,
+                    obs=last_obs,
+                    action=new_action,
+                    reward=config.get("REW_SCALE", 1) * reward,
+                    done=new_done,
+                    last_done=last_done,
+                    last_action=last_action,
+                    q_vals=q_vals,
+                )
+                return (
+                    new_hs,
+                    new_obs,
+                    new_done,
+                    new_action,
+                    new_env_state,
+                    rng,
+                ), transition
+
+            rng, _rng = jax.random.split(rng)
+            (*expl_state, rng), memory_transitions = jax.lax.scan(
+                _random_step,
+                (*expl_state, _rng),
+                None,
+                config["MEMORY_WINDOW"] + config["NUM_STEPS"],
             )
-            transition = Transition(
-                last_hs=hs,
-                obs=last_obs,
-                action=new_action,
-                reward=config.get("REW_SCALE", 1) * reward,
-                done=new_done,
-                last_done=last_done,
-                last_action=last_action,
-                q_vals=q_vals,
-            )
-            return (
-                new_hs,
-                new_obs,
-                new_done,
-                new_action,
-                new_env_state,
-                rng,
-            ), transition
+            expl_state = tuple(expl_state)
 
-        rng, _rng = jax.random.split(rng)
-        (*expl_state, rng), memory_transitions = jax.lax.scan(
-            _random_step,
-            (*expl_state, _rng),
-            None,
-            config["MEMORY_WINDOW"] + config["NUM_STEPS"],
-        )
-        expl_state = tuple(expl_state)
+            # train
+            rng, _rng = jax.random.split(rng)
+            runner_state = (train_state, memory_transitions, expl_state, test_metrics, _rng)
 
-        # train
-        rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, memory_transitions, expl_state, test_metrics, _rng)
-
-        runner_state, metrics = jax.lax.scan(
-            _update_step, runner_state, None, config["NUM_UPDATES"]
-        )
+        num_updates = config["NUM_UPDATES"] if num_updates is None else num_updates
+        metrics = None
+        if num_updates:
+            runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, num_updates)
 
         return {"runner_state": runner_state, "metrics": metrics}
 
     return train
 
 
+def _policy_variables(train_state, i):
+    # The network uses BatchRenorm, so the running statistics are part of the policy: save them
+    # next to the params (top-level keys "params" and "batch_stats").
+    variables = {"params": train_state.params, "batch_stats": train_state.batch_stats}
+    return jax.tree_util.tree_map(lambda x: x[i], variables)
+
+
+def _test_metrics(runner_state, i):
+    """Latest greedy-test metrics of seed i (per-achievement rates, return) as floats, or {}."""
+    test_metrics = runner_state[3]
+    if not test_metrics:
+        return {}
+    return {k: float(v[i]) for k, v in test_metrics.items()}
+
+
 def single_run(config):
+    """Train in chunks of CHECKPOINT_INTERVAL x the total updates, saving after every chunk.
+
+    After each chunk (needs SAVE_PATH):
+      - a policy snapshot `<name>_vmap<i>_u<updates>.safetensors` with a `.json` next to it (updates,
+        environment steps, latest greedy-test metrics), never overwritten, to pick a checkpoint from;
+      - the full resumable state `<name>_state.safetensors` (overwritten, atomically).
+    With RESUME: true a run continues from that state (same training configuration) and gives the same
+    result as an uninterrupted run. The final policy is also saved as `<name>_vmap<i>.safetensors`,
+    the path the episode collector takes.
+    """
 
     config = {**config, **config["alg"]}
 
@@ -657,40 +690,67 @@ def single_run(config):
     )
 
     rng = jax.random.PRNGKey(config["SEED"])
-
-    t0 = time.time()
     rngs = jax.random.split(rng, config["NUM_SEEDS"])
-    train_vjit = jax.jit(jax.vmap(make_train(config)))
-    outs = jax.block_until_ready(train_vjit(rngs))
-    print(f"Took {time.time()-t0} seconds to complete.")
+    train = make_train(config)  # also sets config["NUM_UPDATES"]
+    total = int(config["NUM_UPDATES"])
 
+    save_dir = None
     if config.get("SAVE_PATH", None) is not None:
-        from purejaxql.utils.save_load import save_params
-
-        model_state = outs["runner_state"][0]
         save_dir = os.path.join(config["SAVE_PATH"], env_name)
         os.makedirs(save_dir, exist_ok=True)
-        OmegaConf.save(
-            config,
-            os.path.join(
-                save_dir, f'{alg_name}_{env_name}_seed{config["SEED"]}_config.yaml'
-            ),
-        )
+        name = f'{alg_name}_{env_name}_seed{config["SEED"]}'
+        OmegaConf.save(config, os.path.join(save_dir, f"{name}_config.yaml"))
+        state_path = os.path.join(save_dir, f"{name}_state.safetensors")
+    interval = float(config.get("CHECKPOINT_INTERVAL", 0) or 0)
+    every = max(1, int(interval * total)) if interval > 0 and save_dir else total
+    run_hash = ckpt.config_hash(config)
 
-        for i, rng in enumerate(rngs):
-            # The network uses BatchRenorm, so the running statistics are part of
-            # the policy: save them next to the params (top-level keys "params"
-            # and "batch_stats").
-            variables = {
-                "params": model_state.params,
-                "batch_stats": model_state.batch_stats,
-            }
-            variables = jax.tree_util.tree_map(lambda x: x[i], variables)
-            save_path = os.path.join(
-                save_dir,
-                f'{alg_name}_{env_name}_seed{config["SEED"]}_vmap{i}.safetensors',
-            )
-            save_params(variables, save_path)
+    init = jax.jit(jax.vmap(lambda r: train(r, num_updates=0)["runner_state"]))
+    chunks = {}
+
+    def run_chunk(n, state):
+        if n not in chunks:  # one compilation per distinct chunk length (the last one may be shorter)
+            chunks[n] = jax.jit(jax.vmap(lambda r, s: train(r, runner_state=s, num_updates=n)["runner_state"]))
+        return jax.block_until_ready(chunks[n](rngs, state))
+
+    t0 = time.time()
+    if config.get("RESUME", False) and save_dir and os.path.exists(state_path):
+        state = ckpt.load_state(state_path, jax.eval_shape(init, rngs), expected_hash=run_hash)
+        print(f"Resumed from {state_path} at update {int(state[0].n_updates[0])} of {total}")
+    else:
+        state = jax.block_until_ready(init(rngs))
+    done = int(state[0].n_updates[0])
+
+    while done < total:
+        n = min(every, total - done)
+        state = run_chunk(n, state)
+        done = int(state[0].n_updates[0])
+        print(f"update {done}/{total} after {time.time() - t0:.0f} s")
+        if save_dir:
+            _save_checkpoint(config, state, rngs, save_dir, name, state_path, run_hash, done, final=done >= total)
+    print(f"Took {time.time()-t0} seconds to complete.")
+
+
+def _save_checkpoint(config, state, rngs, save_dir, name, state_path, run_hash, done, final):
+    from purejaxql.utils.save_load import save_params
+
+    train_state = state[0]
+    for i in range(len(rngs)):
+        variables = _policy_variables(train_state, i)
+        stem = os.path.join(save_dir, f"{name}_vmap{i}_u{done:07d}")
+        save_params(variables, f"{stem}.safetensors")
+        ckpt.write_json(
+            f"{stem}.json",
+            {
+                "n_updates": done,
+                "env_steps": int(train_state.timesteps[i]),
+                "test": _test_metrics(state, i),
+            },
+        )
+        if final:
+            save_params(variables, os.path.join(save_dir, f"{name}_vmap{i}.safetensors"))
+    # the resumable state last: a kill between the two files leaves a state that is not ahead of the snapshot
+    ckpt.save_state(state_path, state, {"config_hash": run_hash, "n_updates": done})
 
 
 def tune(default_config):
