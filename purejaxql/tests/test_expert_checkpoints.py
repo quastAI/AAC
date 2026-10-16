@@ -96,3 +96,40 @@ def test_config_hash_ignores_where_it_is_saved():
     b = {"LR": 1.0, "SAVE_PATH": "y", "RESUME": True, "alg": {"LR": 1.0}}
     assert ckpt.config_hash(a) == ckpt.config_hash(b)
     assert ckpt.config_hash(a) != ckpt.config_hash({**a, "LR": 2.0})
+
+
+def chunk_setup(tmp_path, num_seeds=1):
+    import jax
+
+    config = tiny_config(tmp_path, TEST_NUM_STEPS=50)
+    config = {**config, **config["alg"]}
+    train = expert.make_train(config)
+    rngs = jax.random.split(jax.random.PRNGKey(0), num_seeds)
+    init = jax.jit(jax.vmap(lambda r: train(r, num_updates=0)["runner_state"]))
+    return train, rngs, init(rngs)
+
+
+def test_the_greedy_test_is_a_cond_not_a_select_for_one_seed(tmp_path):
+    # Under vmap the cond on n_updates gets a batched predicate and becomes a select: the test (TEST_NUM_STEPS
+    # sequential steps) would then run in every update. chunk_fn keeps the real cond for one seed.
+    import re
+
+    import jax
+
+    count = lambda fn, rngs, state: len(re.findall(r"\bcond\[", str(jax.make_jaxpr(fn)(rngs, state))))  # noqa: E731
+    train, rngs, state = chunk_setup(tmp_path)
+    assert count(expert.chunk_fn(train, 1, 2), rngs, state) == 1
+    many, rngs2, state2 = chunk_setup(tmp_path / "two", num_seeds=2)
+    assert count(expert.chunk_fn(many, 2, 2), rngs2, state2) == 0  # the known limit of several seeds
+
+
+def test_the_unbatched_chunk_gives_the_same_result_as_the_vmapped_one(tmp_path):
+    import jax
+
+    train, rngs, state = chunk_setup(tmp_path)
+    vmapped = jax.vmap(lambda r, s: train(r, runner_state=s, num_updates=2)["runner_state"])
+    a = jax.jit(expert.chunk_fn(train, 1, 2))(rngs, state)
+    b = jax.jit(vmapped)(rngs, state)
+    for x, y in zip(jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b)):
+        assert x.shape == y.shape
+        np.testing.assert_allclose(np.asarray(x, dtype=float), np.asarray(y, dtype=float), rtol=1e-5, atol=1e-6)

@@ -659,6 +659,26 @@ def _test_metrics(runner_state, i):
     return {k: float(v[i]) for k, v in test_metrics.items()}
 
 
+def chunk_fn(train, num_seeds, n):
+    """The function that runs `n` updates from a state with a leading seed axis: (rngs, state) -> state.
+
+    With one seed the state is unbatched inside the computation and the seed axis added back outside. Under
+    `jax.vmap` the state arrives as a batched array, so the `lax.cond` that decides whether the greedy test
+    runs in this update (a test every TEST_INTERVAL of the updates) would see a batched predicate, become a
+    `select`, and run the test (TEST_NUM_STEPS sequential steps) in every update. Several seeds still take
+    that path: the test then costs its full length in every update.
+    """
+    if num_seeds == 1:
+
+        def one(rngs, state):
+            state = jax.tree_util.tree_map(lambda x: x[0], state)
+            out = train(rngs[0], runner_state=state, num_updates=n)["runner_state"]
+            return jax.tree_util.tree_map(lambda x: x[None], out)
+
+        return one
+    return jax.vmap(lambda r, s: train(r, runner_state=s, num_updates=n)["runner_state"])
+
+
 def single_run(config):
     """Train in chunks of CHECKPOINT_INTERVAL x the total updates, saving after every chunk.
 
@@ -693,6 +713,8 @@ def single_run(config):
     rngs = jax.random.split(rng, config["NUM_SEEDS"])
     train = make_train(config)  # also sets config["NUM_UPDATES"]
     total = int(config["NUM_UPDATES"])
+    if config["NUM_SEEDS"] > 1 and config.get("TEST_DURING_TRAINING", False):
+        print("WARNING: with several seeds the greedy test runs in every update (see chunk_fn); use NUM_SEEDS 1")
 
     save_dir = None
     if config.get("SAVE_PATH", None) is not None:
@@ -710,7 +732,7 @@ def single_run(config):
 
     def run_chunk(n, state):
         if n not in chunks:  # one compilation per distinct chunk length (the last one may be shorter)
-            chunks[n] = jax.jit(jax.vmap(lambda r, s: train(r, runner_state=s, num_updates=n)["runner_state"]))
+            chunks[n] = jax.jit(chunk_fn(train, len(rngs), n))
         return jax.block_until_ready(chunks[n](rngs, state))
 
     t0 = time.time()
