@@ -47,3 +47,51 @@ def test_the_pod_notebook_runs_the_whole_chain():
         assert needle in text, needle
     # the resumable state is as large as the stored transitions: not uploaded
     assert '*_state.safetensors' in text
+
+
+def status_script():
+    """The monitor cell's inline script, tested as a subprocess."""
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod.ipynb').read_text())
+    for cell in nb['cells']:
+        source = ''.join(cell['source'])
+        if cell['cell_type'] == 'code' and 'STATUS = """' in source:
+            return source.split('STATUS = """')[1].split('"""')[0]
+    raise AssertionError('no STATUS script in the notebook')
+
+
+def run_status(home):
+    import subprocess
+    import sys
+
+    frames = json.dumps({'train': 100, 'val': 50, 'test': 50})
+    return subprocess.run(
+        [sys.executable, '-c', status_script(), str(home), frames],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_the_monitor_survives_a_file_without_episodes_yet(tmp_path):
+    import h5py
+
+    # the collector creates the file first and writes the episode tables
+    # with the first episode: a monitor run in between must not fail
+    h5py.File(tmp_path / 'craftax_expert_val.h5', 'w').close()
+    result = run_status(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert 'val' in result.stdout and 'no episodes yet' in result.stdout
+    assert 'train no file yet' in result.stdout.replace('  ', ' ')
+
+
+def test_the_monitor_counts_frames_per_source(tmp_path):
+    import h5py
+    import numpy as np
+
+    with h5py.File(tmp_path / 'craftax_expert_train.h5', 'w') as f:
+        f['ep_len'] = np.array([10, 20, 5])
+        f['ep_offset'] = np.array([0, 10, 30])
+        f['source'] = np.array([0] * 10 + [0] * 20 + [3] * 5)
+    result = run_status(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert '3 episodes' in result.stdout and 'expert 30' in result.stdout
+    assert 'early 5' in result.stdout
