@@ -31,7 +31,7 @@ Risks that remain where the implementation is sound. Bugs are not listed here; t
 | R13 | Diamond filter = world selection: all tasks come from worlds the greedy expert solved, one expert trajectory per world. | certain | med | State it with every result |
 | R14 | Non-expert share is counted in episodes; random and noised episodes are short, so by frames (what the clip sampler sees) it may be a few percent. | high | med | Report the frame share in D0 |
 | R15 | Depth 3 may lack clips (the H-JEPA Push-T 3-level result failed on that). | med | med | D0 clip-count table per depth |
-| R16 | No provenance in the HDF5 (Craftax/JAX version, checkpoint, eps, commit); only the full_state size check guards the layout. | med | low | Write attrs in the collector |
+| R16 | The HDF5 had no provenance (Craftax/JAX version, checkpoint, eps, commit); only the full_state size check guarded the layout. **Mitigated:** every collector run appends a record to the file attribute `runs`, and D0 reports it. | low | low | Read the provenance block of D0 before using a file |
 | R17 | Expert training (1e9 steps) ran in one jit and saved only at the end; a wall-time kill lost all of it. **Mitigated:** chunked training with policy snapshots, test metrics per snapshot and an atomic resumable state (`RESUME=true`); the resume reproduces the uninterrupted run exactly (test). | low | med | Pick the expert from the snapshot `.json` files; keep `SAVE_PATH` on persistent storage |
 
 ## Compute and evaluation

@@ -49,7 +49,13 @@ Examples:
 """
 
 import argparse
+import datetime
+import hashlib
+import importlib.metadata
+import json
 import re
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -353,8 +359,63 @@ class EpisodeWriter:
             self.f[key][-1] = value
         self.f.flush()
 
+    def runs(self):
+        """Provenance: one record per collection run that touched this file (file attribute `runs`)."""
+        return json.loads(self.f.attrs["runs"]) if "runs" in self.f.attrs else []
+
+    def start_run(self, record):
+        runs = self.runs() + [dict(record, finished=False)]
+        self.f.attrs["runs"] = json.dumps(runs)
+        self.f.flush()
+        return len(runs) - 1
+
+    def finish_run(self, index, outcome):
+        runs = self.runs()
+        runs[index].update(outcome, finished=True)
+        self.f.attrs["runs"] = json.dumps(runs)
+        self.f.flush()
+
     def close(self):
         self.f.close()
+
+
+def _git(*args):
+    try:
+        out = subprocess.run(["git", "-C", str(Path(__file__).parent), *args], capture_output=True, text=True, timeout=20)
+        return out.stdout.strip() if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _version(package):
+    try:
+        return importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def provenance(args):
+    """What produced the episodes of this run: code, versions, expert checkpoint, flags."""
+    record = {
+        "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "argv": sys.argv[1:],
+        "args": {k: v for k, v in vars(args).items()},
+        "git_commit": _git("rev-parse", "HEAD"),
+        "git_dirty": bool(_git("status", "--porcelain", "--", str(Path(__file__).parents[1]))),
+        "versions": {p: _version(p) for p in ("craftax", "jax", "jaxlib", "flax", "numpy", "h5py")},
+        "python": sys.version.split()[0],
+        "jax_backend": jax.default_backend(),
+    }
+    if args.checkpoint:
+        checkpoint = Path(args.checkpoint)
+        record["checkpoint"] = {
+            "path": str(checkpoint),
+            "sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        }
+        sidecar = checkpoint.with_suffix(".json")  # a snapshot of the chunked training: updates, steps, test metrics
+        if sidecar.exists():
+            record["checkpoint"]["training"] = json.loads(sidecar.read_text())
+    return record
 
 
 def build_episode(seed, actions, rendered, source):
@@ -438,6 +499,7 @@ def main():
     rollout = make_rollout(env, env_params, network, variables, args.eps, args.num_envs)
     replay = make_replay(env, env_params)
     writer = EpisodeWriter(args.out)
+    run_index = writer.start_run(provenance(args))
     skip, seed, kept, tried, t0 = writer.existing_seeds(), args.seed_start, 0, 0, time.time()
 
     exhausted, frames = False, 0
@@ -480,6 +542,10 @@ def main():
     if not done():
         print(f"WARNING: seeds [{args.seed_start}, {args.seed_end}) are used up: kept {kept} episodes, {frames} frames")
     total = writer.num_episodes
+    writer.finish_run(
+        run_index,
+        {"kept": kept, "tried": tried, "frames": frames, "next_seed": seed, "seconds": round(time.time() - t0)},
+    )
     writer.close()
     print(f"Wrote {kept} episodes to {args.out} ({total} in file)")
 

@@ -82,6 +82,7 @@ class Data:
             self.all_final_achievements = f["achievements"][last] if "achievements" in f else None
             self.all_final_dead = f["dead"][last].astype(bool) if "dead" in f else None
             self.all_final_vitals = f["vitals"][last] if "vitals" in f else None
+            self.runs = json.loads(f.attrs["runs"]) if "runs" in f.attrs else []  # the collector's provenance
 
             step = max(1, -(-self.total_all // max(1, max_frames)))  # ceil
             keep = np.arange(0, len(self.all_lengths), step)
@@ -377,10 +378,32 @@ def seed_overlap(datas: dict[str, Data]) -> list[str]:
     return notes
 
 
+def provenance(runs: list[dict]) -> list[dict]:
+    """One short record per collection run: what produced the episodes (see the collector's `runs`)."""
+    out = []
+    for r in runs:
+        checkpoint = r.get("checkpoint") or {}
+        args = r.get("args") or {}
+        out.append(
+            {
+                "started": r.get("started"),
+                "git": (r.get("git_commit") or "")[:8] + ("+dirty" if r.get("git_dirty") else ""),
+                "craftax": (r.get("versions") or {}).get("craftax"),
+                "eps": args.get("eps"),
+                "seeds": [args.get("seed_start"), args.get("seed_end")],
+                "kept": r.get("kept"),
+                "finished": bool(r.get("finished")),
+                "checkpoint": (checkpoint.get("sha256") or "")[:8] or None,
+                "checkpoint_updates": (checkpoint.get("training") or {}).get("n_updates"),
+            }
+        )
+    return out
+
+
 def analyse(datas: dict[str, Data]) -> dict:
     result = {"seed_overlap": seed_overlap(datas), "files": {}}
     for label, d in datas.items():
-        entry = {"composition": composition(d), "clip_counts": clip_counts(d)}
+        entry = {"composition": composition(d), "clip_counts": clip_counts(d), "provenance": provenance(d.runs)}
         if d.has("achievements"):
             entry["events"] = event_durations(d)
             entry["coverage"] = coverage(d)
@@ -420,6 +443,16 @@ def render(result: dict) -> str:
             if "causes" in dth:
                 line += ", causes " + ", ".join(f"{k} {v}" for k, v in dth["causes"].items())
             out.append(line + ".")
+        runs = e.get("provenance") or []
+        if runs:
+            out += ["", "Collected by " + str(len(runs)) + " run(s):"] + [
+                f"- {r['started']}, commit {r['git'] or '-'}, craftax {_f(r['craftax'])}, eps {_f(r['eps'])}, seeds {r['seeds'][0]} to {_f(r['seeds'][1])}, "
+                f"kept {_f(r['kept'])}, expert {r['checkpoint'] or '-'}" + (f" (update {r['checkpoint_updates']})" if r["checkpoint_updates"] else "")
+                + ("" if r["finished"] else ", NOT FINISHED")
+                for r in runs
+            ]
+        else:
+            out += ["", "No provenance recorded (file from an older collector)."]
         if "diamond_episodes" in c:
             out.append(f"Episodes with a diamond: {c['diamond_episodes']}; achievements per episode (mean): {_f(c['achievements_per_episode_mean'])}.")
 

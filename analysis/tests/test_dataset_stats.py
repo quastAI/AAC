@@ -292,3 +292,36 @@ def test_coverage_of_the_top_level_against_the_time_to_diamond(tmp_path):
     assert 'Reach of the top level' in text and 'p90' in text
     # a file without diamond episodes has no coverage
     assert ds.coverage(ds.Data(write(tmp_path / 'none.h5'))) is None
+
+
+def test_provenance_of_the_collector_is_reported(tmp_path):
+    import json
+
+    path = tmp_path / 'p.h5'
+    write(path)
+    runs = [
+        {
+            'started': '2026-10-16T08:00:00+00:00',
+            'git_commit': 'abcdef0123456789',
+            'git_dirty': True,
+            'versions': {'craftax': '1.6.1'},
+            'args': {'eps': 0.0, 'seed_start': 0, 'seed_end': 1000000},
+            'checkpoint': {'sha256': 'f' * 64, 'training': {'n_updates': 381}},
+            'kept': 12,
+            'finished': False,
+        }
+    ]
+    with h5py.File(path, 'a') as f:
+        f.attrs['runs'] = json.dumps(runs)
+    result = ds.analyse({'a': ds.Data(path)})
+    record = result['files']['a']['provenance'][0]
+    assert record['git'] == 'abcdef01+dirty' and record['checkpoint'] == 'ffffffff'
+    assert record['checkpoint_updates'] == 381 and not record['finished']
+    text = ds.render(result)
+    assert 'commit abcdef01+dirty' in text and 'NOT FINISHED' in text
+
+
+def test_a_file_without_provenance_says_so(tmp_path):
+    path = tmp_path / 'q.h5'
+    write(path)
+    assert 'No provenance recorded' in ds.render(ds.analyse({'a': ds.Data(path)}))

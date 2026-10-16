@@ -171,3 +171,31 @@ def test_dead_flag_covers_health_and_lava(collect):
     lava = state.map.at[row, col].set(collect.BlockType.LAVA.value)
     # lava kills at once and leaves the health as it was
     assert dead(state.replace(map=lava)) == 1
+
+
+def test_provenance_is_recorded_per_run(collect, monkeypatch, tmp_path):
+    import json
+
+    kwargs = dict(no_require_diamond=True, no_stop_at_diamond=True, num_envs=2)
+    out = tmp_path / "p.h5"
+    run(collect, monkeypatch, out, **kwargs).close()
+    f = run(collect, monkeypatch, out, seed_start=100, **{k: v for k, v in kwargs.items()})
+    runs = json.loads(f.attrs["runs"])
+    assert len(runs) == 2 and all(r["finished"] for r in runs)
+    first = runs[0]
+    assert first["kept"] == 4 and first["frames"] > 0 and first["next_seed"] >= 4
+    assert first["versions"]["craftax"] and first["args"]["eps"] == 1.0 and "checkpoint" not in first
+    assert first["python"] and first["jax_backend"]
+
+
+def test_provenance_names_the_checkpoint_and_its_training_state(collect, tmp_path):
+    import argparse
+    import hashlib
+    import json
+
+    checkpoint = tmp_path / "expert_vmap0_u0000381.safetensors"
+    checkpoint.write_bytes(b"weights")
+    checkpoint.with_suffix(".json").write_text(json.dumps({"n_updates": 381, "test": {"diamond": 0.4}}))
+    record = collect.provenance(argparse.Namespace(checkpoint=str(checkpoint), eps=0.0))
+    assert record["checkpoint"]["sha256"] == hashlib.sha256(b"weights").hexdigest()
+    assert record["checkpoint"]["training"]["n_updates"] == 381
