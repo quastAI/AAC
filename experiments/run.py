@@ -143,9 +143,11 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
 
     if exp.get("analysis"):
         out = f"{home}/reports/dataset_stats"
+        mix = [f"{k}={v:g}" for k, v in collection_shares(spec["collection"], "train").items() if v > 0]  # the placeholder mix
         jobs.append(Job("analysis", "analysis", [python, str(ROOT / "analysis" / "dataset_stats.py"),
                         "--data", f"{home}/{train_ds}.h5", "--label", "train", "--data", f"{home}/{val_ds}.h5",
                         "--label", "val", "--data", f"{home}/{st['test_dataset']}.h5", "--label", "test", "--out", out,
+                        "--num-tasks", str(spec["tasks"]["A"]["num_tasks"]), "--mix", *mix,
                         "--offsets", *map(str, spec["tasks"]["A"]["offsets"])], output=f"{out}/dataset_stats.md", cwd=ROOT))  # fmt: skip
         return jobs
 

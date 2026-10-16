@@ -47,7 +47,7 @@ experiments:
     collection: true
 
   D0:
-    title: Data analysis (clip counts, event durations, time scales, chunk diversity)
+    title: Data analysis (entity frequency gap, time scale ladder, clip counts, tasks, survival, chunk information)
     analysis: true
 
   E1:

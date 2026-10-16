@@ -309,3 +309,12 @@ def test_dataset_analysis_gets_the_task_offsets_of_protocol_a(spec):
     command = run.build_jobs(spec, 'D0', [42], home='/data')[0].command
     i = command.index('--offsets')
     assert [int(x) for x in command[i + 1 :]] == spec['tasks']['A']['offsets']
+
+
+def test_dataset_analysis_gets_the_task_count_and_the_placeholder_mix(spec):
+    command = run.build_jobs(spec, 'D0', [42], home='/data')[0].command
+    assert command[command.index('--num-tasks') + 1] == str(
+        spec['tasks']['A']['num_tasks']
+    )
+    i = command.index('--mix')
+    assert command[i + 1 : i + 3] == ['expert=0.7', 'early=0.3']
