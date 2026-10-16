@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 830" width="1180" height="830" font-family="Helvetica, Arial, sans-serif">
+<rect width="1180" height="830" fill="#ffffff"/>
+<rect x="20" y="20" width="1140" height="290" rx="18" fill="none" stroke="#c9c9c4" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="1140" y="52" font-size="22" font-weight="700" fill="#222" text-anchor="end">Level 2</text>
+<rect x="40" y="70" width="200" height="220" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="140" y="100" font-size="19" font-weight="700" fill="#222" text-anchor="middle">E2</text>
+<text x="140" y="122" font-size="13" font-weight="400" fill="#555" text-anchor="middle">state encoder</text>
+<rect x="48" y="138" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="140" y="157" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 pred</text>
+<rect x="48" y="174" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="140" y="193" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 SIGReg</text>
+<rect x="48" y="210" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="140" y="229" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 IDM</text>
+<rect x="260" y="70" width="200" height="220" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="360" y="100" font-size="19" font-weight="700" fill="#222" text-anchor="middle">C2</text>
+<text x="360" y="122" font-size="13" font-weight="400" fill="#555" text-anchor="middle">chunk encoder + VQ</text>
+<rect x="268" y="138" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="360" y="157" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 pred (straight-through)</text>
+<rect x="268" y="174" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="360" y="193" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">commitment</text>
+<rect x="480" y="70" width="200" height="220" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="580" y="100" font-size="19" font-weight="700" fill="#222" text-anchor="middle">A2 + P2</text>
+<text x="580" y="122" font-size="13" font-weight="400" fill="#555" text-anchor="middle">embedder, predictor</text>
+<rect x="488" y="138" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="580" y="157" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 pred</text>
+<rect x="700" y="70" width="200" height="220" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="800" y="100" font-size="19" font-weight="700" fill="#222" text-anchor="middle">L2 IDM</text>
+<text x="800" y="122" font-size="13" font-weight="400" fill="#555" text-anchor="middle">inverse dynamics</text>
+<rect x="708" y="138" width="184" height="28" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="800" y="157" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 IDM</text>
+<rect x="920" y="70" width="200" height="220" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="1020" y="100" font-size="19" font-weight="700" fill="#222" text-anchor="middle">Codebook</text>
+<text x="1020" y="122" font-size="13" font-weight="400" fill="#555" text-anchor="middle">VQ entries</text>
+<rect x="928" y="138" width="184" height="28" rx="7" fill="#efefec" stroke="#8a8a85" stroke-width="1.2"/>
+<text x="1020" y="157" font-size="13" font-weight="500" fill="#555555" text-anchor="middle">EMA only, no gradient</text>
+<rect x="20" y="400" width="1140" height="330" rx="18" fill="none" stroke="#c9c9c4" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="1140" y="432" font-size="22" font-weight="700" fill="#222" text-anchor="end">Level 1</text>
+<rect x="40" y="450" width="200" height="260" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="140" y="480" font-size="19" font-weight="700" fill="#222" text-anchor="middle">E1</text>
+<text x="140" y="502" font-size="13" font-weight="400" fill="#555" text-anchor="middle">ViT encoder</text>
+<rect x="48" y="518" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="140" y="537" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 pred</text>
+<rect x="48" y="554" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="140" y="573" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 SIGReg</text>
+<rect x="48" y="590" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="140" y="609" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 IDM</text>
+<rect x="48" y="626" width="184" height="28" rx="7" fill="#fbeaea" stroke="#c24b4b" stroke-width="1.2"/>
+<text x="140" y="645" font-size="13" font-weight="500" fill="#9b2f2f" text-anchor="middle">L2 pred, SIGReg, IDM</text>
+<rect x="260" y="450" width="200" height="260" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="360" y="480" font-size="19" font-weight="700" fill="#222" text-anchor="middle">A1</text>
+<text x="360" y="502" font-size="13" font-weight="400" fill="#555" text-anchor="middle">action embedder (linear)</text>
+<rect x="268" y="518" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="360" y="537" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 pred</text>
+<rect x="268" y="554" width="184" height="28" rx="7" fill="#fbeaea" stroke="#c24b4b" stroke-width="1.2"/>
+<text x="360" y="573" font-size="13" font-weight="500" fill="#9b2f2f" text-anchor="middle">L2 pred (via C2)</text>
+<rect x="268" y="590" width="184" height="28" rx="7" fill="#fbeaea" stroke="#c24b4b" stroke-width="1.2"/>
+<text x="360" y="609" font-size="13" font-weight="500" fill="#9b2f2f" text-anchor="middle">commitment (via C2)</text>
+<rect x="480" y="450" width="200" height="260" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="580" y="480" font-size="19" font-weight="700" fill="#222" text-anchor="middle">P1</text>
+<text x="580" y="502" font-size="13" font-weight="400" fill="#555" text-anchor="middle">predictor</text>
+<rect x="488" y="518" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="580" y="537" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 pred</text>
+<rect x="700" y="450" width="200" height="260" rx="14" fill="#ffffff" stroke="#cfcfca" stroke-width="1.2"/>
+<text x="800" y="480" font-size="19" font-weight="700" fill="#222" text-anchor="middle">L1 IDM</text>
+<text x="800" y="502" font-size="13" font-weight="400" fill="#555" text-anchor="middle">inverse dynamics</text>
+<rect x="708" y="518" width="184" height="28" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="800" y="537" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 IDM</text>
+<line x1="112" y1="448" x2="112" y2="292" stroke="#888888" stroke-width="2.2"/>
+<path d="M106,302 L112,292 L118,302" fill="none" stroke="#888888" stroke-width="2.2"/>
+<line x1="168" y1="296" x2="168" y2="446" stroke="#c24b4b" stroke-width="2.2" stroke-dasharray="7 5"/>
+<path d="M162,436 L168,446 L174,436" fill="none" stroke="#c24b4b" stroke-width="2.2"/>
+<line x1="332" y1="448" x2="332" y2="292" stroke="#888888" stroke-width="2.2"/>
+<path d="M326,302 L332,292 L338,302" fill="none" stroke="#888888" stroke-width="2.2"/>
+<line x1="388" y1="296" x2="388" y2="446" stroke="#c24b4b" stroke-width="2.2" stroke-dasharray="7 5"/>
+<path d="M382,436 L388,446 L394,436" fill="none" stroke="#c24b4b" stroke-width="2.2"/>
+<text x="60" y="447" font-size="1" font-weight="400" fill="#222" text-anchor="middle"></text>
+<rect x="40" y="757" width="110" height="30" rx="7" fill="#e6f4ee" stroke="#2f8a63" stroke-width="1.2"/>
+<text x="95.0" y="777" font-size="13" font-weight="500" fill="#1f6b4a" text-anchor="middle">L1 loss</text>
+<rect x="166" y="757" width="110" height="30" rx="7" fill="#eceefc" stroke="#5560c9" stroke-width="1.2"/>
+<text x="221.0" y="777" font-size="13" font-weight="500" fill="#3a44a8" text-anchor="middle">L2 loss</text>
+<rect x="292" y="757" width="230" height="30" rx="7" fill="#fbeaea" stroke="#c24b4b" stroke-width="1.2"/>
+<text x="407.0" y="777" font-size="13" font-weight="500" fill="#9b2f2f" text-anchor="middle">L2 loss reaching level 1</text>
+<rect x="538" y="757" width="130" height="30" rx="7" fill="#efefec" stroke="#8a8a85" stroke-width="1.2"/>
+<text x="603.0" y="777" font-size="13" font-weight="500" fill="#555555" text-anchor="middle">no gradient</text>
+<line x1="704" y1="772" x2="748" y2="772" stroke="#888" stroke-width="2.2"/>
+<text x="758" y="777" font-size="13" font-weight="400" fill="#444" text-anchor="start">forward data (states, actions)</text>
+<line x1="984" y1="772" x2="1028" y2="772" stroke="#c24b4b" stroke-width="2.2" stroke-dasharray="7 5"/>
+<text x="1038" y="777" font-size="13" font-weight="400" fill="#444" text-anchor="start">gradient into level 1</text>
+</svg>
