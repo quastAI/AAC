@@ -23,17 +23,26 @@ def test_code_cells_parse_and_carry_no_outputs(path):
             assert cell['outputs'] == [] and cell['execution_count'] is None, i
 
 
-def test_the_d1_notebook_uses_the_runner_and_the_gpu_requirements():
-    nb = json.loads((NOTEBOOKS[0].parent / 'd1_sampling.ipynb').read_text())
+def test_the_pod_notebook_runs_the_whole_chain():
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod.ipynb').read_text())
     text = '\n'.join(''.join(c['source']) for c in nb['cells'])
     for needle in (
         'environment/jax-gpu-requirements.txt',
-        'check_replay.py',
         'time_expert.py',
+        'pqn_rnn_craftax.py',
+        'alg.SAVE_PATH',  # an override without the prefix is ignored
+        'start_new_session=True',  # detached from the kernel
+        'EARLY_UPDATES',
         '"run", "D1"',
         '"run", "D0"',
-        'HDF5_USE_FILE_LOCKING',
+        'check_replay.py',
         'JAX_PLATFORMS',
-        'repo_type="dataset"',
+        'HDF5_USE_FILE_LOCKING',
+        'upload_folder',
+        'path_in_repo="checkpoints"',
+        'path_in_repo="data"',
+        'path_in_repo="reports"',
     ):
         assert needle in text, needle
+    # the resumable state is as large as the stored transitions: not uploaded
+    assert '*_state.safetensors' in text

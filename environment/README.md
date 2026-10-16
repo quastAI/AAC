@@ -15,7 +15,7 @@ If `pip` points at a private index with expired credentials, use `PIP_INDEX_URL=
 
 ## On a RunPod pod (A100, network volume at `/workspace`)
 
-Nothing here has run on a GPU yet (written on macOS): check the first notebook run. The notebook [notebooks/d1_sampling.ipynb](../notebooks/d1_sampling.ipynb) does the JAX side of this (data collection) in one go.
+Nothing here has run on a GPU yet (written on macOS): check the first notebook run. The notebook [notebooks/runpod.ipynb](../notebooks/runpod.ipynb) does the JAX side of this (expert training, data collection) in one go.
 
 - **JAX (collector, expert):** `pip install -r environment/jax-gpu-requirements.txt` from the repository root, in its own venv. Without the `jax[cuda12]` pin the collector runs on the CPU. Check with `python -c "import jax; print(jax.devices())"`.
 - **PyTorch (H-JEPA):** its own venv, `pip install -r environment/hjepa-requirements.txt` (torch 2.7.1 from PyPI is a CUDA 12 build; the image's own torch, probably 2.8, is not used). JAX in this venv is the CPU build on purpose: the planning environment pins `JAX_PLATFORMS=cpu` and must not compete with torch for the GPU. Python 3.11 is the project's pin (the RunPod PyTorch images ship 3.11).
