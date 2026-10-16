@@ -36,6 +36,7 @@ encoder_scale: tiny
 dump_object: true
 save_every_n_epochs: 1
 resume_every_n_steps: 2000  # full-state resume checkpoint (0 = off), see utils.ResumeCheckpoint
+grad_clip_per_level: true  # each level clips its own gradient norm (trainer.gradient_clip_val), as in the DROID recipe
 trainer:
   max_epochs: 10
   devices: auto
