@@ -107,6 +107,7 @@ Pipeline: train expert → collect episodes → train world models → plan and 
 
 ```bash
 cd purejaxql && pip install -e ".[jax_envs]"      # pins: jax<=0.4.38 needs flax<=0.10.3
+python scripts/time_expert.py                                      # seconds per update, steps per second, hours per run length (size TOTAL_TIMESTEPS from it)
 python purejaxql/pqn_rnn_craftax.py +alg=pqn_rnn_craftax_classic   # saves params + BatchRenorm stats + config
 python scripts/collect_craftax_episodes.py --out data/expert.h5 --checkpoint models/.../..._vmap0.safetensors \
     --num-episodes 1000 --seed-start 0

@@ -29,6 +29,7 @@ def test_the_d1_notebook_uses_the_runner_and_the_gpu_requirements():
     for needle in (
         'environment/jax-gpu-requirements.txt',
         'check_replay.py',
+        'time_expert.py',
         '"run", "D1"',
         '"run", "D0"',
         'HDF5_USE_FILE_LOCKING',
