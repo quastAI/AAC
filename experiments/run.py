@@ -121,9 +121,14 @@ def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str =
                 continue
             command = [*command, "--seed-start", str(lo), "--seed-end", str(hi)]
             # the runs append to one file, so they run one after the other
-            jobs.append(Job(f"collect_{split}_{name}", "collect", command, after=[previous] if previous else [], cwd=jax_dir))
-            previous = jobs[-1].name
-        jobs[-1].output = None  # appending to an existing file: no single marker, rerun by hand if needed
+            job_name = f"collect_{split}_{name}"
+            # The runs append to one file and --target-frames counts the frames of one run, so a repeated run adds
+            # another full share on new seeds. The marker (written after the run, see `mark_done`) keeps a restarted
+            # D1 from repeating the finished steps. A run that was killed has no marker and starts again: its partial
+            # episodes stay in the file (the seeds are skipped), the share is then exceeded by at most that run's part.
+            jobs.append(Job(job_name, "collect", command, after=[previous] if previous else [],
+                            output=f"{home}/collect_done/{job_name}", cwd=jax_dir))  # fmt: skip
+            previous = job_name
     return jobs
 
 
@@ -244,6 +249,12 @@ def resolve(job: Job, home: str) -> Job:
     return Job(job.name, job.kind, [expand(c) for c in job.command], job.after, expand(job.output) if job.output else None, job.cwd)
 
 
+def mark_done(job: Job):
+    """The marker of a finished collection run (the collector appends, so the file itself says nothing)."""
+    Path(job.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(job.output).write_text(shell(job) + "\n")
+
+
 def run_local(jobs: list[Job], home: str, force=False, runner=subprocess.run) -> list[str]:
     ran = []
     env = {**os.environ, "HJEPA_HOME": home, "PYTHONPATH": f"{H_JEPA.parent}:{H_JEPA}"}
@@ -255,6 +266,8 @@ def run_local(jobs: list[Job], home: str, force=False, runner=subprocess.run) ->
         result = runner(job.command, cwd=job.cwd, env=env)
         if result.returncode:
             raise SystemExit(f"{job.name} failed with exit code {result.returncode}")
+        if job.kind == "collect":
+            mark_done(job)
         ran.append(job.name)
     return ran
 
@@ -276,6 +289,9 @@ def render_sbatch(job: Job, slurm: dict, home: str, dependency_ids: list[str]) -
         lines.append(f"source {slurm['venv']}/bin/activate")
     lines += list(slurm.get("extra") or [])
     lines += [f"cd {job.cwd}", shell(resolve(job, home))]
+    if job.kind == "collect":
+        marker = shlex.quote(resolve(job, home).output)
+        lines += [f"mkdir -p $(dirname {marker})", f"echo done > {marker}"]
     return "\n".join(lines) + "\n"
 
 

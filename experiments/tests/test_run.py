@@ -318,3 +318,63 @@ def test_dataset_analysis_gets_the_task_count_and_the_placeholder_mix(spec):
     )
     i = command.index('--mix')
     assert command[i + 1 : i + 3] == ['expert=0.7', 'early=0.3']
+
+
+def placeholder_collection(spec):
+    """The collection jobs with the $HJEPA_HOME placeholder, as `main` builds them."""
+    return run.build_jobs(
+        spec,
+        'D1',
+        [42],
+        home=run.HOME_VAR,
+        checkpoint='/ckpt/expert.safetensors',
+        early_checkpoints=SNAPSHOTS,
+    )
+
+
+def test_a_restarted_collection_skips_the_finished_runs(spec, tmp_path):
+    # the collector appends and --target-frames counts one run: repeating a
+    # finished run would add another full share on new seeds
+    jobs = placeholder_collection(spec)
+    home = str(tmp_path)
+    calls = []
+
+    class Result:
+        returncode = 0
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        return Result()
+
+    first = run.run_local(jobs, home, runner=runner)
+    assert first == [j.name for j in jobs] and len(calls) == len(jobs)
+    marker = Path(run.resolve(jobs[0], home).output)
+    assert marker.parent == tmp_path / 'collect_done' and marker.exists()
+    assert run.run_local(jobs, home, runner=runner) == []  # nothing repeated
+    assert len(calls) == len(jobs)
+    assert run.run_local(jobs, home, force=True, runner=runner)  # --force
+
+
+def test_a_failed_collection_run_has_no_marker(spec, tmp_path):
+    jobs = placeholder_collection(spec)
+
+    class Result:
+        def __init__(self, code):
+            self.returncode = code
+
+    def runner(command, **kwargs):
+        return Result(1 if '--source' in command else 0)  # the first early run
+
+    with pytest.raises(SystemExit, match='failed'):
+        run.run_local(jobs, str(tmp_path), runner=runner)
+    done = sorted(p.name for p in (tmp_path / 'collect_done').iterdir())
+    assert done == ['collect_train_expert']
+
+
+def test_the_slurm_script_of_a_collection_run_writes_the_marker(spec, tmp_path):
+    job = collection(spec, early_checkpoints=SNAPSHOTS)[0]
+    slurm = yaml.safe_load(
+        (Path(run.__file__).parent / 'slurm.yaml').read_text()
+    )
+    script = run.render_sbatch(job, slurm, '/data', [])
+    assert 'echo done > /data/collect_done/collect_train_expert' in script
