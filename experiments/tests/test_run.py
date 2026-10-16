@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import run  # noqa: E402
 
 
-@pytest.fixture(scope='module')
-def spec():
+@pytest.fixture()
+def spec():  # a fresh copy per test: some tests change the collection plan
     return run.load_spec()
 
 
@@ -210,35 +210,79 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
     assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 
-def test_collection_mixes_the_sources_by_frames(spec):
-    jobs = run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/ckpt/expert.safetensors')
+def collect_args(job, flag):
+    return int(job.command[job.command.index(flag) + 1])
+
+
+SNAPSHOTS = ['/ckpt/pqn_u0000381.safetensors', '/ckpt/pqn_u0001143.safetensors']
+
+
+def collection(spec, **kwargs):
+    return run.build_jobs(
+        spec, 'D1', [42], home='/data', checkpoint='/ckpt/expert.safetensors', **kwargs
+    )
+
+
+def test_collection_mixes_expert_and_early_checkpoints_by_frames(spec):
+    jobs = by_name(collection(spec, early_checkpoints=SNAPSHOTS))
     c = spec['collection']
-    for split, dataset in (('train', 'craftax_expert_train'), ('val', 'craftax_expert_val'), ('test', 'craftax_expert_test')):
-        expert, noised, rand = (by_name(jobs)[f'collect_{split}_{k}'] for k in ('expert', 'noised', 'random'))
+    for split in ('train', 'val'):
+        share = c['share'][split]
         total = c['frames'][split]
-        count = lambda job: int(job.command[job.command.index('--target-frames') + 1])  # noqa: E731
+        expert, e1, e2 = (jobs[f'collect_{split}_{k}'] for k in ('expert', 'early1', 'early2'))
         # the mix is a share of frames, not of episodes (episodes differ a lot in length)
-        assert abs(count(expert) + count(noised) + count(rand) - total) <= 2
-        for job, name in ((expert, 'expert'), (noised, 'noised'), (rand, 'random')):
-            assert count(job) == round(total * c['share'][name])
-            assert '--num-episodes' not in job.command
-        assert all('/data/' + dataset + '.h5' in j.command for j in (expert, noised, rand))
-        # one file, so the runs are chained; seeds of the three runs do not overlap
-        assert noised.after == [expert.name] and rand.after == [noised.name]
-        starts = [int(j.command[j.command.index('--seed-start') + 1]) for j in (expert, noised, rand)]
-        assert starts == [c['seed_start'][split], c['seed_start'][split] + 500_000, c['seed_start'][split] + 750_000]
-        # every run stops where the next range begins, the last one at the end of the split's 1M seeds
-        ends = [int(j.command[j.command.index('--seed-end') + 1]) for j in (expert, noised, rand)]
-        assert ends == starts[1:] + [c['seed_start'][split] + 1_000_000]
-        assert '--no-require-diamond' not in expert.command and '--no-require-diamond' in noised.command
-        assert '--checkpoint' not in rand.command and rand.command[rand.command.index('--eps') + 1] == '1.0'
+        assert collect_args(expert, '--target-frames') == round(total * share['expert'])
+        early = collect_args(e1, '--target-frames') + collect_args(e2, '--target-frames')
+        assert early == round(total * share['early'])  # split equally among the snapshots
+        assert abs(collect_args(e1, '--target-frames') - collect_args(e2, '--target-frames')) <= 1
+        assert [j.command[j.command.index('--checkpoint') + 1] for j in (e1, e2)] == SNAPSHOTS
+        assert all('--num-episodes' not in j.command for j in (expert, e1, e2))
+        assert all('--source' in j.command and j.command[j.command.index('--source') + 1] == 'early' for j in (e1, e2))
+        assert '--no-require-diamond' not in expert.command and '--no-require-diamond' in e1.command
+        assert '--source' not in expert.command  # derived: the final expert is source 0
+        # one file: the runs are chained, and their seeds do not overlap
+        assert e1.after == [expert.name] and e2.after == [e1.name]
+        start = c['seed_start'][split]
+        starts = [collect_args(j, '--seed-start') for j in (expert, e1, e2)]
+        ends = [collect_args(j, '--seed-end') for j in (expert, e1, e2)]
+        assert starts == [start, start + 500_000, start + 750_000]
+        assert ends == starts[1:] + [start + 1_000_000]  # the last stops where the next split begins
     ranges = [c['seed_start'][s] for s in ('train', 'val', 'test')]
     assert ranges == sorted(ranges) and ranges[1] - ranges[0] >= 1_000_000  # disjoint splits
 
 
-def test_collection_run_needs_the_checkpoint(spec):
+def test_the_test_split_holds_only_the_final_expert(spec):
+    jobs = collection(spec, early_checkpoints=SNAPSHOTS)
+    test = [j.name for j in jobs if j.name.startswith('collect_test_')]
+    assert test == ['collect_test_expert']
+    assert collect_args(by_name(jobs)['collect_test_expert'], '--target-frames') == spec['collection']['frames']['test']
+
+
+def test_without_snapshots_the_plan_shows_a_placeholder(spec):
+    jobs = by_name(collection(spec))
+    assert '<early-checkpoint>' in jobs['collect_train_early1'].command
+    assert 'collect_train_early2' not in jobs
+
+
+def test_noised_and_random_remain_optional_fallbacks(spec):
+    spec['collection']['share']['train'] = {'expert': 0.5, 'early': 0.2, 'noised': 0.15, 'random': 0.15}
+    jobs = by_name(collection(spec, early_checkpoints=SNAPSHOTS[:1]))
+    names = ['expert', 'early1', 'noised', 'random']
+    chain = [jobs[f'collect_train_{n}'] for n in names]
+    assert [j.after for j in chain] == [[]] + [[chain[i].name] for i in range(3)]
+    starts = [collect_args(j, '--seed-start') for j in chain]
+    ends = [collect_args(j, '--seed-end') for j in chain]
+    assert ends[:-1] == starts[1:] and ends[-1] == 1_000_000 and starts[1] == 500_000
+    noised, random = chain[2], chain[3]
+    assert noised.command[noised.command.index('--eps') + 1] == '0.3' and '--checkpoint' in noised.command
+    assert random.command[random.command.index('--eps') + 1] == '1.0' and '--checkpoint' not in random.command
+
+
+def test_collection_run_needs_the_checkpoints(spec):
     with pytest.raises(SystemExit, match='expert-checkpoint'):
         run.main(['run', 'D1', '--mode', 'slurm'])
+    with pytest.raises(SystemExit, match='early-checkpoint'):
+        run.main(['run', 'D1', '--mode', 'slurm', '--expert-checkpoint', '/ckpt/e.safetensors'])
 
 
 def test_dataset_analysis_checks_the_seed_overlap_of_all_three_files(spec):
@@ -250,6 +294,12 @@ def test_dataset_analysis_checks_the_seed_overlap_of_all_three_files(spec):
 
 
 def test_collection_shares_must_sum_to_one(spec):
-    spec['collection']['share'] = {'expert': 0.5, 'noised': 0.1, 'random': 0.1}
+    spec['collection']['share']['val'] = {'expert': 0.5, 'early': 0.1}
     with pytest.raises(SystemExit, match='sum to 1'):
+        run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/c')
+
+
+def test_unknown_collection_sources_are_rejected(spec):
+    spec['collection']['share']['train'] = {'expert': 0.5, 'early': 0.4, 'noisy': 0.1}
+    with pytest.raises(SystemExit, match='unknown collection sources'):
         run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/c')

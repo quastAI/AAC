@@ -16,16 +16,22 @@ settings:
   tasks_dir: eval_tasks  # under $HJEPA_HOME
   chunk_size: 10  # evaluation tasks per resumable chunk
 
-# Data collection (D1): expert episodes that reach the diamond, noised-expert episodes (which may die)
-# and uniform random episodes. The mix is counted in frames (what the clip sampler sees; episodes
-# differ a lot in length) and every run stops at its share of the split's frames. Seeds are the split:
-# disjoint ranges, so validation and test worlds are held out; the noised and random seeds start 500000
-# and 750000 into the range and every run stops where the next range begins.
-# Placeholders: the mix and the noise are decided after the data exists and its behaviour has been
-# analysed (D0); the frame counts follow the timing run.
+# Data collection (D1): the final expert's episodes that reach the diamond (source 0, the tasks come from
+# them) and rollouts of earlier snapshots of the expert's training (source `early`, from the snapshots given
+# with --early-checkpoint, which may die; they train every level). The mix is counted in frames (what the clip
+# sampler sees; episodes differ a lot in length): every run stops at its share of the split's frames, and the
+# early share is split equally among the snapshots. Seeds are the split: disjoint ranges, so validation and
+# test worlds are held out; the first 500000 seeds of a range go to the expert, the rest equally to the other
+# runs, and every run stops where the next range begins. The test split holds only the final expert (tasks).
+# `noised` (epsilon `noise_eps` on the final expert) and `random` (uniform) are optional, default 0: a fallback
+# if D0 shows that actions are not covered (the action-coverage table). Placeholders: the mix and the snapshots
+# are decided after the data exists and its behaviour has been analysed (D0); the frame counts follow the timing run.
 collection:
   frames: {train: 2000000, val: 150000, test: 150000}
-  share: {expert: 0.75, noised: 0.125, random: 0.125}
+  share:
+    train: {expert: 0.7, early: 0.3}
+    val: {expert: 0.7, early: 0.3}
+    test: {expert: 1.0}
   noise_eps: 0.3
   seed_start: {train: 0, val: 1000000, test: 2000000}
 

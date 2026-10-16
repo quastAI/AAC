@@ -20,7 +20,8 @@ data:
       num_steps: ${eval:'${level1.wm.history_size} + ${level1.wm.rollout_n}'}
 quick_debug: false
 # Episode sources whose clips train level 1 only (the levels above skip them): uniform random
-# episodes are noise as chunks of actions. Noised-expert episodes (which may die) train every level.
+# episodes (an optional fallback in the data plan) are noise as chunks of actions. Early-checkpoint and noised-expert
+# episodes (which may die) train every level.
 upper_loss_exclude_sources: [2]
 output_model_name: model
 env: craftax

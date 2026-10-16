@@ -325,3 +325,38 @@ def test_a_file_without_provenance_says_so(tmp_path):
     path = tmp_path / 'q.h5'
     write(path)
     assert 'No provenance recorded' in ds.render(ds.analyse({'a': ds.Data(path)}))
+
+
+def test_early_checkpoints_and_action_coverage_per_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(ds, 'MIN_ACTION_STEPS', 50)  # the toy file has a few hundred frames
+    lengths = [100, 100, 60, 60, 40]
+    path = write(tmp_path / 'early.h5', lengths=lengths)
+    source = np.repeat(np.array([0, 0, 3, 3, 3], np.int8), lengths)
+    updates = np.repeat(np.array([-1, -1, 381, 381, 1143], np.int32), lengths)
+    with h5py.File(path, 'r+') as f:
+        del f['source']
+        f.create_dataset('source', data=source)
+        f.create_dataset('policy_updates', data=updates)
+
+    d = ds.Data(path)
+    comp = ds.composition(d)
+    assert comp['by_source'] == {'expert': 2, 'early': 3}
+    assert comp['early_checkpoints'] == {
+        '381': {'episodes': 2, 'frames': 120},
+        '1143': {'episodes': 1, 'frames': 40},
+    }
+    cov = ds.action_coverage(d)
+    assert set(cov['by_source']) == {'expert', 'early'}
+    # the toy policy only takes noop and do, every second step
+    expert = cov['by_source']['expert']['actions']
+    assert expert['left']['steps'] == 0 and expert['do']['steps'] > 0
+    assert cov['by_source']['early']['actions']['do']['steps'] > 0
+    assert 'left' in cov['thin'] and 'do' not in cov['thin']
+    text = ds.render(ds.analyse({'e': d}))
+    assert 'Early checkpoints (training updates' in text
+    assert '### Action coverage per source' in text and 'Thin actions' in text
+
+
+def test_a_file_without_early_checkpoints_has_no_checkpoint_section(data):
+    comp = ds.composition(data)
+    assert 'early_checkpoints' not in comp

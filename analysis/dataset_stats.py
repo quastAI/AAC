@@ -2,7 +2,7 @@
 
 Reads the collector's HDF5 files (numpy and h5py only, no pixels) and reports:
 
-* composition: episodes, lengths, sources, held-out seed check between files;
+* composition: episodes, lengths, sources (and, for early-checkpoint episodes, the checkpoints), held-out seed check between files;
 * clip counts per depth and stride: how many training clips a level can still draw
   (E2: strides, and whether deeper levels have enough data);
 * event durations: when achievements unlock and the gaps between unlocks;
@@ -10,7 +10,8 @@ Reads the collector's HDF5 files (numpy and h5py only, no pixels) and reports:
   decorrelates, from the distance between states `lag` steps apart;
 * action-chunk diversity per chunk length k: distinct chunks and distinct *effects*,
   which sizes the VQ codebook and the band of durations;
-* what each action does: share of the data and how often it changes anything.
+* what each action does: share of the data and how often it changes anything, and per source how often
+  every action is taken (is the action space covered when there are no uniform random episodes?).
 
     python dataset_stats.py --data expert_train.h5 --label train \
         --data expert_val.h5 --label val --out report/
@@ -55,6 +56,8 @@ GROUPS = {  # state columns by how fast they change
 LAGS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 CHUNKS = (1, 2, 3, 4, 6, 8, 12, 16)
 MAX_FRAMES = 2_000_000
+SOURCES = {0: "expert", 1: "noised_expert", 2: "random", 3: "early"}  # the collector's `source` column
+MIN_ACTION_STEPS = 500  # an action seen fewer times than this is reported as thin (placeholder, tune on the data)
 
 
 # --------------------------------------------------------------------------
@@ -82,6 +85,7 @@ class Data:
             self.all_final_achievements = f["achievements"][last] if "achievements" in f else None
             self.all_final_dead = f["dead"][last].astype(bool) if "dead" in f else None
             self.all_final_vitals = f["vitals"][last] if "vitals" in f else None
+            self.all_policy_updates = f["policy_updates"][all_offsets] if "policy_updates" in f else None
             self.runs = json.loads(f.attrs["runs"]) if "runs" in f.attrs else []  # the collector's provenance
 
             step = max(1, -(-self.total_all // max(1, max_frames)))  # ceil
@@ -125,10 +129,16 @@ def composition(d: Data) -> dict:
     if d.sampled:
         out["sampled"] = {"episodes_analysed": d.sampled[0], "episodes": d.sampled[1]}
     if d.all_sources is not None:
-        names = ("expert", "noised_expert", "random")
-        out["by_source"] = {n: int((d.all_sources == i).sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
-        out["frames_by_source"] = {n: int(lengths[d.all_sources == i].sum()) for i, n in enumerate(names) if (d.all_sources == i).any()}
+        out["by_source"] = {n: int((d.all_sources == i).sum()) for i, n in SOURCES.items() if (d.all_sources == i).any()}
+        out["frames_by_source"] = {n: int(lengths[d.all_sources == i].sum()) for i, n in SOURCES.items() if (d.all_sources == i).any()}
         out["frame_share_by_source"] = {n: v / d.total_all for n, v in out["frames_by_source"].items()}
+        if d.all_policy_updates is not None and (d.all_sources == 3).any():
+            early = d.all_sources == 3
+            out["early_checkpoints"] = {
+                str(int(u)): {"episodes": int((early & (d.all_policy_updates == u)).sum()),
+                              "frames": int(lengths[early & (d.all_policy_updates == u)].sum())}
+                for u in np.unique(d.all_policy_updates[early])
+            }
     if d.all_final_dead is not None:
         out["deaths"] = death_statistics(d)
     if d.all_final_achievements is not None:
@@ -147,9 +157,8 @@ def death_statistics(d: Data) -> dict:
     """
     dead, lengths = d.all_final_dead, d.all_lengths
     sources = d.all_sources if d.all_sources is not None else np.zeros(len(lengths), np.int8)
-    names = {0: "expert", 1: "noised_expert", 2: "random"}
     out = {}
-    for code, name in names.items():
+    for code, name in SOURCES.items():
         here = sources == code
         if not here.any():
             continue
@@ -341,8 +350,8 @@ def chunk_diversity(d: Data, chunks=CHUNKS, max_windows=500_000) -> dict:
     return out
 
 
-def action_effects(d: Data) -> list[dict]:
-    """Share of each action in the data, and how often it changes the state."""
+def _action_steps(d: Data):
+    """Indices of the steps with an action inside an episode, the action index, and whether the step changed the state."""
     action = d.cols["action"][:, 0]
     valid = ~np.isnan(action)
     nxt = np.arange(d.total) + 1
@@ -355,11 +364,41 @@ def action_effects(d: Data) -> list[dict]:
         if d.has(name):
             col = d.cols[name].reshape(d.total, -1)
             changed |= (col[idx + 1] != col[idx]).any(1)
+    return idx, a, changed
+
+
+def action_effects(d: Data) -> list[dict]:
+    """Share of each action in the data, and how often it changes the state."""
+    _, a, changed = _action_steps(d)
     rows = []
     for i, name in enumerate(ACTIONS):
         m = a == i
         rows.append({"action": name, "share": float(m.mean()), "changes_state": float(changed[m].mean()) if m.any() else None})
     return rows
+
+
+def action_coverage(d: Data) -> dict | None:
+    """How often every action is taken, per source, and the actions that are thin overall.
+
+    Without uniform random episodes the action space is only covered by what the policies do; an action
+    that is (almost) never taken, or never changes anything, is a hole the planner can fall into.
+    """
+    if not d.has("source"):
+        return None
+    idx, a, changed = _action_steps(d)
+    source = d.cols["source"][idx].astype(int)
+    steps = np.array([(a == i).sum() for i in range(len(ACTIONS))])
+    out = {"by_source": {}, "thin": [n for n, c in zip(ACTIONS, steps) if c < MIN_ACTION_STEPS], "min_steps": MIN_ACTION_STEPS}
+    for code, name in SOURCES.items():
+        here = source == code
+        if not here.any():
+            continue
+        out["by_source"][name] = {
+            "steps": int(here.sum()),
+            "actions": {n: {"steps": int((here & (a == i)).sum()), "changes_state": int((here & (a == i) & changed).sum())}
+                        for i, n in enumerate(ACTIONS)},
+        }
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -415,6 +454,7 @@ def analyse(datas: dict[str, Data]) -> dict:
             entry["chunks"] = chunk_diversity(d)
             if d.has("position"):
                 entry["actions"] = action_effects(d)
+                entry["action_coverage"] = action_coverage(d)
         result["files"][label] = entry
     return result
 
@@ -436,6 +476,9 @@ def render(result: dict) -> str:
         if "by_source" in c:
             out.append("Sources (episodes, share of frames): " + ", ".join(
                 f"{k} {v} ({c['frame_share_by_source'][k]:.1%})" for k, v in c["by_source"].items()) + ".")
+        if c.get("early_checkpoints"):
+            out.append("Early checkpoints (training updates: episodes, frames): " + ", ".join(
+                f"{u}: {v['episodes']}, {v['frames']}" for u, v in c["early_checkpoints"].items()) + ".")
         for name, dth in (c.get("deaths") or {}).items():
             line = f"Deaths, {name}: {dth['died']} of {dth['episodes']} episodes ({dth['died_share']:.1%})"
             if "steps_to_death" in dth:
@@ -513,6 +556,20 @@ def render(result: dict) -> str:
         if ac:
             out += ["", "### What the actions do", "", "| action | share of steps | changes the state |", "|---|---|---|"]
             out += [f"| {r['action']} | {_f(r['share'])} | {_f(r['changes_state'])} |" for r in ac]
+        cov = e.get("action_coverage")
+        if cov and len(cov["by_source"]) > 1:
+            names = list(cov["by_source"])
+            out += ["", "### Action coverage per source", "", "Steps with the action (and the share of those that changed the state).", "",
+                    "| action | " + " | ".join(names) + " |", "|---|" + "---|" * len(names)]
+            for action in ACTIONS:
+                cells = []
+                for n in names:
+                    v = cov["by_source"][n]["actions"][action]
+                    cells.append(f"{v['steps']} ({v['changes_state'] / v['steps']:.0%})" if v["steps"] else "0")
+                out.append(f"| {action} | " + " | ".join(cells) + " |")
+        if cov and cov["thin"]:
+            out += ["", f"Thin actions (fewer than {cov['min_steps']} steps in the whole file): {', '.join(cov['thin'])}. "
+                        "If they matter for the task (crafting, placing), add data that takes them before training."]
     return "\n".join(out) + "\n"
 
 

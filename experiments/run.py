@@ -63,34 +63,64 @@ def scaled_overrides(eval_name: str, scale: float) -> list[str]:
     return out
 
 
-def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str = "python") -> list[Job]:
-    """Collector runs per split: expert episodes with the diamond filter, then noised-expert and random ones."""
+COLLECTION_KINDS = ("expert", "early", "noised", "random")
+
+
+def collection_shares(c: dict, split: str) -> dict:
+    """Share of the split's frames per source. `share` is one mapping for all splits, or one per split."""
+    share = c["share"][split] if split in c["share"] else c["share"]
+    unknown = set(share) - set(COLLECTION_KINDS)
+    if unknown:
+        raise SystemExit(f"unknown collection sources {sorted(unknown)}; use {COLLECTION_KINDS}")
+    share = {k: float(share.get(k, 0.0)) for k in COLLECTION_KINDS}
+    if abs(sum(share.values()) - 1.0) > 1e-6:
+        raise SystemExit(f"collection shares must sum to 1, got {share} for {split}")
+    return share
+
+
+def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str = "python",
+                    early_checkpoints: list[str] | None = None) -> list[Job]:  # fmt: skip
+    """Collector runs per split: the final expert's diamond episodes first, then the others.
+
+    `early` runs act with earlier snapshots of the expert's training (the early share is split equally among
+    the snapshots, each with its own seeds); `noised` and `random` are optional fallbacks. The seeds of the
+    split's 1M: the first 500k for the expert, the rest equally among the other runs.
+    """
     c, st = spec["collection"], spec["settings"]
     jax_dir = ROOT / "purejaxql"
     script = "scripts/collect_craftax_episodes.py"
+    snapshots = list(early_checkpoints or []) or ["<early-checkpoint>"]
     jobs = []
     for split, dataset in (("train", st["train_dataset"]), ("val", st["val_dataset"]), ("test", st["test_dataset"])):
-        frames, share = int(c["frames"][split]), c["share"]
-        if abs(sum(share.values()) - 1.0) > 1e-6:
-            raise SystemExit(f"collection shares must sum to 1, got {dict(share)}")
-        target = {name: round(frames * float(share[name])) for name in ("expert", "noised", "random")}
+        frames, share = int(c["frames"][split]), collection_shares(c, split)
+        target = {name: round(frames * share[name]) for name in COLLECTION_KINDS}
         out = f"{home}/{dataset}.h5"
         start = int(c["seed_start"][split])
         base = [python, script, "--out", out]
-        steps = [
-            ("expert", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--target-frames", str(target["expert"]),
-                        "--seed-start", str(start), "--seed-end", str(start + 500_000)], target["expert"]),
-            ("noised", [*base, "--checkpoint", checkpoint or "<expert-checkpoint>", "--eps", str(c["noise_eps"]), "--no-require-diamond",
-                        "--target-frames", str(target["noised"]), "--seed-start", str(start + 500_000),
-                        "--seed-end", str(start + 750_000)], target["noised"]),
-            ("random", [*base, "--eps", "1.0", "--no-require-diamond", "--target-frames", str(target["random"]),
-                        "--seed-start", str(start + 750_000), "--seed-end", str(start + 1_000_000)], target["random"]),
-        ]  # fmt: skip
+        expert = checkpoint or "<expert-checkpoint>"
+        steps = [("expert", [*base, "--checkpoint", expert, "--target-frames", str(target["expert"])], target["expert"], (start, start + 500_000))]  # fmt: skip
+        others = []  # (name, command without seeds, frames)
+        if target["early"] > 0:
+            for k, snapshot in enumerate(snapshots):
+                part = target["early"] // len(snapshots) + (1 if k < target["early"] % len(snapshots) else 0)
+                others.append((f"early{k + 1}", [*base, "--checkpoint", snapshot, "--source", "early", "--no-require-diamond",
+                                                  "--target-frames", str(part)], part))  # fmt: skip
+        if target["noised"] > 0:
+            others.append(("noised", [*base, "--checkpoint", expert, "--eps", str(c["noise_eps"]), "--no-require-diamond",
+                                      "--target-frames", str(target["noised"])], target["noised"]))  # fmt: skip
+        if target["random"] > 0:
+            others.append(("random", [*base, "--eps", "1.0", "--no-require-diamond", "--target-frames", str(target["random"])], target["random"]))  # fmt: skip
+        width = 500_000 // max(1, len(others))
+        for k, (name, command, count) in enumerate(others):
+            lo = start + 500_000 + k * width
+            hi = start + 1_000_000 if k == len(others) - 1 else lo + width
+            steps.append((name, command, count, (lo, hi)))
         previous = None
-        for name, command, count in steps:
+        for name, command, count, (lo, hi) in steps:
             if count <= 0:
                 continue
-            # the three runs append to one file, so they run one after the other
+            command = [*command, "--seed-start", str(lo), "--seed-end", str(hi)]
+            # the runs append to one file, so they run one after the other
             jobs.append(Job(f"collect_{split}_{name}", "collect", command, after=[previous] if previous else [], cwd=jax_dir))
             previous = jobs[-1].name
         jobs[-1].output = None  # appending to an existing file: no single marker, rerun by hand if needed
@@ -98,14 +128,14 @@ def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str =
 
 
 def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: str = HOME_VAR, python: str = "python",
-               final: bool = False, checkpoint: str | None = None) -> list[Job]:  # fmt: skip
+               final: bool = False, checkpoint: str | None = None, early_checkpoints: list[str] | None = None) -> list[Job]:  # fmt: skip
     """All jobs of one experiment, in an order that respects their dependencies."""
     exp = spec["experiments"][exp_id]
     if exp.get("blocked"):
         raise SystemExit(f"{exp_id} is blocked: {exp['blocked']}")
     st = spec["settings"]
     if exp.get("collection"):
-        return collection_jobs(spec, home, checkpoint, python)
+        return collection_jobs(spec, home, checkpoint, python, early_checkpoints)
     train_ds, val_ds = st["train_dataset"], st["val_dataset"]
     task_ds = st["test_dataset"] if final else val_ds  # headline results use held-out test worlds
     split = "test" if final else "val"
@@ -288,6 +318,9 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--include-optional", action="store_true")
     parser.add_argument("--expert-checkpoint", help="the expert's .safetensors, for D1 (data collection)")
+    parser.add_argument("--early-checkpoint", action="append", default=[], metavar="SNAPSHOT",
+                        help="a snapshot of the expert's training (..._vmap0_u<updates>.safetensors) whose rollouts "
+                             "make the early share of D1; repeat it for several snapshots")  # fmt: skip
     args = parser.parse_args(argv)
 
     spec = load_spec(args.spec)
@@ -304,9 +337,12 @@ def main(argv=None):
 
     home = os.environ.get("HJEPA_HOME")
     jobs = build_jobs(spec, args.experiment, seeds, args.override, home or HOME_VAR, final=args.final,
-                      checkpoint=args.expert_checkpoint)  # fmt: skip
-    if args.command == "run" and args.experiment == "D1" and not args.expert_checkpoint:
-        raise SystemExit("D1 needs --expert-checkpoint")
+                      checkpoint=args.expert_checkpoint, early_checkpoints=args.early_checkpoint)  # fmt: skip
+    if args.command == "run" and args.experiment == "D1":
+        if not args.expert_checkpoint:
+            raise SystemExit("D1 needs --expert-checkpoint")
+        if not args.early_checkpoint and any(collection_shares(spec["collection"], s)["early"] > 0 for s in ("train", "val", "test")):
+            raise SystemExit("D1 needs at least one --early-checkpoint (a snapshot of the expert's training)")
     if args.command == "plan":
         for job in jobs:
             print(f"[{job.kind}] {job.name}" + (f"  after {', '.join(job.after)}" if job.after else ""))

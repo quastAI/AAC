@@ -199,3 +199,26 @@ def test_provenance_names_the_checkpoint_and_its_training_state(collect, tmp_pat
     record = collect.provenance(argparse.Namespace(checkpoint=str(checkpoint), eps=0.0))
     assert record["checkpoint"]["sha256"] == hashlib.sha256(b"weights").hexdigest()
     assert record["checkpoint"]["training"]["n_updates"] == 381
+
+
+def test_snapshot_names_give_the_config_and_the_update_count(collect):
+    final, snap = "m/pqn_rnn_Craftax-Classic-Symbolic-v1_seed0_vmap0.safetensors", "m/pqn_rnn_X_seed0_vmap0_u0000381.safetensors"
+    assert collect.config_path_of(final).endswith("_seed0_config.yaml")
+    assert collect.config_path_of(snap) == "m/pqn_rnn_X_seed0_config.yaml"
+    assert collect.policy_updates_of(snap) == 381
+    assert collect.policy_updates_of(final) == -1 and collect.policy_updates_of(None) == -1
+    with pytest.raises(ValueError, match="--config"):
+        collect.config_path_of("m/expert.safetensors")
+
+
+def test_source_label_must_match_the_noise(collect, monkeypatch, tmp_path):
+    with pytest.raises(SystemExit, match="does not match"):
+        run(collect, monkeypatch, tmp_path / "s.h5", source="early", num_envs=2)  # eps 1.0 is uniform random
+    with pytest.raises(SystemExit, match="does not match"):
+        run(collect, monkeypatch, tmp_path / "s.h5", source="expert", num_envs=2)
+
+
+def test_policy_updates_column_is_minus_one_without_a_snapshot(collect, monkeypatch, tmp_path):
+    f = run(collect, monkeypatch, tmp_path / "u.h5", num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
+    assert set(f["policy_updates"][:].tolist()) == {-1} and set(f["source"][:].tolist()) == {2}
+    assert f["policy_updates"].dtype == np.int32

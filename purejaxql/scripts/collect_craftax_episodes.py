@@ -28,7 +28,10 @@ Columns (N = total frames):
     step_idx      (N,)            int32
     ep_idx        (N,)            int32
     seed          (N,)            int64    world seed of the episode
-    source        (N,)            int8     0 expert, 1 noised expert, 2 uniform random
+    source        (N,)            int8     0 expert (final checkpoint, diamond episodes), 1 noised expert,
+                                           2 uniform random, 3 early checkpoint (a policy of an earlier snapshot)
+    policy_updates (N,)           int32    training updates of the checkpoint that acted (the `_u<updates>` of a
+                                           snapshot name), -1 when not known (uniform random, or a final policy file)
 
 `full_state` lets the planning environment start from any frame. Episodes are also
 replayable from `seed` and the action sequence. With
@@ -79,15 +82,33 @@ jax.config.update("jax_threefry_partitionable", False)
 ENV_NAME = "Craftax-Classic-Symbolic-v1"
 DIAMOND = Achievement.COLLECT_DIAMOND.value
 NUM_ACHIEVEMENTS = len(Achievement)
-SOURCE_EXPERT, SOURCE_NOISED, SOURCE_RANDOM = 0, 1, 2
+SOURCE_EXPERT, SOURCE_NOISED, SOURCE_RANDOM, SOURCE_EARLY = 0, 1, 2, 3
+SOURCES = {"expert": SOURCE_EXPERT, "noised": SOURCE_NOISED, "random": SOURCE_RANDOM, "early": SOURCE_EARLY}
 ROLLOUT_CHUNK = 250
 REPLAY_CHUNK = 500
 
 
+CHECKPOINT_NAME = re.compile(r"_vmap\d+(?:_u(?P<updates>\d+))?\.safetensors$")
+
+
+def config_path_of(checkpoint):
+    """`<name>_config.yaml` of a final policy file or a snapshot (`..._vmap0.safetensors`, `..._vmap0_u0000381.safetensors`)."""
+    path = str(checkpoint)
+    if not CHECKPOINT_NAME.search(path):
+        raise ValueError(f"cannot derive the config of {path}; pass --config")
+    return CHECKPOINT_NAME.sub("_config.yaml", path)
+
+
+def policy_updates_of(checkpoint):
+    """Training updates of a snapshot (`_u<updates>` in its name); -1 for a final policy file or no checkpoint."""
+    match = CHECKPOINT_NAME.search(str(checkpoint)) if checkpoint else None
+    return int(match.group("updates")) if match and match.group("updates") else -1
+
+
 def load_expert(checkpoint, config_path, action_dim):
-    """Return (network, variables) for a checkpoint written by pqn_rnn_craftax.py."""
+    """Return (network, variables) for a checkpoint written by pqn_rnn_craftax.py (final file or snapshot)."""
     if config_path is None:
-        config_path = re.sub(r"_vmap\d+\.safetensors$", "_config.yaml", str(checkpoint))
+        config_path = config_path_of(checkpoint)
     cfg = OmegaConf.load(config_path)
     if cfg["ENV_NAME"] != ENV_NAME:
         raise ValueError(f"Checkpoint was trained on {cfg['ENV_NAME']}, expected {ENV_NAME}.")
@@ -418,7 +439,7 @@ def provenance(args):
     return record
 
 
-def build_episode(seed, actions, rendered, source):
+def build_episode(seed, actions, rendered, source, policy_updates=-1):
     length = len(actions)
     action = np.full((length + 1, 1), np.nan, dtype=np.float32)
     action[:length, 0] = actions
@@ -439,6 +460,7 @@ def build_episode(seed, actions, rendered, source):
         step_idx=np.arange(length + 1, dtype=np.int32),
         seed=np.full(length + 1, seed, dtype=np.int64),
         source=np.full(length + 1, source, dtype=np.int8),
+        policy_updates=np.full(length + 1, policy_updates, dtype=np.int32),
     )  # fmt: skip
 
 
@@ -471,6 +493,10 @@ def parse_args():
                    help="stop before this seed (exclusive): the end of the range of this split and source, "
                         "so a low diamond rate cannot run into the seeds of another split")  # fmt: skip
     p.add_argument("--eps", type=float, default=0.0, help="epsilon-greedy noise: 0 expert, 1 uniform random")
+    p.add_argument("--source", choices=list(SOURCES), default=None,
+                   help="label of the episodes (the `source` column). Default from --eps: 0 expert, 1 noised expert, "
+                        "uniform random. `early` marks the rollouts of an earlier snapshot (--checkpoint .._u<updates>.safetensors), "
+                        "usually with --eps 0 --no-require-diamond")  # fmt: skip
     p.add_argument("--num-envs", type=int, default=64, help="episodes simulated in parallel")
     p.add_argument("--max-steps", type=int, default=10000, help="episode horizon (Craftax-Classic limit is 10000)")
     p.add_argument("--require-diamond", action=argparse.BooleanOptionalAction, default=True)
@@ -488,7 +514,12 @@ def main():
         raise SystemExit("give --num-episodes or --target-frames")
     if args.eps < 1.0 and args.checkpoint is None:
         raise SystemExit("--checkpoint is required unless --eps 1.0")
-    source = SOURCE_EXPERT if args.eps == 0 else SOURCE_RANDOM if args.eps >= 1 else SOURCE_NOISED
+    default = "expert" if args.eps == 0 else "random" if args.eps >= 1 else "noised"
+    name = args.source or default
+    if (name == "random") != (args.eps >= 1.0) or (name == "expert" and args.eps != 0):
+        raise SystemExit(f"--source {name} does not match --eps {args.eps}")
+    source = SOURCES[name]
+    policy_updates = policy_updates_of(args.checkpoint)
 
     env = make_craftax_env_from_name(ENV_NAME, auto_reset=False)
     env_params = env.default_params
@@ -499,7 +530,7 @@ def main():
     rollout = make_rollout(env, env_params, network, variables, args.eps, args.num_envs)
     replay = make_replay(env, env_params)
     writer = EpisodeWriter(args.out)
-    run_index = writer.start_run(provenance(args))
+    run_index = writer.start_run(dict(provenance(args), source=name))
     skip, seed, kept, tried, t0 = writer.existing_seeds(), args.seed_start, 0, 0, time.time()
 
     exhausted, frames = False, 0
@@ -528,7 +559,7 @@ def main():
             actions = result["actions"][:length, i].astype(np.int32)
             rendered = replay(seeds[i], actions)
             check_replay(seeds[i], length, rendered, result, i)
-            writer.append(build_episode(seeds[i], actions, rendered, source))
+            writer.append(build_episode(seeds[i], actions, rendered, source, policy_updates))
             kept += 1
             frames += length + 1  # L actions, L + 1 frames
         print(
