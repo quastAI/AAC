@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 
 # Run outputs, data and checkpoints (published separately, see README)
+/data/
 outputs/
 multirun/
 wandb/
