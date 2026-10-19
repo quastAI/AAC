@@ -73,7 +73,7 @@ AAC/
   H-JEPA/        world models, planning, Craftax environment (PyTorch)
   purejaxql/     PQN-RNN expert and episode collector (JAX)
   papers/        reference papers (PDFs are local, see papers/README.md)
-  analysis/      dataset statistics, run comparison, dataset figure plan (numpy and h5py only)
+  analysis/      dataset statistics and run comparison (numpy and h5py only)
   notebooks/     RunPod notebook: expert, data collection, D0, upload
   experiments/   job specs (drafts) and a runner (print, local, SLURM)
   environment/   install lists and reference freezes of the two environments
@@ -192,7 +192,7 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 
 About 15 A100-hours per month (~180 in total). One seed for exploration, three seeds only for headline results. We time one training run and one planning evaluation first, then size the runs from those numbers.
 
-1. Expert, data collection, dataset analysis (D0) and the dataset figures ([analysis/README.md](analysis/README.md))
+1. Expert, data collection, dataset analysis (D0) and the dataset figures
 2. Flat LeWM baseline: probes, planning protocols
 3. From there step by step (hierarchy, variable horizons, learned jumps), in an order decided from the LeWM results
 4. Final three-seed runs and write-up
