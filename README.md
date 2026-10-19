@@ -64,21 +64,6 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 All achievements count, including those a random agent gets by itself (wake up, drink, sapling): the random baseline on the same tasks is the reference. Protocol A uses offsets with progress as its main task set, reported per offset. Every reported success number comes with the planner compute used. The planner is goal-conditioned and reward-free, so results are phrased as "reaches X% of the expert's achievement rate given goal frames", not "beats the expert".
 
-## Experiments
-
-| ID | RQ | Experiment | Status |
-|---|---|---|---|
-| E1 | 1 | LeWM vs HWM vs H-JEPA at matched depth, protocols A and B | planned |
-| E2 | 1 | Depth: 2 vs 3 levels, strides derived from the data (event durations, frequency gap) | planned |
-| E3 | 1, 2 | Rollout loss on/off, set per model (not per level), on H-JEPA and LeWM | planned |
-| E4 | 2 | Per-level probes, frequency gap, cost geometry | planned |
-| E5 | 1, 2 | IDM on/off, set per model (not per level), reported with collapse diagnostics (within-clip variance share, effective rank, action sensitivity) and planning. Run on LeWM first, then on H-JEPA at the chosen depth. HWM follows the H-JEPA outcome (run it too if budget allows). One seed for the ablation, three seeds only for the setting used in the headline results. | planned |
-| E6 | 1 | Cost-only: level-1 planning with native vs projected upper-level cost (evaluation only, optional) | optional |
-| E7 | 3 | Variable band vs fixed stride, including band width | planned |
-| E8 | 4 | Learned jumps vs fixed vs band, including the jump constraint type | planned |
-
-Not doing: compute-Pareto sweeps, stagewise data specialisation, detachment grids, DROID, multi-GPU SIGReg sharding, a hand-crafted symbolic oracle, clustering and obs-change boundary baselines, and boundary-gradient and training-schedule ablations.
-
 ## Repository layout
 
 One repository holds all code. [H-JEPA](H-JEPA) and [purejaxql](purejaxql) were imported from our forks with `git subtree` (history kept, no submodules), so a result is traceable to one commit and the paper release is one tag.
