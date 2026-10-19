@@ -471,7 +471,7 @@ def test_hierarchical_cem_plans_codes_and_durations():
 
 
 def test_projected_cost_planning_runs_with_vq_levels():
-    """E6: level 1 plans in the level-2 latent; level 2 is skipped."""
+    """Cost only: level 1 plans in the level-2 latent; level 2 is skipped."""
     import planning_eval
     from eval_config_utils import _build_policy_plan_config
     from hierarchical_solver import build_hierarchical_solver

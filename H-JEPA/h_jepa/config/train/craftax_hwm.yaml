@@ -2,7 +2,7 @@
 # The depth is a setting: `num_levels=1` is the flat model (LeWM), 2 to 4 add levels (the blocks of the
 # levels above num_levels are ignored). The upper levels quantize their latent actions (VQ), so the
 # planner searches discrete codes at every level. Strides (`levelN.stride`) are placeholders until
-# they are derived from the data (D0 coverage, E2): `num_levels=3 level2.stride=6 level3.stride=5`.
+# they are derived from the data (D0 coverage): `num_levels=3 level2.stride=6 level3.stride=5`.
 defaults:
 - base/craftax
 - _self_
@@ -28,7 +28,7 @@ level2:
   lr: 1.0e-05
   stride: 4
   window_size: 1
-  idm_coeff: 0.1  # cross-entropy on the code of each chunk (E5: set per model)
+  idm_coeff: 0.1  # cross-entropy on the code of each chunk (set per model)
   idm:
     hidden_dim: 256
   wm:
@@ -54,7 +54,7 @@ level2:
       decay: 0.99
       commitment: 0.25
       dead_threshold: 1.0
-      # Band of step durations (E7): the action token then also carries k.
+      # Band of step durations: the action token then also carries k.
       # Needs action_encoder.max_chunk >= max(durations) (checked).
       # durations: [2, 3, 4, 5, 6, 7, 8]
       # default_duration: ${level2.stride}
@@ -80,7 +80,7 @@ level3:
   lr: 1.0e-05
   stride: 4
   window_size: 1
-  idm_coeff: 0.1  # cross-entropy on the code of each chunk (E5: set per model)
+  idm_coeff: 0.1  # cross-entropy on the code of each chunk (set per model)
   idm:
     hidden_dim: 256
   wm:
@@ -106,7 +106,7 @@ level3:
       decay: 0.99
       commitment: 0.25
       dead_threshold: 1.0
-      # Band of step durations (E7): the action token then also carries k.
+      # Band of step durations: the action token then also carries k.
       # Needs action_encoder.max_chunk >= max(durations) (checked).
       # durations: [2, 3, 4, 5, 6, 7, 8]
       # default_duration: ${level3.stride}
@@ -132,7 +132,7 @@ level4:
   lr: 1.0e-05
   stride: 4
   window_size: 1
-  idm_coeff: 0.1  # cross-entropy on the code of each chunk (E5: set per model)
+  idm_coeff: 0.1  # cross-entropy on the code of each chunk (set per model)
   idm:
     hidden_dim: 256
   wm:
@@ -158,7 +158,7 @@ level4:
       decay: 0.99
       commitment: 0.25
       dead_threshold: 1.0
-      # Band of step durations (E7): the action token then also carries k.
+      # Band of step durations: the action token then also carries k.
       # Needs action_encoder.max_chunk >= max(durations) (checked).
       # durations: [2, 3, 4, 5, 6, 7, 8]
       # default_duration: ${level4.stride}

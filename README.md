@@ -32,10 +32,10 @@ pixels o_t ──ViT, patch 7──► z1_t ──► predictor 1 ──► z1_t
 
 - **Levels.** Level 1 encodes a 63×63 frame with a ViT (patch 7, one patch per tile). Each level above encodes one latent of the level below every `stride` steps (`window_size` 1; a window of several latents is possible): with a latent MLP in H-JEPA, with the identity in HWM (one shared latent space). Its actions are the pooled chunk of `stride` lower-level actions. LeWM is level 1 alone, the same code with `num_levels: 1`.
 - **Predictor.** A causal transformer over a history of 3 latents, conditioned on the embedded action token, predicts the next latent.
-- **Action tokens.** Level 1: one-hot of the 17 actions, embedded by one linear layer. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (band of horizons, E7).
+- **Action tokens.** Level 1: one-hot of the 17 actions, embedded by one linear layer. Levels above: a sequence encoder pools the chunk of lower-level actions, and a factorized VQ codebook (2 groups of 64 codes) turns it into code indices. Optionally the token also carries the step duration k (a band of horizons).
 - **Losses per level.** Next-latent MSE, SIGReg on the latents (not above level 1 in HWM), an inverse-dynamics cross-entropy (action index at level 1, code indices above), and the VQ commitment loss above level 1.
 - **Planning.** Top-down CEM over the discrete tokens of every level, forward passes only. The top level minimises the latent distance to the goal frame, its predicted latents become the subgoals of the level below, and level 1 outputs environment actions (receding horizon).
-- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (trust regions, learned actors); for now the upper-level CEM mixes in code sequences of the training data. The diagnostics for it exist from the start (see Diagnostics): plans replayed in the simulator against the model's prediction and against random plans, success against planner compute (experiment C1), and the distance of predicted latents to the data.
+- **Planner design.** Candidate tokens are always valid actions, but a chain of them can still leave the data support and the planner can exploit model errors there. The planner is still an open decision (trust regions, learned actors); for now the upper-level CEM mixes in code sequences of the training data. The diagnostics for it exist from the start (see Diagnostics): plans replayed in the simulator against the model's prediction and against random plans, success against planner compute, and the distance of predicted latents to the data.
 
 ## Setup
 
@@ -73,9 +73,9 @@ AAC/
   H-JEPA/        world models, planning, Craftax environment (PyTorch)
   purejaxql/     PQN-RNN expert and episode collector (JAX)
   papers/        reference papers (PDFs are local, see papers/README.md)
-  analysis/      dataset statistics and run comparison (numpy and h5py only)
+  analysis/      dataset statistics, run comparison, dataset figure plan (numpy and h5py only)
   notebooks/     RunPod notebook: expert, data collection, D0, upload
-  experiments/   the experiment table as a spec, and a runner (print, local, SLURM)
+  experiments/   job specs (drafts) and a runner (print, local, SLURM)
   environment/   install lists and reference freezes of the two environments
   CLAUDE.md      working notes for Claude Code
 ```
@@ -151,24 +151,24 @@ python eval.py --config-name craftax_plan policy=random load_eval_trajs_path=tas
 python eval.py --config-name craftax_plan policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...                   # any depth; craftax_l2_project for the projected cost
 python probe_eval.py --run <run dir> --train-dataset X --val-dataset Y                                                         # probes of every level
 python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan                                                  # step and solve timing (overrides: num_levels=3)
-python ../../experiments/run.py plan E1                                                                                       # the whole experiment
+python ../../experiments/run.py plan E1                                                                                       # print the commands of one job group
 ```
 
-Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`: one training config per model type (`craftax_hjepa`, `craftax_hwm`) and one planning config (`craftax_plan`) for every depth, set with `num_levels` and `levelN.stride` (the blocks of levels above `num_levels` are ignored; a level below the top plans one upper step, so its horizon is the stride of the level above); hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Experiments: `experiments/experiments.yaml` lists E1-E8 (E7, E8 blocked: not built), a compute-scaling probe C1, the dataset analysis D0 and the data collection plan D1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
+Task modes (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress), `achievements` (goal = the d-th next unlock), `episode` (protocol B). One task per world seed, from expert episodes only (`source == 0`; `--sources` or `--all-sources` override). Configs are in `h_jepa/config/{train,eval}`: one training config per model type (`craftax_hjepa`, `craftax_hwm`) and one planning config (`craftax_plan`) for every depth, set with `num_levels` and `levelN.stride` (the blocks of levels above `num_levels` are ignored; a level below the top plans one upper step, so its horizon is the stride of the level above); hyperparameters are the Push-T ones until timed on Craftax. Dataset names `craftax_expert_train` / `craftax_expert_val` are placeholders for the collector output in `$HJEPA_HOME`. Job specs: `experiments/experiments.yaml` holds drafts of the training and planning job groups (to be set after the dataset analysis and the LeWM baseline), the dataset analysis D0 and the data collection plan D1; `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`).
 
 ### Design notes
 
 - **Level-1 actions.** One-hot (`data.OneHotColumn`, `level1.wm.num_actions: 17`); NaN becomes zeros. The normalizer artifact holds no action statistics and records `num_actions`, so evaluation does not de-normalize action indices.
 - **Upper-level actions.** `levelN.action_encoder.vq` (`h_jepa/models/vq.py`): EMA codebooks, commitment loss, dead codes re-seeded, straight-through gradient. `groups` independent codebooks of `num_codes` codes (a code is a tuple of indices). Without the `vq:` block the latent actions are continuous (gradient solver).
-- **Step duration k.** `vq.durations: [..]` makes the token `[code vectors | one-hot(k)]` and gives the IDM k as input. k is explicit (`action_duration`, (B, T)) and defaults to the stride. It is not derived from the padding mask, which mislabels chunks cut at an episode end. Not built (E7): the irregular-spacing sampler, passing `action_duration` through the hierarchical encode, the hierarchical solver's fixed-stride horizon coupling.
-- **IDM.** On at every level (`idm_coeff: 0.1`, placeholder; E5 sets it per model). Cross-entropy over the action index (level 1, one slot per frameskip step) or the code indices (above, one classification per group). Logs `idm_accuracy_loss_levelN` (reference: the best constant guess, at least 1/17 and 1/64).
+- **Step duration k.** `vq.durations: [..]` makes the token `[code vectors | one-hot(k)]` and gives the IDM k as input. k is explicit (`action_duration`, (B, T)) and defaults to the stride. It is not derived from the padding mask, which mislabels chunks cut at an episode end. Not built: the irregular-spacing sampler, passing `action_duration` through the hierarchical encode, the hierarchical solver's fixed-stride horizon coupling.
+- **IDM.** On at every level (`idm_coeff: 0.1`, placeholder; to be set per model). Cross-entropy over the action index (level 1, one slot per frameskip step) or the code indices (above, one classification per group). Logs `idm_accuracy_loss_levelN` (reference: the best constant guess, at least 1/17 and 1/64).
 - **Loss routing (two levels).** Nothing is detached between levels, so the level-2 losses also train level 1: the losses on the level-2 latents (prediction, SIGReg, IDM) reach the ViT through z1, and the prediction and commitment losses of the VQ reach the level-1 action embedder through the chunk encoder. The codebook follows by EMA only; the IDM code target carries no gradient. Clips of uniform random episodes (`upper_loss_exclude_sources`) skip every level-2 term. Gradient clipping is per level (`grad_clip_per_level`), so a large level-2 gradient does not shrink the level-1 step. As in the original recipe nothing is detached; a switch that detaches level 1 from level 2 is not built (candidate ablation).
 
   ![Which loss trains which module](docs/loss_routing.svg)
 
 - **Collapse monitors.** `vq_perplexity_loss_levelN` (effective codes in use, 1 = collapsed) and `vq_usage_loss_levelN`. The first validation pass shows perplexity 1: the codebook is initialised on the first training forward. Chunks cut by the end of a clip (zero-padded) get a code but stay out of the codebook statistics, the re-seeding and the commitment loss. Codes are re-seeded the moment their count falls below `dead_threshold` (a per-batch count, so it scales with the batch size); the health report shows the re-seed rate (`VQ_CODE_CHURN`). The nearest-code search runs in float32 and the action encoder has no dropout.
 - **Planner.** `stable_worldmodel.solver.CategoricalCEMSolver`, same interface as `GradientSolver`, logs `solve_records` with `backward: false`. Upper levels mix whole code sequences of the training data into every CEM iteration (`proposal_fraction`, `code_bank.py`: encode clips of the non-random training episodes through the hierarchy, cut windows of the planning horizon; `planning_proposals` in `craftax_plan`), so candidates stay on the data support and keep the joint structure of codes; learned actors replace this later. Level 1 plans `action_block` slots of 17 actions; level N plans one slot per code group (plus one for k) and passes the code vectors to the model (`get_action_spec`); levels above 1 need `action_block: 1`. `allowed_durations`: `default` (the safe default: k pinned to the stride), `all`, or a list.
-- **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride comes from the data (E2). The level-1 horizon must lie in [stride, 2 × stride) (checked); horizons are fixed over the episode (`horizon_schedule: fixed`).
+- **Placeholders.** Stride 4, 2×64 codes of dimension 8, horizons, sample counts, eval offset and budget. The stride is set after the dataset analysis. The level-1 horizon must lie in [stride, 2 × stride) (checked); horizons are fixed over the episode (`horizon_schedule: fixed`).
 
 ### Diagnostics
 
@@ -190,20 +190,19 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 
 ## Compute and roadmap
 
-About 15 A100-hours per month (~180 in total). One seed for exploration, three seeds only for headline results. We time one training run and one planning evaluation first, then size the experiments from those numbers.
+About 15 A100-hours per month (~180 in total). One seed for exploration, three seeds only for headline results. We time one training run and one planning evaluation first, then size the runs from those numbers.
 
-1. Expert, data collection, D0 (frequency gap, time scale ladder, clip counts)
-2. Flat LeWM, probes, planning protocols
-3. HWM and H-JEPA (2 and 3 levels), E1–E5
-4. Variable band and learned jumps (E7, E8)
-5. Final three-seed runs and write-up
+1. Expert, data collection, dataset analysis (D0) and the dataset figures ([analysis/README.md](analysis/README.md))
+2. Flat LeWM baseline: probes, planning protocols
+3. From there step by step (hierarchy, variable horizons, learned jumps), in an order decided from the LeWM results
+4. Final three-seed runs and write-up
 
 ## Open decisions
 
 - Planner: trust region, learned actors (discrete CEM with data-sequence proposals until decided)
 - Numbers to set from the data analysis and the timing run: the offsets and budgets of the task sets, the episode counts, the strides
 - Goal sequence for protocol B (the final goal only is built; key states need goal switching in the policy)
-- Band ranges for E7, and whether the planner may choose k freely
+- Band ranges for variable horizons, and whether the planner may choose k freely
 
 ## References
 

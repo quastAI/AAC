@@ -667,7 +667,7 @@ def timescale_ladder(d: Data, spectral: dict, masks: dict) -> dict | None:
     the median (the fixed stride at which a level sees about one event per step), p10 to p90 (a band), the CV, the
     clips left at a top step equal to the p90, and the spectral periods of its members as a cross-check. The cumulative
     step of a level boundary lies between the medians of two clusters. A reading of the data, not the best strides:
-    E2 and E7 decide. Entities without events (the daylight, a clock) are listed apart.
+    later experiments decide. Entities without events (the daylight, a clock) are listed apart.
     """
     entities = spectral["entities"]
     window = spectral["primary_window"]
@@ -966,7 +966,7 @@ def _render_ladder(ladder: dict) -> list[str]:
            f"{tsc.CLUSTER_RATIO:g}x apart (heuristic). The spectral period cannot order the slow end (staircases, walks and slow clocks are all "
            "limited by the window and look alike), so it is shown as a cross-check. Per cluster, from the events of its entities together: the "
            "median inter-event time (a fixed stride at which a level sees about one event per step) and p10 to p90 (a band). The cumulative step of a "
-           "level boundary lies between the medians of two clusters. The numbers are candidates; E2 (strides, depth) and E7 (bands) decide. "
+           "level boundary lies between the medians of two clusters. The numbers are candidates; later experiments (strides, depth, bands) decide. "
            f"At most {ladder['levels_upper_bound']} levels have distinct content.", "",
            "| cluster | entities | median gap | p10 to p90 | CV | events | spectral period of the members | clips at T = p90 (independent) |",
            "|---|---|---|---|---|---|---|---|"]
@@ -987,7 +987,7 @@ def _render_ladder(ladder: dict) -> list[str]:
             f"{'above' if v['ci_above_threshold'] else 'not above'} it; the slowest spectral cluster "
             f"{'contains' if v['slow_end_has_progress'] else 'does not contain'} inventory or achievements (what the goal test depends on). "
             "A large gap is close to guaranteed here (staircases against walking), so a pass is weak evidence and a gap below the threshold "
-            "is the informative outcome; whether a learned hierarchy helps is E1."]
+            "is the informative outcome; whether a learned hierarchy helps is a question for the models."]
     return out
 
 

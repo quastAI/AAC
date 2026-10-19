@@ -73,7 +73,7 @@ planning_eval:
   run_on_train_end: true
   every_n_epochs: 0  # also run the planning eval every N epochs (0 = end of training only)
 final_probing_decoding_eval:
-  enabled: false  # needs a craftax probing config (E4)
+  enabled: false  # needs a craftax probing config
   config_name: ???
   output_subdir: final_probing_decoding_eval
 health:  # collapse and failure monitor, see health.py and training_monitor.py
@@ -93,7 +93,7 @@ health:  # collapse and failure monitor, see health.py and training_monitor.py
   thresholds: {}  # overrides of health.Thresholds
 level1:
   lr: 5.0e-05
-  idm_coeff: 0.1  # cross-entropy on the action(s) of each step (E5: set per model)
+  idm_coeff: 0.1  # cross-entropy on the action(s) of each step (set per model)
   idm:
     hidden_dim: 256
   wm:

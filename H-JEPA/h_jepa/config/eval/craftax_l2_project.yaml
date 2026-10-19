@@ -1,4 +1,4 @@
-# Craftax-Classic: level-1 planning with the cost measured in the level-2 latent (E6, cost-only
+# Craftax-Classic: level-1 planning with the cost measured in the level-2 latent (cost-only
 # ablation). Level 2 has horizon 1, so its solve is skipped and the level-1 predictions are encoded
 # up to level 2 and compared with the real goal there. CEM over discrete
 # actions at level 1 and over VQ codes above. Sample counts and horizons are placeholders;
