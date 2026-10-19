@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Train split: 2.0M frames, 3\,529 episodes, world seeds 0 to 875\,292.}
+\label{tab:data-train}
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Policy & Train steps & Share & Length & Diamond & Return & Achiev. & Death \\
+\midrule
+Snapshot 1 & 50M & 7.5\% & 198 & 0.0\% & 6.83 & 7.73 & 100\% \\
+Snapshot 2 & 150M & 7.5\% & 375 & 0.0\% & 16.08 & 16.98 & 100\% \\
+Snapshot 3 & 300M & 7.5\% & 459 & 0.0\% & 16.85 & 17.75 & 100\% \\
+Snapshot 4 & 400M & 7.5\% & 513 & 0.3\% & 17.79 & 18.69 & 100\% \\
+Final expert & 1000M & 70.0\% & 800 & 100\% & 20.60 & 21.10 & 46.7\% \\
+\midrule
+All & --- & 100\% & 567 & 49.6\% & 16.54 & 17.24 & 73.6\% \\
+\bottomrule
+\end{tabular}
+\end{table}

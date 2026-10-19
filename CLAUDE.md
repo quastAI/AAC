@@ -6,7 +6,7 @@ Hierarchical JEPA world models (LeWM, HWM, H-JEPA) on Craftax-Classic, planning 
 
 - `H-JEPA/` PyTorch: world models (`h_jepa/`), planning and environments (`stable_worldmodel/`), tests (`tests/`). Imported from a fork with `git subtree`.
 - `purejaxql/` JAX: PQN-RNN expert and the episode collector (`scripts/collect_craftax_episodes.py`). Also a subtree.
-- `analysis/` (numpy, h5py): `dataset_stats.py` (D0), `timescales.py` (its spectral and event estimators), `compare_runs.py`. `experiments/`: `experiments.yaml` (job specs: drafts of the training and planning jobs, D0, D1) and `run.py`. `environment/`: install lists, reference freezes. `notebooks/`: the RunPod notebook (expert, D1, D0, Hub upload) (see `environment/README.md`, section RunPod). `.github/workflows/tests.yml` is untested (written without runner access).
+- `analysis/` (numpy, h5py): `dataset_stats.py` (D0), `timescales.py` (its spectral and event estimators), `compare_runs.py`, `dataset_tables.py` (the per-split tables of the paper's appendix with a provenance JSON). `experiments/`: `experiments.yaml` (job specs: drafts of the training and planning jobs, D0, D1) and `run.py`. `environment/`: install lists, reference freezes. `notebooks/`: the RunPod notebook (expert, D1, D0, Hub upload) (see `environment/README.md`, section RunPod). `.github/workflows/tests.yml` is untested (written without runner access).
 - `papers/` PDFs are gitignored. `Craftax/` and `stable-worldmodel-craftax/` are read-only reference clones, gitignored, never edit them.
 - The two code folders only share the HDF5 episode file (column table in the README).
 

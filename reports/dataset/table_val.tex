@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Validation split: 151K frames, 262 episodes, world seeds 1\,000\,001 to 1\,875\,023.}
+\label{tab:data-val}
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Policy & Train steps & Share & Length & Diamond & Return & Achiev. & Death \\
+\midrule
+Snapshot 1 & 50M & 7.5\% & 202 & 0.0\% & 6.96 & 7.86 & 100\% \\
+Snapshot 2 & 150M & 7.5\% & 363 & 0.0\% & 16.07 & 16.97 & 100\% \\
+Snapshot 3 & 300M & 7.8\% & 513 & 0.0\% & 16.88 & 17.78 & 100\% \\
+Snapshot 4 & 400M & 7.5\% & 471 & 0.0\% & 17.85 & 18.75 & 100\% \\
+Final expert & 1000M & 69.7\% & 823 & 100\% & 20.65 & 21.15 & 46.1\% \\
+\midrule
+All & --- & 100\% & 576 & 48.9\% & 16.60 & 17.30 & 73.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
