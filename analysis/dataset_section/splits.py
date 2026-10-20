@@ -111,24 +111,35 @@ def percent(x, digits=1) -> str:
     return "100\\%" if x == 1 else f"{100 * x:.{digits}f}\\%"
 
 
-def human(n: int) -> str:
-    return f"{n / 1e6:.1f}M" if n >= 1_000_000 else f"{n / 1e3:.0f}K"
+def thousands(n: int) -> str:
+    return f"{n:,}".replace(",", "\\,")
 
 
-def latex_table(label: str, rows: list[dict], ep: dict, caption: str) -> str:
-    frames, episodes = rows[-1]["frames"], rows[-1]["episodes"]
-    thousands = lambda n: f"{n:,}".replace(",", "\\,")  # noqa: E731
-    seeds = f"world seeds {thousands(int(ep['seed'].min()))} to {thousands(int(ep['seed'].max()))}"
-    cap = f"{caption}: {human(frames)} frames, {thousands(episodes)} episodes, {seeds}."
+COLUMNS_NOTE = (
+    "\\textbf{{Columns.}} Policy: the policy that collected the episodes. Train steps: environment steps of PQN-RNN training at which "
+    "the {taken} was taken. Share: fraction of frames. Episodes: number of episodes. Length: mean frames per episode. Diamond: fraction of "
+    "episodes that collect a diamond. Return: mean undiscounted episode return. Achiev.: mean number of distinct achievements (of 22) "
+    "unlocked per episode. Death: fraction of episodes that end in death; the remaining {remaining} end 500 steps after the diamond."
+)
+TABLES = {  # per split: caption and the note under the table (the text of the paper's appendix)
+    "train": ("Composition and statistics of the training dataset by data-collection policy.", COLUMNS_NOTE.format(taken="snapshot", remaining="expert episodes")),
+    "val": ("Composition and statistics of the validation dataset by data-collection policy.", COLUMNS_NOTE.format(taken="snapshot", remaining="expert episodes")),
+    "test": ("Statistics of the test dataset, collected with the final expert only.", COLUMNS_NOTE.format(taken="policy", remaining="episodes")),
+}  # fmt: skip
+
+
+def latex_table(label: str, rows: list[dict]) -> str:
+    default = (f"Statistics of the {label} dataset by data-collection policy.", COLUMNS_NOTE.format(taken="policy", remaining="episodes"))
+    caption, note = TABLES.get(label, default)
     lines = [
-        "\\begin{table}[t]",
+        "\\begin{table}[H]",
         "\\centering",
-        f"\\caption{{{cap}}}",
+        f"\\caption{{{caption}}}",
         f"\\label{{tab:data-{label}}}",
         "\\small",
-        "\\begin{tabular}{lrrrrrrr}",
+        "\\begin{tabular}{lrrrrrrrr}",
         "\\toprule",
-        "Policy & Train steps & Share & Length & Diamond & Return & Achiev. & Death \\\\",
+        "Policy & Train steps & Share & Episodes & Length & Diamond & Return & Achiev. & Death \\\\",
         "\\midrule",
     ]
     body = [r for r in rows if r["policy"] != "All"]
@@ -136,7 +147,8 @@ def latex_table(label: str, rows: list[dict], ep: dict, caption: str) -> str:
         lines.append(table_row(r))
     if len(body) > 1:
         lines += ["\\midrule", table_row(rows[-1])]
-    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
+    lines += ["\\bottomrule", "\\end{tabular}", "", "\\vspace{4pt}", "\\begin{minipage}{\\linewidth}",
+              "\\footnotesize\\raggedright", note, "\\end{minipage}", "\\end{table}"]  # fmt: skip
     return "\n".join(lines) + "\n"
 
 
@@ -145,20 +157,14 @@ def table_row(r: dict) -> str:
         r["policy"],
         millions(r["train_steps"]),
         percent(r["share"]),
+        thousands(r["episodes"]),
         f"{r['length']:.0f}",
-        percent(r["diamond"]),
+        f"{100 * r['diamond']:.1f}\\%",
         f"{r['return']:.2f}",
         f"{r['achievements']:.2f}",
         percent(r["death"]),
     ]
     return " & ".join(cells) + " \\\\"
-
-
-CAPTIONS = {
-    "train": "Train split",
-    "val": "Validation split",
-    "test": "Test split (task set, final expert only)",
-}
 
 
 def write_split_tables(data: list[str], labels: list[str], out: Path, checkpoints: str | None = None, with_sha: bool = False):
@@ -171,7 +177,7 @@ def write_split_tables(data: list[str], labels: list[str], out: Path, checkpoint
         ep = read_episodes(path)
         all_seeds[label] = set(ep["seed"].tolist())
         rows = split_rows(ep, spu, final_updates)
-        (out / f"table_{label}.tex").write_text(latex_table(label, rows, ep, CAPTIONS.get(label, f"Split {label}")))
+        (out / f"table_{label}.tex").write_text(latex_table(label, rows))
         record["splits"][label] = {
             "file": file_record(path, with_sha),
             "runs": ep["runs"],

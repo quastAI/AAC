@@ -155,6 +155,9 @@ def test_change_of_small_columns_has_known_shares(world_file):
     assert rows["daylight"]["half_lag"] == 3
     # lags beyond every episode have no pairs
     assert m["pairs"]["100"] == 0 and rows["wood"]["share"][lag(100)] is None
+    # episodes (of lengths 70, 45, 60) that have a pair at a lag: the larger lags rest on the long ones
+    assert [m["episodes"][str(k)] for k in (1, 50, 100)] == [3, 2, 0]
+    assert m["lags"][-2:] == [600, 800]
     # one achievement flag turns on in every episode (frame 10 + e) and the diamond in one: any new unlock
     unlock = rows["any new unlock"]["share"][lag(1)]
     assert 0 < unlock < 0.1
@@ -239,7 +242,8 @@ def test_compute_and_plot_end_to_end(tmp_path):
     assert 0 <= cmp["length_ks"] <= 1 and cmp["action_share_max_abs_diff"] < 0.1 and cmp["change_share_max_abs_diff"] is not None
     assert rec["splits"]["train"]["chunks"]["1"]["distinct_chunks"] <= 17
     written = {p.name for p in figures.plot(out)}
-    assert {"fig_length.pdf", "fig_achievements.pdf", "fig_change.pdf", "fig_clips.pdf", "fig_actions.pdf", "table_length.tex",
+    assert {"fig_length_train.pdf", "fig_length_test.pdf", "fig_time_to_diamond.pdf", "fig_achievements_train.pdf", "fig_achievements_test.pdf",
+            "fig_achievement_ladder.pdf", "fig_change.pdf", "fig_clips.pdf", "fig_actions.pdf", "table_length.tex",
             "table_spectral.tex", "table_achievements.tex", "table_chunks.tex", "change_matrix.csv"} <= written  # fmt: skip
     for name in written:
         assert (out / name).stat().st_size > 0

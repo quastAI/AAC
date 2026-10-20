@@ -15,7 +15,7 @@ import numpy as np
 from .data import (BLOCK_TYPES, INVENTORY, MOBS, STATE_DIM, VIEW_CHANNELS, VIEW_COLS, VIEW_DIM, VIEW_ROWS, VIEW_TILES,
                    VITALS, Split)
 
-LAGS = (1, 2, 3, 5, 10, 20, 50, 100, 200, 300, 400)  # steps between the two frames of a pair
+LAGS = (1, 2, 3, 5, 10, 20, 50, 100, 200, 300, 400, 600, 800)  # steps between the two frames of a pair
 DAYLIGHT_TOL = 0.05  # a light change above this counts as a change (the light moves at most 0.031 per step)
 WORLD_LAG_MAX = 6  # two views at most this many steps apart always overlap (the player moves one tile per step)
 HALF = 0.5  # share of pairs that defines the half-change lag
@@ -161,4 +161,5 @@ def change_matrix(s: Split, lags=LAGS) -> dict:
         rows += view_rows(s, block, mob, lags)
     for r in rows:
         r["half_lag"] = None if r["group"] == "view overlap" else half_lag(r["share"], lags)
-    return {"lags": list(lags), "pairs": pairs, "daylight_tolerance": DAYLIGHT_TOL, "rows": rows}
+    episodes = {str(k): int((s.lengths > k).sum()) for k in lags}  # episodes with a pair at lag k: the larger lags rest on the long ones
+    return {"lags": list(lags), "pairs": pairs, "episodes": episodes, "daylight_tolerance": DAYLIGHT_TOL, "rows": rows}

@@ -70,9 +70,15 @@ def test_rows(tmp_path):
 def test_latex_and_files(tmp_path):
     write(tmp_path / "x.h5")
     ep = dt.read_episodes(tmp_path / "x.h5")
-    tex = dt.latex_table("train", dt.split_rows(ep, 1000, 99), ep, "Train split")
-    assert "Snapshot 1 & 0M & 10.0\\% & 50 & 0.0\\% & 4.90 & 3.00 & 100\\% \\\\" in tex
-    assert tex.count("\\midrule") == 2 and "\\label{tab:data-train}" in tex
+    rows = dt.split_rows(ep, 1000, 99)
+    tex = dt.latex_table("train", rows)
+    assert "Snapshot 1 & 0M & 10.0\\% & 1 & 50 & 0.0\\% & 4.90 & 3.00 & 100\\% \\\\" in tex  # the episode count is a column
+    assert "Final expert & 0M & 80.0\\% & 2 & 200 & 100.0\\% & " in tex  # the diamond rate always has a decimal
+    assert tex.count("\\midrule") == 2 and "\\label{tab:data-train}" in tex and tex.startswith("\\begin{table}[H]")
+    assert "training dataset by data-collection policy" in tex and "\\textbf{Columns.}" in tex and "Episodes: number of episodes" in tex
+    assert "the remaining expert episodes end 500 steps after the diamond" in tex
+    test_tex = dt.latex_table("test", rows[2:3])
+    assert "collected with the final expert only" in test_tex and "the remaining episodes end 500 steps after the diamond" in test_tex
     ckpt = tmp_path / "ckpt"
     ckpt.mkdir()
     (ckpt / "run_config.yaml").write_text("NUM_ENVS: 4\nNUM_STEPS: 8\nNUM_UPDATES: 7\n")
