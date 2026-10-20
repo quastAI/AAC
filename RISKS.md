@@ -40,7 +40,7 @@ Risks that remain where the implementation is sound. Bugs are not listed here; t
 |---|---|---|---|---|
 | R18 | `time_run.py` leaves out validation, health evaluation, data loading, end-of-training probing and planning eval; planning wall-clock is measured inside the FLOP counter and the forced SDPA math backend. | high | med | Time a full short job end to end before sizing the budget |
 | R19 | Pixels are gzip-compressed in 100-frame chunks and read per sample; data loading may bottleneck. | med | med | Include the loader in the timing run |
-| R20 | Health thresholds are heuristics set before any run. | high | low | Calibrate on the first LeWM run |
+| R20 | Health thresholds are heuristics set before any run. | high | low | Calibrate on the first flat-model run |
 | R21 | Task files are reused when they exist (the runner skips tasks_*.pt); changing the `tasks:` spec in experiments.yaml silently reuses the old file. Eval chunks are now protected (signature with task hash and config hash) and compare_runs checks the task hash. | med | med | delete the task file when the spec changes |
 | R22 | Under DDP, probing runs on rank 0 while other ranks continue with later end-of-training callbacks. | low | med | Barrier around probing |
 

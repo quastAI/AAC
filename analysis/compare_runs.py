@@ -1,10 +1,10 @@
 """Side-by-side tables of runs: planning against a baseline, compute scaling, training, probing.
 
     python compare_runs.py \
-        --planning random=eval/random flat=eval/lewm hier=eval/hjepa_l2 --baseline random \
+        --planning random=eval/random flat=eval/flat hier=eval/hjepa_l2 --baseline random \
         --scaling s1=eval/hjepa_x0.25 s2=eval/hjepa_x1 s3=eval/hjepa_x4 \
-        --training lewm=ckpts/lewm hier=ckpts/hjepa_l2 \
-        --probing lewm=ckpts/lewm hier=ckpts/hjepa_l2
+        --training flat=ckpts/flat hier=ckpts/hjepa_l2 \
+        --probing flat=ckpts/flat hier=ckpts/hjepa_l2
 
 Reads what the runs wrote: `planning_health.json` (planning), `health/summary.json`
 (training) and `health/probe_summary.json` (probing). Every section is optional.

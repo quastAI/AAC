@@ -1,5 +1,5 @@
 # Craftax-Classic: H-JEPA, trained end-to-end. Upper levels: latent MLP encoders, SIGReg on every level.
-# The depth is a setting: `num_levels=1` is the flat model (LeWM), 2 to 4 add levels (the blocks of the
+# The depth is a setting: `num_levels=1` is the flat model, 2 to 4 add levels (the blocks of the
 # levels above num_levels are ignored). The upper levels quantize their latent actions (VQ), so the
 # planner searches discrete codes at every level. Strides (`levelN.stride`) are placeholders until
 # they are derived from the data (D0 coverage): `num_levels=3 level2.stride=6 level3.stride=5`.
