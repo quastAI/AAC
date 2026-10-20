@@ -23,8 +23,8 @@ def test_code_cells_parse_and_carry_no_outputs(path):
             assert cell['outputs'] == [] and cell['execution_count'] is None, i
 
 
-def test_the_pod_notebook_runs_the_whole_chain():
-    nb = json.loads((NOTEBOOKS[0].parent / 'runpod.ipynb').read_text())
+def test_the_dataset_notebook_runs_the_whole_chain():
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_dataset.ipynb').read_text())
     text = '\n'.join(''.join(c['source']) for c in nb['cells'])
     for needle in (
         'environment/jax-gpu-requirements.txt',
@@ -49,9 +49,47 @@ def test_the_pod_notebook_runs_the_whole_chain():
     assert '*_state.safetensors' in text
 
 
+def test_the_flat_notebook_runs_the_level_one_cycle():
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_flat.ipynb').read_text())
+    text = '\n'.join(''.join(c['source']) for c in nb['cells'])
+    for needle in (
+        'environment/hjepa-requirements.txt',
+        'main_hjepa.py',  # the smoke run on the real files
+        '+trainer.limit_train_batches',
+        'probe_report.md',
+        'time_run.py',
+        '--loader-batches',
+        '"run", "F1"',
+        '"F3", "F4", "F5"',
+        '"run", "V1"',
+        'trainer.max_epochs',
+        'start_new_session=True',  # detached from the kernel
+        'HDF5_USE_FILE_LOCKING',
+        'LD_LIBRARY_PATH',
+        'PYTHONPATH',
+        'data/craftax_expert_',  # the dataset from the Hub
+        'path_in_repo="runs"',
+    ):
+        assert needle in text, needle
+    # the resumable training state is not uploaded
+    assert '**/lightning_resume/**' in text
+
+
+def test_the_flat_notebook_runs_real_jobs():
+    import yaml
+
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_flat.ipynb').read_text())
+    text = '\n'.join(''.join(c['source']) for c in nb['cells'])
+    spec = yaml.safe_load(
+        (Path(__file__).parents[1] / 'experiments.yaml').read_text()
+    )
+    for exp in ('F1', 'F3', 'F4', 'F5', 'V1'):
+        assert exp in text and not spec['experiments'][exp].get('blocked')
+
+
 def status_script():
     """The monitor cell's inline script, tested as a subprocess."""
-    nb = json.loads((NOTEBOOKS[0].parent / 'runpod.ipynb').read_text())
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_dataset.ipynb').read_text())
     for cell in nb['cells']:
         source = ''.join(cell['source'])
         if cell['cell_type'] == 'code' and 'STATUS = """' in source:
