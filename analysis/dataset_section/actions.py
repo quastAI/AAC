@@ -13,11 +13,41 @@ MIN_CHUNK_COUNT = 20  # chunks seen fewer times are left out of the mutual infor
 MAX_WINDOWS = 500_000  # windows per chunk length (a random subset above this)
 
 
+# actions whose success the state shows: (column, index, +1 if the value must rise, -1 if it must fall). `move` rows compare the
+# position. Not split: noop (never an effect), do (an attack that does not kill, and the water or food that only change a vital, are
+# not told apart) and sleep (the sleeping flag is not in the columns).
+SUCCESS = {
+    "place_stone": ("inventory", 1, -1), "place_table": ("inventory", 0, -1), "place_furnace": ("inventory", 1, -1),
+    "place_plant": ("inventory", 5, -1),
+    "make_wood_pickaxe": ("inventory", 6, 1), "make_stone_pickaxe": ("inventory", 7, 1), "make_iron_pickaxe": ("inventory", 8, 1),
+    "make_wood_sword": ("inventory", 9, 1), "make_stone_sword": ("inventory", 10, 1), "make_iron_sword": ("inventory", 11, 1),
+}  # fmt: skip
+MOVES = ("left", "right", "up", "down")  # succeeded: the player's position changed (a blocked move only turns the player)
+
+
 def action_numbers(s: Split) -> dict:
-    """Steps per action (the frames with an action: all but the last of an episode) over the 17 actions."""
+    """Steps per action (the frames with an action: all but the last of an episode) over the 17 actions, and for the actions
+    whose success the state shows, how many steps succeeded and how many failed."""
     action = s.cols["action"][:, 0]
-    steps = np.bincount(action[~np.isnan(action)].astype(int), minlength=len(ACTIONS))
-    return {"steps": {n: int(c) for n, c in zip(ACTIONS, steps)}, "share": {n: float(c / steps.sum()) for n, c in zip(ACTIONS, steps)}}
+    steps_at = np.flatnonzero(~np.isnan(action))
+    steps_at = steps_at[steps_at + 1 < s.total]  # every action has a next frame of its episode: the last frame has none
+    taken = action[steps_at].astype(int)
+    steps = np.bincount(taken, minlength=len(ACTIONS))
+    outcome = {}
+    for i, name in enumerate(ACTIONS):
+        at = steps_at[taken == i]
+        if name in MOVES:
+            ok = (s.cols["position"][at + 1] != s.cols["position"][at]).any(1)
+        elif name in SUCCESS:
+            column, index, sign = SUCCESS[name]
+            ok = sign * (s.cols[column][at + 1, index].astype(np.int64) - s.cols[column][at, index]) > 0
+        else:
+            continue
+        outcome[name] = {"succeeded": int(ok.sum()), "failed": int((~ok).sum())}
+    return {
+        "steps": {n: int(c) for n, c in zip(ACTIONS, steps)}, "share": {n: float(c / steps.sum()) for n, c in zip(ACTIONS, steps)},
+        "outcome": outcome,
+    }  # fmt: skip
 
 
 def _windows(s: Split, k: int) -> np.ndarray:

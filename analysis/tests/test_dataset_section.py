@@ -207,6 +207,9 @@ def test_length_time_to_diamond_achievements_and_actions(world_file):
     counts = actions.action_numbers(d)
     assert sum(counts["steps"].values()) == 175 - 3 and set(counts["steps"]) == set(data.ACTIONS)
     assert sum(counts["share"].values()) == pytest.approx(1)
+    assert set(counts["outcome"]) == set(actions.MOVES) | set(actions.SUCCESS)  # noop, do and sleep are not split
+    for name, o in counts["outcome"].items():
+        assert o["succeeded"] + o["failed"] == counts["steps"][name]
 
 
 def test_clip_coverage_follows_the_span_formula(world_file):
@@ -242,12 +245,13 @@ def test_compute_and_plot_end_to_end(tmp_path):
     assert 0 <= cmp["length_ks"] <= 1 and cmp["action_share_max_abs_diff"] < 0.1 and cmp["change_share_max_abs_diff"] is not None
     assert rec["splits"]["train"]["chunks"]["1"]["distinct_chunks"] <= 17
     written = {p.name for p in figures.plot(out)}
-    assert {"fig_length_train.pdf", "fig_length_test.pdf", "fig_time_to_diamond.pdf", "fig_achievements_train.pdf", "fig_achievements_test.pdf",
-            "fig_achievement_ladder.pdf", "fig_change.pdf", "fig_clips.pdf", "fig_actions.pdf", "table_length.tex",
-            "table_spectral.tex", "table_achievements.tex", "table_chunks.tex", "change_matrix.csv"} <= written  # fmt: skip
+    assert {"fig_length_train.pdf", "fig_length_test.pdf", "fig_time_to_diamond.pdf", "fig_achievement_ladder.pdf", "fig_change.pdf",
+            "fig_clips_overlapping.pdf", "fig_clips_independent.pdf", "fig_actions.pdf", "table_achievements.tex", "table_chunks.tex",
+            "change_matrix.csv"} <= written  # fmt: skip
+    assert not {"table_length.tex", "table_spectral.tex"} & written  # one place per number: the figures and the text carry them
     for name in written:
         assert (out / name).stat().st_size > 0
-    assert "Median" in (out / "table_length.tex").read_text()
+    assert "First unlock" in (out / "table_achievements.tex").read_text()
     csv_head = (out / "change_matrix.csv").read_text().splitlines()[0]
     assert csv_head.startswith("split,group,component,half_lag,lag_1,lag_2")
 
@@ -358,3 +362,36 @@ def test_a_file_with_episodes_out_of_order_is_refused(tmp_path):
         f["ep_offset"][:] = [10, 0]
     with pytest.raises(SystemExit):
         data.Split(path)
+
+
+def test_action_outcomes_follow_the_state(tmp_path):
+    # frames: 0 left (position moves), 1 left (blocked: no move), 2 make_iron_pickaxe (works), 3 make_iron_pickaxe (already made: fails),
+    # 4 place_stone (stone 1 -> 0), 5 do (not split), last frame without an action
+    n = 7
+    action = np.array([1, 1, 13, 13, 7, 5, np.nan], np.float32)
+    position = np.array([[5, 5], [5, 4], [5, 4], [5, 4], [5, 4], [5, 4], [5, 4]], np.int16)
+    inventory = np.zeros((n, 12), np.int16)
+    inventory[:5, 1] = 1  # one stone until the stone is placed
+    inventory[3:, 8] = 1  # the iron pickaxe appears after frame 2's action
+    path = tmp_path / "outcome.h5"
+    with h5py.File(path, "w") as f:
+        f["action"] = action[:, None]
+        f["inventory"] = inventory
+        f["position"] = position
+        f["achievements"] = np.zeros((n, 22), np.uint8)
+        f["vitals"] = np.full((n, 4), 9, np.int8)
+        f["ep_len"] = np.array([n], np.int32)
+        f["ep_offset"] = np.array([0], np.int64)
+    out = actions.action_numbers(data.Split(path))["outcome"]
+    assert out["left"] == {"succeeded": 1, "failed": 1}
+    assert out["make_iron_pickaxe"] == {"succeeded": 1, "failed": 1}
+    assert out["place_stone"] == {"succeeded": 1, "failed": 0}
+    assert "do" not in out and "noop" not in out and "sleep" not in out
+
+
+def test_the_length_figure_counts_frames_not_episodes():
+    rec = {"splits": {"train": {"length": {"lengths": [10, 10, 10, 90]}}, "test": {"length": {"lengths": [10]}}}}
+    edges, share = figures._length_hist(rec, "train", 100)
+    assert share.sum() == pytest.approx(1)
+    assert share[edges.tolist().index(0)] == pytest.approx(30 / 120)  # three short episodes hold a quarter of the frames
+    assert share[edges.tolist().index(50)] == pytest.approx(90 / 120)

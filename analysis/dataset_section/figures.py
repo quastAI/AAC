@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .compute import JSON_NAME
-from .tables import achievement_table, change_csv, chunk_table, ladder_order, length_table, spectral_table
+from .tables import achievement_table, change_csv, chunk_table, ladder_order
 
 FIG_WIDTH = 6.0  # inches
 COLORS = {"train": "#2a78d6", "test": "#eb6834"}  # categorical slots 1 and 2 of the reference palette
@@ -37,32 +37,37 @@ def _si(x, _=None) -> str:
     return f"{x / 1e6:g}M" if x >= 1e6 else f"{x / 1e3:g}K" if x >= 1e3 else f"{x:g}"
 
 
-def _share_hist(values, width, xmax):
-    """Share of the values per bin of `width` over 0 to `xmax`."""
+def _share_hist(values, width, xmax, weights=None):
+    """Share of the values (or of their weights) per bin of `width` over 0 to `xmax`."""
     edges = np.arange(0, xmax + width, width)
-    counts, _ = np.histogram(values, bins=edges)
-    return edges, counts / len(values)
+    counts, _ = np.histogram(values, bins=edges, weights=weights)
+    return edges, counts / (len(values) if weights is None else np.sum(weights))
 
 
 def _ceil(x, step) -> float:
     return math.ceil(x / step) * step
 
 
+def _length_hist(rec, split, xmax):
+    """Every episode counts with its frames: what a clip sampler that draws frames at random sees."""
+    lengths = np.asarray(rec["splits"][split]["length"]["lengths"], float)
+    return _share_hist(lengths, LENGTH_BIN, xmax, weights=lengths)
+
+
 def _length_limits(rec):
     """Axis ranges that train and test share: the longest episode and the tallest bin of either."""
     xmax = _ceil(max(max(rec["splits"][s]["length"]["lengths"]) for s in ("train", "test")), 500)
-    ymax = max(_share_hist(rec["splits"][s]["length"]["lengths"], LENGTH_BIN, xmax)[1].max() for s in ("train", "test"))
+    ymax = max(_length_hist(rec, s, xmax)[1].max() for s in ("train", "test"))
     return xmax, ymax * 1.08
 
 
 def fig_length(rec, split, plt):
     xmax, ymax = _length_limits(rec)
-    info = rec["splits"][split]["length"]
-    edges, share = _share_hist(info["lengths"], LENGTH_BIN, xmax)
+    edges, share = _length_hist(rec, split, xmax)
     fig, ax = plt.subplots(figsize=(FIG_WIDTH, 2.5))
     ax.stairs(share, edges, fill=True, color=COLORS[split], linewidth=0)
-    ax.set(xlim=(0, xmax), ylim=(0, ymax), xlabel="episode length (frames)", ylabel="share of episodes",
-           title=f"Episode length ({split}, {info['episodes']:,} episodes)")  # fmt: skip
+    ax.set(xlim=(0, xmax), ylim=(0, ymax), xlabel="episode length (frames)", ylabel="share of frames",
+           title=f"Episode length ({split}): share of frames by the length of their episode")  # fmt: skip
     return fig
 
 
@@ -79,18 +84,6 @@ def fig_time_to_diamond(rec, plt):
             transform=ax.transAxes, va="top", ha="right", fontsize=7, color=MUTED)  # fmt: skip
     ax.set(xlim=(0, xmax), xlabel="steps to the diamond", ylabel="share of episodes",
            title=f"Time to diamond (test, {ttd['episodes']} of {ttd['of']} episodes)")  # fmt: skip
-    return fig
-
-
-def fig_achievements(rec, split, plt):
-    histograms = {s: np.array(rec["splits"][s]["achievements"]["per_episode"]["histogram"], float) for s in ("train", "test")}
-    ymax = max((h / h.sum()).max() for h in histograms.values()) * 1.08
-    h = histograms[split]
-    fig, ax = plt.subplots(figsize=(FIG_WIDTH, 2.5))
-    ax.bar(np.arange(len(h)), h / h.sum(), width=0.8, color=COLORS[split], linewidth=0)
-    n = int(h.sum())
-    ax.set(xlim=(-0.5, len(h) - 0.5), ylim=(0, ymax), xlabel="achievements unlocked in an episode", ylabel="share of episodes",
-           title=f"Achievements per episode ({split}, {n:,} episodes)")  # fmt: skip
     return fig
 
 
@@ -153,57 +146,64 @@ def fig_change(rec, plt):
     return fig
 
 
-def fig_clips(rec, plt):
+def fig_clips(rec, key, ylabel, title, plt):
+    """Clips per stride, one curve per clip length. `key`: clips (all overlapping) or independent_clips (no frame twice)."""
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     clips = rec["splits"]["train"]["clips"]
     strides = np.array(clips["strides"])
-    fig, (a, b) = plt.subplots(1, 2, figsize=(FIG_WIDTH, 2.9))
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH, 2.8))
     # a clip's frames are context + rollout: (1, 5) and (5, 1) are the same clips, so the grid is three curves
     groups = {}
     for s in clips["settings"].values():
         groups.setdefault(s["context"] + s["rollout"], []).append(s)
     for (frames, members), c in zip(sorted(groups.items()), (COLORS["train"], COLORS["test"], THIRD)):
         label = f"{frames} frames: " + " or ".join(f"context {m['context']} + rollout {m['rollout']}" for m in members)
-        clip = np.array(members[0]["clips"], float)
-        a.plot(strides, np.where(clip > 0, clip, np.nan), color=c, linewidth=1.6, label=label)
-        b.plot(strides, np.array(members[0]["episodes_long_enough"]) / clips["episodes"], color=c, linewidth=1.6)
-    a.set(xscale="log", yscale="log", xlabel="stride (frames between clip frames)", ylabel="clips", title="Clips per stride (train)")
-    b.set(xscale="log", xlabel="stride (frames between clip frames)", ylabel="share of episodes", title="Episodes long enough for a clip", ylim=(0, 1.02))
-    ticks = [1, 2, 5, 10, 20, 50, 100, 200, 400]
-    for ax in (a, b):
-        ax.set_xticks(ticks)
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}"))
-        ax.xaxis.set_minor_formatter(NullFormatter())
-    a.set_yticks([1e3, 1e4, 1e5, 1e6])
-    a.yaxis.set_major_formatter(FuncFormatter(_si))
-    a.yaxis.set_minor_formatter(NullFormatter())
-    fig.legend(*a.get_legend_handles_labels(), loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=1, fontsize=7)
-    fig.tight_layout()
+        count = np.array(members[0][key], float)
+        ax.plot(strides, np.where(count > 0, count, np.nan), color=c, linewidth=1.6, label=label)
+    ax.set(xscale="log", yscale="log", xlabel="stride (frames between clip frames)", ylabel=ylabel, title=title)
+    ax.set_xticks([1, 2, 5, 10, 20, 50, 100, 200, 400])
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.yaxis.set_major_formatter(FuncFormatter(_si))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.legend(loc="lower left", fontsize=7)
     return fig
 
 
 def fig_actions(rec, plt):
+    """Steps per action in train. Where the state shows whether an action worked, it is split into succeeded and failed steps."""
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     actions = rec["splits"]["train"]["actions"]
     names = list(actions["steps"])
-    steps = np.array([actions["steps"][n] for n in names], float)
-    share = np.array([actions["share"][n] for n in names])
-    fig, ax = plt.subplots(figsize=(4.6, 3.8))
-    y = np.arange(len(names))
-    ax.barh(y, np.where(steps > 0, steps, np.nan), color=COLORS["train"], height=0.6)
-    for i, (c, p) in enumerate(zip(steps, share)):
-        ax.text(max(c, 1) * 1.15, i, f"{c:,.0f} ({100 * p:.2g}%)" if c else "never", va="center", fontsize=6.5, color=MUTED)
-    ax.set_yticks(y, [n.replace("_", " ") for n in names])
+    outcome = actions["outcome"]
+    grey = "#9a9893"
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH, 5.0))
+    height = 0.36
+    lows = []
+    for i, n in enumerate(names):
+        if n in outcome:
+            for off, key, color in ((-height / 2, "succeeded", COLORS["train"]), (height / 2, "failed", COLORS["test"])):
+                c = outcome[n][key]
+                ax.barh(i + off, c, height=height, color=color, label=key)
+                ax.text(max(c, 1) * 1.15, i + off, f"{c:,}", va="center", fontsize=6, color=MUTED)
+                lows.append(c)
+        else:
+            c = actions["steps"][n]
+            ax.barh(i, c, height=height, color=grey, label="not split")
+            ax.text(max(c, 1) * 1.15, i, f"{c:,}", va="center", fontsize=6, color=MUTED)
+            lows.append(c)
+    ax.set_yticks(range(len(names)), [n.replace("_", " ") for n in names])
     ax.invert_yaxis()
-    ax.set(xscale="log", xlabel="steps in train", title="Action coverage")
-    ax.set_xlim(max(1, steps[steps > 0].min() / 3), steps.max() * 12)
-    ax.set_xticks([1e4, 1e5, 1e6])
+    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded and failed steps")
+    ax.set_xlim(max(1, min(c for c in lows if c > 0) / 3), max(lows) * 10)
     ax.xaxis.set_major_formatter(FuncFormatter(_si))
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(axis="y", visible=False)
-    fig.tight_layout()
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys(), loc="lower right", fontsize=7)
     return fig
 
 
@@ -211,11 +211,10 @@ FIGURES = {  # file name -> function of (rec, plt)
     "fig_length_train": lambda rec, plt: fig_length(rec, "train", plt),
     "fig_length_test": lambda rec, plt: fig_length(rec, "test", plt),
     "fig_time_to_diamond": fig_time_to_diamond,
-    "fig_achievements_train": lambda rec, plt: fig_achievements(rec, "train", plt),
-    "fig_achievements_test": lambda rec, plt: fig_achievements(rec, "test", plt),
     "fig_achievement_ladder": fig_ladder,
     "fig_change": fig_change,
-    "fig_clips": fig_clips,
+    "fig_clips_overlapping": lambda rec, plt: fig_clips(rec, "clips", "clips", "Overlapping clips per stride (train)", plt),
+    "fig_clips_independent": lambda rec, plt: fig_clips(rec, "independent_clips", "independent clips", "Independent clips per stride (train, no frame used twice)", plt),
     "fig_actions": fig_actions,
 }
 
@@ -235,7 +234,7 @@ def plot(out: Path) -> list[Path]:
         fig.savefig(out / f"{name}.pdf")
         plt.close(fig)
         written.append(out / f"{name}.pdf")
-    for name, text in (("table_length", length_table(rec)), ("table_spectral", spectral_table(rec)), ("table_achievements", achievement_table(rec)), ("table_chunks", chunk_table(rec))):
+    for name, text in (("table_achievements", achievement_table(rec)), ("table_chunks", chunk_table(rec))):
         if text:
             (out / f"{name}.tex").write_text(text)
             written.append(out / f"{name}.tex")
