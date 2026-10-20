@@ -102,6 +102,9 @@ eval:
   img_size: 63
   dataset_name: craftax_expert_val
   chunk_size: null  # chunked, resumable eval needs load_eval_trajs_path
+  videos: 8  # GIFs of the first tasks of a run (results dir/videos): agent next to goal, step, progress, unlocks
+  video_scale: 4
+  video_max_frames: 600  # longer budgets are subsampled (unlocks and the end are always kept)
   callables:
   - method: _set_state
     args:

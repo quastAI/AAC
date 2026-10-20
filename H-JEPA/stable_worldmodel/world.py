@@ -919,6 +919,7 @@ class World:
         process: dict[str, Any] | None = None,
         start_state_mode: str = 'dataset_full',
         goal_state_mode: str = 'dataset_full',
+        recorder: Any | None = None,
     ) -> dict:
         """Evaluate the policy starting from states sampled from a dataset.
 
@@ -929,6 +930,9 @@ class World:
             goal_offset_steps: Number of steps ahead to look for the goal.
             eval_budget: Maximum steps allowed for the agent to reach the goal.
             callables: Optional list of method calls to setup the env.
+            recorder: Optional object whose ``capture(infos, step)`` sees
+                the infos before every step, and ``capture(infos, budget,
+                final=True)`` once after the last (planning videos).
 
         Returns:
             Dictionary containing success rates and other metrics.
@@ -1190,6 +1194,8 @@ class World:
         eval_start_time = time.perf_counter()
         for i in range(eval_budget):
             self.infos.update(deepcopy(goal_step))
+            if recorder is not None:
+                recorder.capture(self.infos, i)
             self.step()
             newly_successful = np.logical_and(
                 self.terminateds, np.isnan(wall_clock_to_success)
@@ -1209,6 +1215,9 @@ class World:
         finish = getattr(self.policy, 'finish', None)
         if callable(finish):
             finish(self.infos)
+        if recorder is not None:
+            self.infos.update(deepcopy(goal_step))
+            recorder.capture(self.infos, eval_budget, final=True)
 
         n_episodes = len(ep_idx_arr)
 

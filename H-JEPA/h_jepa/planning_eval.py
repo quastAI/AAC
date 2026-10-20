@@ -23,6 +23,7 @@ from data import (
 )
 from eval_config_utils import _build_policy_plan_config, _is_hierarchical_solver
 from hierarchical_solver import build_hierarchical_solver
+from planning_video import recorder_for
 from utils import resolve_model_checkpoint_path
 
 
@@ -522,6 +523,7 @@ def _run_chunked_eval(
         # shallow per-episode copies: evaluate_from_dataset reassigns their columns in place
         chunk = {**payload, "data": [dict(ep) for ep in payload["data"][start:end]], "episodes_idx": ep_idx[start:end]}
         world = swm.World(**{**world_cfg, "num_envs": end - start}, image_shape=image_shape)
+        recorder = recorder_for(cfg, start, end)
         try:
             world.set_policy(policy)
             t0 = time.time()
@@ -537,10 +539,13 @@ def _run_chunked_eval(
                     process=process,
                     start_state_mode=cfg.eval.get("start_state_mode", "dataset_full"),
                     goal_state_mode=cfg.eval.get("goal_state_mode", "dataset_full"),
+                    recorder=recorder,
                 )
             metrics["evaluation_time"] = time.time() - t0
         finally:
             world.close()
+        if recorder is not None:
+            recorder.write(results_dir / "videos")
         metrics["solve_records"] = pop_solve_records(getattr(policy, "solver", None))
         if getattr(policy, "records", None) is not None:
             metrics["planning_records"] = policy.records
@@ -628,6 +633,7 @@ def run_planning_eval(
         )
 
     world = swm.World(**world_cfg, image_shape=image_shape)
+    recorder = None if dump_eval_only else recorder_for(cfg, 0, world.num_envs)
 
     try:
         policy = _build_policy(cfg, process, transform, model=model)
@@ -660,10 +666,13 @@ def run_planning_eval(
                 goal_state_mode=cfg.eval.get(
                     "goal_state_mode", "dataset_full"
                 ),
+                recorder=recorder,
             )
         end_time = time.time()
     finally:
         world.close()
+    if recorder is not None:
+        recorder.write(resolved_results_dir / "videos")
 
     if dump_eval_only:
         payload = torch.load(dump_eval_trajs_path, weights_only=False)
