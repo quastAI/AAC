@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\caption{Action chunks of $k$ steps: distinct chunks, chunk entropy and information about the effect.}
+\label{tab:data-chunks}
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{4}{c}{Train} & \multicolumn{4}{c}{Test} \\
+ $k$ & Distinct & $H$ & $I$ & Cov. & Distinct & $H$ & $I$ & Cov. \\
+\midrule
+1 & 17 & 3.5 & 1.94 & 100\% & 17 & 3.4 & 2.03 & 100\% \\
+2 & 289 & 6.4 & 3.14 & 100\% & 284 & 6.2 & 3.33 & 99\% \\
+3 & 4\,519 & 8.8 & 4.18 & 97\% & 2\,508 & 8.5 & 4.21 & 82\% \\
+4 & 27\,550 & 10.9 & 4.88 & 82\% & 6\,958 & 10.3 & 4.90 & 59\% \\
+6 & 102\,441 & 13.9 & 5.37 & 47\% & 13\,124 & 12.4 & 3.53 & 19\% \\
+8 & 143\,096 & 15.5 & 4.11 & 22\% & 14\,240 & 13.1 & 1.88 & 9\% \\
+12 & 139\,619 & 16.4 & 1.91 & 8\% & 11\,474 & 13.2 & 0.60 & 4\% \\
+16 & 113\,645 & 16.4 & 0.99 & 5\% & 8\,954 & 13.0 & 0.61 & 3\% \\
+\bottomrule
+\end{tabular}
+
+\vspace{4pt}
+\begin{minipage}{\linewidth}
+\footnotesize\raggedright Windows of $k$ steps without overlap (at most 500\,000 per $k$). Distinct: chunks seen. $H$: entropy of the chunk (bits). $I$: mutual information of the chunk with the effect (bits; change of inventory, achievements, vitals and position over the window; Miller--Madow corrected). Cov.: share of windows whose chunk was seen at least 20 times, the only windows $I$ is computed on; where it is low, most chunks occur once and $I$ is not reliable. Reference scales for a codebook, not settings.
+\end{minipage}
+\end{table}
