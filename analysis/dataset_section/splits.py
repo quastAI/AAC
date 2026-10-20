@@ -1,4 +1,4 @@
-"""The dataset tables of the appendix (one per split) from the episode files, with the numbers' provenance.
+"""The dataset tables of the appendix (one per split: composition by policy) from the episode files, with provenance.
 
 Reads only the small columns of the collector's HDF5 files (numpy, h5py, pyyaml; no pixels, no full_state). One row per
 policy that acted, the rows of a source grouped by `policy_updates` (the snapshot of the expert's training), plus an All
@@ -14,7 +14,7 @@ row. Per episode, in the table's columns:
 * train steps: environment steps of the expert's training at the snapshot, `policy_updates` x NUM_ENVS x NUM_STEPS of the
   training config in `--checkpoints`; the final expert (`policy_updates` -1) takes NUM_UPDATES of the config.
 
-    python dataset_tables.py --data expert_train.h5 --label train --data expert_val.h5 --label val \
+    python -m dataset_section splits --data expert_train.h5 --label train --data expert_val.h5 --label val \
         --data expert_test.h5 --label test --checkpoints <hf>/checkpoints --out reports/dataset/
 
 Writes `table_<label>.tex`, `dataset_tables.csv` and `dataset_tables.json`. The JSON records, per file, its size, mtime,
@@ -24,19 +24,16 @@ can be traced to the file and the code that produced it.
 
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 from pathlib import Path
 
 import h5py
 import numpy as np
-import yaml
 
-from dataset_section.data import file_record, git_state
+from .data import ACHIEVEMENTS, DIAMOND_INDEX, file_record, git_state
 
-DIAMOND_INDEX = 19  # collect_diamond in the Craftax-Classic achievement order
-NUM_ACHIEVEMENTS = 22
+NUM_ACHIEVEMENTS = len(ACHIEVEMENTS)
 SOURCE_NAMES = {0: "Final expert", 1: "Noised expert", 2: "Random", 3: "Snapshot"}  # the collector's `source` column
 COLUMNS = ["policy", "train_steps", "episodes", "frames", "share", "length", "diamond", "return", "achievements", "death"]
 
@@ -65,6 +62,8 @@ def read_episodes(path) -> dict:
 
 def training_steps(checkpoints) -> tuple[int, int]:
     """(environment steps per update, number of updates of the final expert) from the training config."""
+    import yaml  # only the train steps need it, so that `compute` runs with numpy and h5py alone
+
     configs = sorted(Path(checkpoints).glob("*_config.yaml"))
     if len(configs) != 1:
         raise SystemExit(f"expected one *_config.yaml in {checkpoints}, found {len(configs)}")
@@ -162,29 +161,19 @@ CAPTIONS = {
 }
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", action="append", required=True, help="episode file (repeatable, with one --label each)")
-    ap.add_argument("--label", action="append", required=True, help="split name: train, val or test (repeatable)")
-    ap.add_argument("--checkpoints", help="expert checkpoint folder with its *_config.yaml (for the train steps)")
-    ap.add_argument("--out", default="reports/dataset", help="output folder")
-    ap.add_argument("--sha256", action="store_true", help="hash the files (slow for the 8 GB train file)")
-    args = ap.parse_args()
-    if len(args.data) != len(args.label):
-        raise SystemExit("--data and --label must be given the same number of times")
-
-    spu, final_updates = training_steps(args.checkpoints) if args.checkpoints else (None, None)
-    out = Path(args.out)
+def write_split_tables(data: list[str], labels: list[str], out: Path, checkpoints: str | None = None, with_sha: bool = False):
+    """`table_<label>.tex`, `dataset_tables.csv` and `dataset_tables.json` for every file (label train, val or test)."""
+    spu, final_updates = training_steps(checkpoints) if checkpoints else (None, None)
     out.mkdir(parents=True, exist_ok=True)
     record = {"git": git_state(), "steps_per_update": spu, "final_updates": final_updates, "splits": {}}
     csv_rows, all_seeds = [], {}
-    for path, label in zip(args.data, args.label):
+    for path, label in zip(data, labels):
         ep = read_episodes(path)
         all_seeds[label] = set(ep["seed"].tolist())
         rows = split_rows(ep, spu, final_updates)
         (out / f"table_{label}.tex").write_text(latex_table(label, rows, ep, CAPTIONS.get(label, f"Split {label}")))
         record["splits"][label] = {
-            "file": file_record(path, args.sha256),
+            "file": file_record(path, with_sha),
             "runs": ep["runs"],
             "seed_min": int(ep["seed"].min()),
             "seed_max": int(ep["seed"].max()),
@@ -196,9 +185,9 @@ def main():
         print(f"{label}: {rows[-1]['episodes']} episodes, {rows[-1]['frames']} frames")
         for r in rows:
             print("  " + "  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}" for k, v in r.items()))
-    labels = list(all_seeds)
+    names = list(all_seeds)
     record["seed_overlap"] = {
-        f"{a}/{b}": len(all_seeds[a] & all_seeds[b]) for i, a in enumerate(labels) for b in labels[i + 1 :]
+        f"{a}/{b}": len(all_seeds[a] & all_seeds[b]) for i, a in enumerate(names) for b in names[i + 1 :]
     }
     print("seed overlap between files:", record["seed_overlap"])
     with open(out / "dataset_tables.csv", "w", newline="") as f:
@@ -208,6 +197,3 @@ def main():
     (out / "dataset_tables.json").write_text(json.dumps(record, indent=1))
     print(f"wrote {out}/")
 
-
-if __name__ == "__main__":
-    main()

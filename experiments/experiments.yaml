@@ -24,8 +24,8 @@ settings:
 # test worlds are held out; the first 500000 seeds of a range go to the expert, the rest equally to the other
 # runs, and every run stops where the next range begins. The test split holds only the final expert (tasks).
 # `noised` (epsilon `noise_eps` on the final expert) and `random` (uniform) are optional, default 0: a fallback
-# if D0 shows that actions are not covered (the action-coverage table). Placeholders: the mix and the snapshots
-# are decided after the data exists and its behaviour has been analysed (D0); the frame counts follow the timing run.
+# if the dataset section's action coverage shows actions that are not covered. Placeholders: the mix and the snapshots
+# are decided after the data exists and its behaviour has been analysed (the dataset section); the frame counts follow the timing run.
 collection:
   frames: {train: 2000000, val: 150000, test: 150000}
   share:
@@ -47,7 +47,7 @@ experiments:
     collection: true
 
   D0:
-    title: Data analysis (entity frequency gap, time scale ladder, clip counts, tasks, survival, chunk information)
+    title: Dataset section numbers (lengths, achievements, change matrix, clip coverage, actions, entity gap; `dataset_section compute`)
     analysis: true
 
   E1:
@@ -61,7 +61,7 @@ experiments:
       - {name: e1_hjepa_l2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=2]}
 
   E2:
-    title: Depth, 2 vs 3 levels (set the strides from D0 with --override level2.stride=.. level3.stride=..)
+    title: Depth, 2 vs 3 levels (set the strides from the dataset section with --override level2.stride=.. level3.stride=..)
     rq: [1]
     protocols: [A, B]
     baseline: true

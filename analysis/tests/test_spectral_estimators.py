@@ -1,4 +1,4 @@
-"""timescales on signals with known answers."""
+"""The spectral estimators of dataset_section.spectral on signals with known answers."""
 
 import sys
 from pathlib import Path
@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-import timescales as ts  # noqa: E402
+from dataset_section import spectral as ts  # noqa: E402
 
 W = 128
 
@@ -96,53 +96,3 @@ def test_the_bootstrap_interval_contains_the_true_gap():
     assert boot['p5'] <= boot['p50'] <= boot['p95']
     assert boot['p5'] < 8 < boot['p95'] * 1.2
     assert boot['p95'] - boot['p5'] < 2  # identical episodes: a tight interval
-
-
-def test_periodic_events_have_no_spread_and_the_mode_is_the_period():
-    masks = []
-    for _ in range(3):
-        m = np.zeros(200, bool)
-        m[::21] = True
-        masks.append(m)
-    st = ts.inter_event_stats(masks)
-    assert st['mode'] == 21 and st['mode_share'] == 1.0
-    assert st['cv'] == pytest.approx(0)
-    assert st['p10'] == st['p90'] == 21
-    assert st['events'] == 3 * 10 and st['rate'] == pytest.approx(30 / 600)
-    # one cut-off gap per episode: 3 of (3 * 9 complete + 3)
-    assert st['censored_share'] == pytest.approx(3 / 30)
-
-
-def test_irregular_events_have_a_large_cv():
-    rng = np.random.default_rng(0)
-    m = [rng.random(2000) < 0.02]
-    regular = [np.arange(2000) % 50 == 0]
-    assert ts.inter_event_stats(m)['cv'] > 0.7
-    assert ts.inter_event_stats(regular)['cv'] < 0.01
-
-
-def test_masks_of_changes_rises_and_drops():
-    x = np.array([[0, 5], [1, 5], [1, 4], [1, 4], [2, 6]])
-    assert ts.change_mask(x).tolist() == [True, True, False, True]
-    assert ts.rise_mask(x).tolist() == [True, False, False, True]
-    assert ts.drop_mask(x).tolist() == [False, True, False, False]
-    union = ts.union_masks([[ts.rise_mask(x)], [ts.drop_mask(x)]])
-    assert union[0].tolist() == [True, True, False, True]
-
-
-def test_clusters_split_where_neighbours_are_two_times_apart():
-    values = {'a': 2.0, 'b': 3.0, 'c': 20.0, 'd': 21.0, 'e': 100.0}
-    assert ts.cluster_scales(values) == [['a', 'b'], ['c', 'd'], ['e']]
-    same = {'a': 5.0, 'b': 6.0, 'c': 7.0}
-    assert ts.cluster_scales(same) == [['a', 'b', 'c']]
-    assert ts.cluster_scales({'a': 1, 'b': 1, 'c': 8}) == [['a', 'b'], ['c']]
-    assert ts.cluster_scales({}) == []
-
-
-def test_boundaries_give_the_interval_between_clusters():
-    values = {'a': 2.0, 'b': 3.0, 'c': 20.0, 'd': 90.0}
-    out = ts.boundaries(ts.cluster_scales(values), values)
-    assert len(out) == 2
-    assert (out[0]['from'], out[0]['to']) == (3.0, 20.0)
-    assert out[0]['ratio'] == pytest.approx(20 / 3)
-    assert out[1]['fast'] == ['c'] and out[1]['slow'] == ['d']

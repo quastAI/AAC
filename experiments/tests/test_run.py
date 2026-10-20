@@ -305,19 +305,12 @@ def test_unknown_collection_sources_are_rejected(spec):
         run.build_jobs(spec, 'D1', [42], home='/data', checkpoint='/c')
 
 
-def test_dataset_analysis_gets_the_task_offsets_of_protocol_a(spec):
-    command = run.build_jobs(spec, 'D0', [42], home='/data')[0].command
-    i = command.index('--offsets')
-    assert [int(x) for x in command[i + 1 :]] == spec['tasks']['A']['offsets']
-
-
-def test_dataset_analysis_gets_the_task_count_and_the_placeholder_mix(spec):
-    command = run.build_jobs(spec, 'D0', [42], home='/data')[0].command
-    assert command[command.index('--num-tasks') + 1] == str(
-        spec['tasks']['A']['num_tasks']
-    )
-    i = command.index('--mix')
-    assert command[i + 1 : i + 3] == ['expert=0.7', 'early=0.3']
+def test_dataset_analysis_runs_the_dataset_section_on_all_three_files(spec):
+    job = run.build_jobs(spec, 'D0', [42], home='/data')[0]
+    assert job.command[1:4] == ['-m', 'dataset_section', 'compute']
+    assert job.cwd == run.ROOT / 'analysis'
+    assert job.output == '/data/reports/dataset/dataset_numbers.json'
+    assert '/data/reports/dataset' == job.command[job.command.index('--out') + 1]
 
 
 def placeholder_collection(spec):

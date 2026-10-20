@@ -1,4 +1,4 @@
-"""dataset_tables on a synthetic file with known answers."""
+"""dataset_section.splits on a synthetic file with known answers."""
 
 import json
 import sys
@@ -9,7 +9,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-import dataset_tables as dt  # noqa: E402
+from dataset_section import splits as dt  # noqa: E402
+from dataset_section.__main__ import main  # noqa: E402
 
 # (source, policy_updates, length, diamond, dead, reward per frame)
 EPISODES = [
@@ -66,7 +67,7 @@ def test_rows(tmp_path):
     assert np.isclose(sum(r["share"] for r in rows[:-1]), 1)
 
 
-def test_latex_and_files(tmp_path, monkeypatch):
+def test_latex_and_files(tmp_path):
     write(tmp_path / "x.h5")
     ep = dt.read_episodes(tmp_path / "x.h5")
     tex = dt.latex_table("train", dt.split_rows(ep, 1000, 99), ep, "Train split")
@@ -77,10 +78,7 @@ def test_latex_and_files(tmp_path, monkeypatch):
     (ckpt / "run_config.yaml").write_text("NUM_ENVS: 4\nNUM_STEPS: 8\nNUM_UPDATES: 7\n")
     assert dt.training_steps(ckpt) == (32, 7)
     out = tmp_path / "out"
-    monkeypatch.setattr(
-        sys, "argv", ["dt", "--data", str(tmp_path / "x.h5"), "--label", "val", "--checkpoints", str(ckpt), "--out", str(out)]
-    )
-    dt.main()
+    main(["splits", "--data", str(tmp_path / "x.h5"), "--label", "val", "--checkpoints", str(ckpt), "--out", str(out)])
     record = json.loads((out / "dataset_tables.json").read_text())
     assert record["splits"]["val"]["unique_seeds"] == 4 and record["splits"]["val"]["runs"] == [{"finished": True}]
     assert (out / "table_val.tex").exists() and (out / "dataset_tables.csv").exists()
