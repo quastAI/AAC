@@ -79,6 +79,18 @@ def _find_env_method(env: gym.Env, method_name: str) -> Callable | None:
     return None
 
 
+def _switch_goals(goal: np.ndarray, schedule: list, step: int) -> None:
+    """Set the goal frame of every env whose next subgoal starts at `step`.
+
+    goal: (envs, history, H, W, C), written in place. schedule: per env a
+    list of {'step', 'pixels' (H, W, C)} (the payload's `goal_schedule`).
+    """
+    for env, entries in enumerate(schedule):
+        for entry in entries:
+            if int(entry['step']) == step:
+                goal[env, :] = np.asarray(entry['pixels'])
+
+
 def _validate_eval_state_mode(mode: str, mode_name: str) -> None:
     if mode not in EVAL_STATE_MODES:
         raise ValueError(
@@ -956,6 +968,7 @@ class World:
             )
             data = payload['data']
             columns = payload['columns']
+            goal_schedule = payload.get('goal_schedule')
             ep_idx_arr = np.array(payload.get('episodes_idx', []), dtype=np.int64)
             if ep_idx_arr.size == 0:
                 ep_idx_arr = np.arange(len(data), dtype=np.int64)
@@ -973,9 +986,12 @@ class World:
                 )
                 data = data[:self.num_envs]
                 ep_idx_arr = ep_idx_arr[:self.num_envs]
+                if goal_schedule is not None:
+                    goal_schedule = goal_schedule[: self.num_envs]
 
             data = _pad_loaded_eval_trajectories(data, columns)
         else:
+            goal_schedule = None
             if dataset is None:
                 raise ValueError('dataset must be provided when not loading eval trajectories')
             if episodes_idx is None or start_steps is None:
@@ -1191,8 +1207,15 @@ class World:
         wall_clock_to_success = np.full(self.num_envs, np.nan, dtype=np.float64)
         steps_to_success = np.full(self.num_envs, np.nan, dtype=np.float64)
 
+        if goal_schedule is not None:
+            # the subgoals replace the goal frame the policy sees; the env's
+            # own goal (the goal test) stays the final goal
+            goal_step['goal'] = np.array(goal_step['goal'])
+
         eval_start_time = time.perf_counter()
         for i in range(eval_budget):
+            if goal_schedule is not None:
+                _switch_goals(goal_step['goal'], goal_schedule, i)
             self.infos.update(deepcopy(goal_step))
             if recorder is not None:
                 recorder.capture(self.infos, i)

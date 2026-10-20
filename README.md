@@ -40,7 +40,7 @@ The first deliverable is a strong flat model (level 1 alone, `num_levels=1`): th
 - delta prediction (predicted latent = last latent + predictor output, same loss): only if the default model barely beats copying the last latent, or static entities drift in the rollout probes;
 - CLS vs patch tokens in the predictor: last, and only if the rollout probes show the CLS latent losing fast entities (position, mobs). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step.
 
-Built: training, probes (encoded and rollouts, the event split, IDM per action), P1, P3, videos. Not built: P2.
+Everything in the cycle is built except the search for the planning settings.
 
 ## Method
 
@@ -147,9 +147,9 @@ python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan  
 python ../../experiments/run.py plan F1                                                          # print the commands of one job group
 ```
 
-- **Task modes** (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress; P1), `episode` (from reset to the expert's diamond frame; P3), `achievements` (goal = the d-th next unlock). One task per world seed, from expert episodes only (`source == 0`).
+- **Task modes** (`eval_tasks.py`): `offset` (goal = start + offset, pairs with progress; P1), `chain` (the tasks of `episode`, the planner's goal switching through the expert's frames every offset, `--subgoal-budget` steps each; P2), `episode` (from reset to the expert's diamond frame; P3), `achievements` (goal = the d-th next unlock). In `chain` only the goal frame the planner sees switches (the payload's `goal_schedule`); the env's goal test stays the final goal, so P2 and P3 are scored alike. One task per world seed, from expert episodes only (`source == 0`).
 - **Configs** in `h_jepa/config/{train,eval}`: one training config per model type (`craftax_hjepa`, `craftax_hwm`) and one planning config (`craftax_plan`) for every depth; with `num_levels=1` both training configs are the same flat model. Hyperparameters are the Push-T ones until tuned on Craftax. Dataset names `craftax_expert_train` / `_val` / `_test` are the collector output in `$HJEPA_HOME`.
-- **Jobs.** `experiments/experiments.yaml` holds the data plan (D1), the dataset numbers (D0) and the jobs of the flat phase (F1 default model, F2 planning settings, F3-F5 planning P1-P3, V1 context and rollout); `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`). Jobs whose output exists are skipped.
+- **Jobs.** `experiments/experiments.yaml` holds the data plan (D1), the dataset numbers (D0) and the jobs of the flat phase (F1 default model, F2 planning settings, F3-F5 planning P1-P3 on task sets A, C, B, V1 context and rollout); `experiments/run.py` prints the commands, runs them locally, or writes SLURM scripts with dependencies (`slurm.yaml`). Jobs whose output exists are skipped.
 - **Actions.** One-hot (`data.OneHotColumn`, `level1.wm.num_actions: 17`); NaN becomes zeros. The normalizer artifact holds no action statistics and records `num_actions`, so evaluation does not de-normalize action indices.
 - **IDM.** `idm_coeff: 0.1` (placeholder). Cross-entropy over the action index; logs `idm_accuracy_loss_level1` (reference: the best constant guess, at least 1/17).
 - **Planner.** `stable_worldmodel.solver.CategoricalCEMSolver`, same interface as `GradientSolver`, logs `solve_records`. Level 1 plans `action_block` slots of 17 actions. Horizons are fixed over the episode (`horizon_schedule: fixed`); `receding_horizon` counts environment steps.

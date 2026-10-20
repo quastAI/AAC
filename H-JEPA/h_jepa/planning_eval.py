@@ -522,6 +522,8 @@ def _run_chunked_eval(
             gen.manual_seed(seed + start)
         # shallow per-episode copies: evaluate_from_dataset reassigns their columns in place
         chunk = {**payload, "data": [dict(ep) for ep in payload["data"][start:end]], "episodes_idx": ep_idx[start:end]}
+        if payload.get("goal_schedule") is not None:  # the subgoals of the oracle chain (P2)
+            chunk["goal_schedule"] = payload["goal_schedule"][start:end]
         world = swm.World(**{**world_cfg, "num_envs": end - start}, image_shape=image_shape)
         recorder = recorder_for(cfg, start, end)
         try:

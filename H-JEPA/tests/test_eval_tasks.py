@@ -144,6 +144,35 @@ def test_episode_tasks_run_from_reset_to_diamond(dataset):
         eval_tasks.make_tasks(dataset, mode='nope', num_tasks=1)
 
 
+def test_chain_tasks_switch_through_expert_frames_to_the_final_goal(dataset):
+    tasks = eval_tasks.make_tasks(
+        dataset, mode='chain', num_tasks=12, offsets=(20,)
+    )
+    episode = eval_tasks.make_tasks(dataset, mode='episode', num_tasks=12)
+    # scored as protocol B: the same tasks, start and final goal
+    assert [(t['episode'], t['start'], t['goal']) for t in tasks] == [
+        (t['episode'], t['start'], t['goal']) for t in episode
+    ]
+    for t in tasks:
+        assert t['subgoals'] == [20, 40, 60, 80]  # the last is the goal
+        assert t['switch_steps'] == [0, 40, 80, 120]  # 2x the offset each
+    held = eval_tasks.make_tasks(
+        dataset, mode='chain', num_tasks=1, offsets=(30,), subgoal_budget=50
+    )[0]
+    assert held['subgoals'] == [30, 60, 80]
+    assert held['switch_steps'] == [0, 50, 100]
+    payload = eval_tasks.build_payload(dataset, tasks, eval_budget=200)
+    for t, schedule in zip(tasks, payload['goal_schedule']):
+        assert [g['frame'] for g in schedule] == t['subgoals']
+        assert [g['step'] for g in schedule] == t['switch_steps']
+        pixels = schedule[0]['pixels']
+        assert pixels.shape == (4, 4, 3) and pixels.dtype == np.uint8
+        assert int(pixels[0, 0, 0]) == t['episode']  # the right world
+    assert 'subgoals per task' in eval_tasks.describe(tasks)
+    plain = eval_tasks.build_payload(dataset, episode, eval_budget=200)
+    assert 'goal_schedule' not in plain
+
+
 def test_payload_is_loadable_with_variable_lengths(dataset):
     from stable_worldmodel.world import _pad_loaded_eval_trajectories
 
@@ -188,7 +217,9 @@ def reload_with_sources(dataset, sources):
     )
 
 
-@pytest.mark.parametrize('mode', ['offset', 'achievements', 'episode'])
+@pytest.mark.parametrize(
+    'mode', ['offset', 'achievements', 'episode', 'chain']
+)
 def test_tasks_come_from_expert_episodes_only(dataset, mode):
     sources = [e % 2 for e in range(12)]  # diamond episodes: e % 3 == 0
     dataset = reload_with_sources(dataset, sources)

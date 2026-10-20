@@ -15,6 +15,12 @@ Modes
                   and not a number of steps.
     episode       protocol B: start at frame 0, goal = the frame where `target`
                   (default diamond) is unlocked, so the whole chain is required.
+    chain         P2, oracle subgoals: the task of `episode` (success and progress
+                  are scored the same), but the planner's goal frame switches
+                  through the expert's frames at multiples of the first offset,
+                  each held for `subgoal_budget` steps (default 2x the offset); the
+                  last subgoal is the final goal and keeps the rest of the budget.
+                  The payload's `goal_schedule` holds the subgoal frames.
 
 The payload has the format `World.evaluate_from_dataset(load_eval_trajs_path=)`
 reads, plus `task_info` (one entry per task) for the planning report.
@@ -120,12 +126,13 @@ def make_tasks(
     max_distance: int | None = None,
     target: int = DIAMOND,
     sources: tuple[int, ...] | None = (0,),
+    subgoal_budget: int | None = None,
 ) -> list[dict]:
     """Sample up to `num_tasks` tasks, one per episode, spread over offsets or depths.
 
     Only episodes whose `source` is in `sources` are used (default: expert episodes); None uses all.
     """
-    if mode not in ("offset", "achievements", "episode"):
+    if mode not in ("offset", "achievements", "episode", "chain"):
         raise ValueError(f"unknown mode {mode!r}")
     rng = np.random.default_rng(seed)
     flags = episode_achievements(dataset)
@@ -148,10 +155,29 @@ def make_tasks(
             task = _task(e, 0, goal, f) if goal > 0 else None
             if task is not None and max_distance is not None and task["distance"] > max_distance:
                 task = None
+            if task is not None and mode == "chain":
+                task.update(_chain(task["goal"], int(offsets[0]), subgoal_budget or 2 * int(offsets[0])))
         if task is not None and task["required"]:
             task["mode"] = mode
             tasks.append(task)
     return tasks
+
+
+def _chain(goal: int, offset: int, budget: int) -> dict:
+    """Subgoal frames at multiples of `offset` before the final goal, then the goal; the step at which each starts."""
+    subgoals = list(range(offset, goal, offset)) + [goal]
+    return {"subgoal_offset": offset, "subgoal_budget": budget, "subgoals": subgoals,
+            "switch_steps": [j * budget for j in range(len(subgoals))]}  # fmt: skip
+
+
+def goal_schedule(dataset, task: dict) -> list[dict]:
+    """The planner's goal frames of a chain task: {"step", "frame", "pixels" (H, W, C) uint8} per subgoal."""
+    episode = np.array([task["episode"]])
+    out = []
+    for step, frame in zip(task["switch_steps"], task["subgoals"]):
+        pixels = dataset.load_chunk(episode, np.array([frame]), np.array([frame + 1]))[0]["pixels"][0]
+        out.append({"step": int(step), "frame": int(frame), "pixels": np.asarray(pixels.permute(1, 2, 0), dtype=np.uint8)})
+    return out
 
 
 def _start_and_goal(dataset, task: dict) -> dict:
@@ -172,7 +198,9 @@ def build_payload(dataset, tasks: list[dict], eval_budget: int, seed: int = 0) -
     several GB for full episodes. The distance of a task is in `task_info`.
     """
     data = [_start_and_goal(dataset, t) for t in tasks]
+    extra = {"goal_schedule": [goal_schedule(dataset, t) for t in tasks]} if tasks and "subgoals" in tasks[0] else {}
     return {
+        **extra,
         "data": data,
         "columns": list(dataset.column_names),
         "episodes_idx": [t["episode"] for t in tasks],
@@ -196,8 +224,12 @@ def describe(tasks: list[dict]) -> str:
         "required achievements per task: " + ", ".join(f"{k}: {v}" for k, v in sorted(by_required.items())),
         "most common required: " + ", ".join(f"{n} ({c})" for n, c in by_name.most_common(6)),
     ]
+    if "subgoals" in tasks[0]:
+        counts = np.array([len(t["subgoals"]) for t in tasks])
+        lines.append(f"subgoals per task min/median/max {counts.min()}/{int(np.median(counts))}/{counts.max()}, "
+                     f"each held {tasks[0]['subgoal_budget']} steps")  # fmt: skip
     for key in ("offset", "depth"):
-        if key in tasks[0]:
+        if key in tasks[0] and "subgoals" not in tasks[0]:
             counts = Counter(t[key] for t in tasks)
             lines.append(f"by {key}: " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
     return "\n".join(lines)
@@ -207,11 +239,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True, help="dataset name (HDF5 under the cache dir)")
     parser.add_argument("--cache-dir", default=os.environ.get("HJEPA_HOME"))
-    parser.add_argument("--mode", choices=["offset", "achievements", "episode"], default="offset")
+    parser.add_argument("--mode", choices=["offset", "achievements", "episode", "chain"], default="offset")
     parser.add_argument("--num-tasks", type=int, default=100)
     parser.add_argument("--offsets", type=int, nargs="+", default=[25, 50, 100, 200])
     parser.add_argument("--depths", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument("--max-distance", type=int, default=None)
+    parser.add_argument("--subgoal-budget", type=int, default=None, help="chain: steps per subgoal (default 2x the offset)")
     parser.add_argument("--eval-budget", type=int, required=True, help="environment steps the planner gets")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--sources", type=int, nargs="+", default=[0], help="episode sources to use (0 expert)")
@@ -227,8 +260,12 @@ def main():
     tasks = make_tasks(
         dataset, mode=args.mode, num_tasks=args.num_tasks, seed=args.seed, offsets=args.offsets,
         depths=args.depths, max_distance=args.max_distance, sources=None if args.all_sources else tuple(args.sources),
+        subgoal_budget=args.subgoal_budget,
     )  # fmt: skip
     print(describe(tasks))
+    late = sum(t["switch_steps"][-1] >= args.eval_budget for t in tasks if "switch_steps" in t)
+    if late:
+        print(f"warning: in {late} tasks the final goal starts after the budget of {args.eval_budget} steps")
     if len(tasks) < args.num_tasks:
         print(f"warning: only {len(tasks)} of {args.num_tasks} tasks found (one per episode, with progress)")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

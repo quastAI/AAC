@@ -70,6 +70,9 @@ def test_planning_reuses_the_flat_model(spec):
     full = by_name(jobs_of(spec, 'F5'))
     assert full['tasks_B'].command[full['tasks_B'].command.index('--mode') + 1] == 'episode'
     assert 'eval_random_B' in full
+    chain = by_name(jobs_of(spec, 'F4'))['tasks_C'].command
+    assert chain[chain.index('--mode') + 1] == 'chain'
+    assert chain[chain.index('--offsets') + 1] == '50' and '--subgoal-budget' in chain
 
 
 def test_seeds_multiply_the_runs_and_overrides_reach_training_only(spec):
@@ -196,8 +199,8 @@ def test_cli_list_and_plan(spec, capsys, tmp_path):
     assert 'flat_rollout4' not in capsys.readouterr().out  # optional runs only with --include-optional
     run.main(['plan', 'V1', '--spec', str(path), '--include-optional'])
     assert 'flat_rollout4' in capsys.readouterr().out
-    with pytest.raises(SystemExit):
-        run.main(['plan', 'F4'])
+    with pytest.raises(SystemExit, match='blocked'):
+        run.main(['plan', 'F2'])
 
 
 def test_final_runs_take_their_tasks_from_the_test_split(spec):

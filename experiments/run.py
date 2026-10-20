@@ -163,6 +163,8 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
                "--eval-budget", str(t["eval_budget"]), "--out", path]  # fmt: skip
         if t.get("offsets"):
             cmd += ["--offsets", *map(str, t["offsets"])]
+        if t.get("subgoal_budget"):
+            cmd += ["--subgoal-budget", str(t["subgoal_budget"])]
         task_jobs[p] = Job(f"tasks_{p}", "tasks", cmd, output=path)
         jobs.append(task_jobs[p])
 
