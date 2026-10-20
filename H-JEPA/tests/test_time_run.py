@@ -81,3 +81,18 @@ def test_training_timing_with_frameskip_above_one():
         cfg, batch_size=2, steps=1, warmup=0, device=torch.device('cpu')
     )
     assert t['step_seconds'] > 0
+
+
+def test_the_real_loader_is_timed_on_the_training_file(dataset):
+    cfg = time_run.compose(
+        'train',
+        'craftax_hjepa',
+        ['num_levels=1', 'data.dataset.name=craftax', 'loader.batch_size=4'],
+    )
+    d = time_run.time_loading(
+        cfg, dataset.h5_path.parent, batches=2, num_workers=0
+    )
+    assert d['clips_per_second'] > 0 and d['num_workers'] == 0
+    span = int(cfg.level1.wm.history_size) + int(cfg.level1.wm.rollout_n)
+    # one episode: every start position of a clip (no death, no padding)
+    assert d['clips_per_epoch'] == int(dataset.lengths[0]) - span + 1

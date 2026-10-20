@@ -3,6 +3,9 @@
 Training: random batches of the geometry of the config, forward + backward +
 optimiser step (data loading is not included), median step time, FLOPs and peak
 memory, extrapolated to an epoch and to the GPU-hours of the whole run.
+Data loading (`--loader-batches N`): the training loader of the config on the
+real training file, clips per second against what the step consumes; the epoch
+then has the real number of clips.
 Planning: one solve with the solver of an evaluation config on random frames,
 extrapolated to a task and to a task set. The planning numbers are for the
 planner only; stepping the simulator is not included.
@@ -16,6 +19,7 @@ Meaningful on the GPU of the real runs; it also runs on the CPU as a smoke test.
 from __future__ import annotations
 
 import argparse
+import os
 import statistics
 import time
 from pathlib import Path
@@ -121,6 +125,33 @@ def time_training(cfg, batch_size: int, steps: int, warmup: int, device) -> dict
     }
 
 
+def time_loading(cfg, cache_dir, batches: int, num_workers: int | None = None) -> dict:
+    """The training loader of `cfg` on the real training file, as main_hjepa builds it: clips per second."""
+    from omegaconf import OmegaConf
+    from torch.utils.data import DataLoader
+
+    from data import Compose, build_column_transforms, build_hdf5_dataset, dataset_kwargs
+
+    dataset_cfg = dataset_kwargs(cfg)
+    dataset_cfg.pop("val_total_transitions", None)
+    dataset = build_hdf5_dataset(dataset_cfg, cache_dir=cache_dir)
+    dataset.transform = Compose(*build_column_transforms(cfg, dataset))
+    loader_cfg = OmegaConf.to_container(cfg.loader, resolve=True)
+    if num_workers is not None:
+        loader_cfg["num_workers"] = num_workers
+    if not loader_cfg["num_workers"]:  # these need worker processes
+        loader_cfg.update(persistent_workers=False, prefetch_factor=None)
+    loader = iter(DataLoader(dataset, **loader_cfg, generator=torch.Generator().manual_seed(0)))
+    next(loader)  # starts the workers
+    t0 = time.perf_counter()
+    clips = 0
+    for _ in range(batches):
+        clips += len(next(loader)["pixels_level1"])
+    seconds = time.perf_counter() - t0
+    return {"clips_per_second": clips / seconds, "clips_per_epoch": len(dataset), "num_workers": loader_cfg["num_workers"],
+            "batches": batches}  # fmt: skip
+
+
 def time_planning(train_cfg, eval_cfg, num_envs: int, solves: int, device) -> dict:
     from omegaconf import OmegaConf
 
@@ -189,6 +220,9 @@ def main():
     parser.add_argument("--num-envs", type=int, default=8, help="environments per timed solve")
     parser.add_argument("--solves", type=int, default=3)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--loader-batches", type=int, default=0, help="time the real training loader on N batches")
+    parser.add_argument("--num-workers", type=int, help="loader workers (default: the config's)")
+    parser.add_argument("--cache-dir", default=os.environ.get("HJEPA_HOME"), help="where the training file is")
     parser.add_argument("overrides", nargs="*", help="Hydra overrides of the training config, e.g. num_levels=3")
     args = parser.parse_args()
 
@@ -198,13 +232,22 @@ def main():
     epochs = args.epochs or int(cfg.trainer.max_epochs)
     print(f"device {device}; config {args.config_name}; batch size {batch_size}")
     t = time_training(cfg, batch_size, args.steps, args.warmup, device)
-    steps_per_epoch = args.clips // batch_size
-    epoch = steps_per_epoch * t["step_seconds"]
     print(f"\nTraining step: {t['step_seconds']:.3f} s ({t['samples_per_second']:.0f} clips/s), "
           f"{t['tflops_per_step']:.2f} TFLOPs, {t['parameters_m']:.1f} M parameters, "
           f"{t['frames_per_clip']} level-1 frames per clip"
           + (f", peak memory {t['peak_memory_gb']:.1f} GB" if t["peak_memory_gb"] else ""))
-    print(f"Epoch of {args.clips} clips: {steps_per_epoch} steps, {epoch / 60:.1f} min. "
+    clips = args.clips
+    if args.loader_batches:
+        cfg.loader.batch_size = batch_size
+        d = time_loading(cfg, args.cache_dir, args.loader_batches, args.num_workers)
+        clips = d["clips_per_epoch"]
+        verdict = "the bottleneck" if d["clips_per_second"] < t["samples_per_second"] else "fast enough"
+        print(f"\nData loading: {d['clips_per_second']:.0f} clips/s with {d['num_workers']} workers over {d['batches']} "
+              f"batches; the step takes {t['samples_per_second']:.0f} clips/s, so loading is {verdict}. "
+              f"The training file has {clips} clips per epoch.")
+    steps_per_epoch = clips // batch_size
+    epoch = steps_per_epoch * t["step_seconds"]
+    print(f"Epoch of {clips} clips: {steps_per_epoch} steps, {epoch / 60:.1f} min. "
           f"{epochs} epochs: {epochs * epoch / 3600:.2f} GPU-hours (data loading not included).")
 
     if args.eval_config_name:
