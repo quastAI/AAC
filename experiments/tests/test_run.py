@@ -38,60 +38,63 @@ def test_every_experiment_builds_or_is_blocked(spec):
                 assert set(j.after) <= set(names[: names.index(j.name)])
 
 
-def test_e1_commands_and_dependencies(spec):
-    jobs = by_name(jobs_of(spec, 'E1'))
-    train = jobs['train_e1_hjepa_l2_s42']
+def test_flat_model_is_trained_then_probed(spec):
+    jobs = by_name(jobs_of(spec, 'F1'))
+    train = jobs['train_flat_s42']
     assert train.command[:4] == ['python', 'main_hjepa.py', '--config-name', 'craftax_hjepa']
-    assert 'num_levels=2' in train.command  # the depth is a setting
-    assert 'output_model_name=e1_hjepa_l2' in train.command and 'seed=42' in train.command
+    assert 'num_levels=1' in train.command  # the flat model is level 1 alone
+    assert 'output_model_name=flat' in train.command and 'seed=42' in train.command
     assert 'data.dataset.name=craftax_expert_train' in train.command
-    ev = jobs['eval_e1_hjepa_l2_s42_A']
-    assert ev.after == ['tasks_A', 'train_e1_hjepa_l2_s42']
-    assert 'policy=ckpts/craftax/e1_hjepa_l2/seed42' in ev.command
+    probe = jobs['probe_flat_s42']
+    assert probe.after == ['train_flat_s42']  # trained in the same experiment: probed after it
+    assert '--run' in probe.command and '/data/ckpts/craftax/flat/seed42' in probe.command
+    assert '--probing' in jobs['compare_F1_models'].command
+    assert set(jobs['compare_F1_models'].after) == {'train_flat_s42', 'probe_flat_s42'}
+
+
+def test_planning_reuses_the_flat_model(spec):
+    jobs = by_name(jobs_of(spec, 'F3'))
+    assert not any(j.kind == 'train' for j in jobs.values())
+    ev = jobs['eval_flat_s42_A']
+    assert ev.after == ['tasks_A']
+    assert 'policy=ckpts/craftax/flat/seed42' in ev.command
     assert 'output.dir=seed42/eval_A_val_craftax_plan' in ev.command
     assert 'load_eval_trajs_path=/data/eval_tasks/A_val.pt' in ev.command
-    # tasks A (offsets with progress) and B (full episodes) and a random baseline for each
-    assert '--offsets' in jobs['tasks_A'].command and '--mode' in jobs['tasks_B'].command
-    base = jobs['eval_random_B']
-    assert 'policy=random' in base.command and 'output.dir=/data/ckpts/craftax/random/eval_B_val' in base.command
+    assert '--offsets' in jobs['tasks_A'].command
+    base = jobs['eval_random_A']
+    assert 'policy=random' in base.command and 'output.dir=/data/ckpts/craftax/random/eval_A_val' in base.command
     # the comparison of a protocol waits for its evaluations and names the baseline
-    compare = jobs['compare_E1_A']
-    assert set(compare.after) == {n for n in jobs if n.startswith('eval_') and n.endswith('_A')}
+    compare = jobs['compare_F3_A']
+    assert set(compare.after) == {'eval_flat_s42_A', 'eval_random_A'}
     assert '--baseline' in compare.command and any(c.startswith('random=') for c in compare.command)
-    assert 'compare_E1_models' in jobs and '--probing' in jobs['compare_E1_models'].command
+    full = by_name(jobs_of(spec, 'F5'))
+    assert full['tasks_B'].command[full['tasks_B'].command.index('--mode') + 1] == 'episode'
+    assert 'eval_random_B' in full
 
 
 def test_seeds_multiply_the_runs_and_overrides_reach_training_only(spec):
-    one = jobs_of(spec, 'E1', seeds=[42])
-    three = jobs_of(spec, 'E1', seeds=[42, 43, 44], overrides=['level2.stride=6'])
+    one = jobs_of(spec, 'V1', seeds=[42])
+    three = jobs_of(spec, 'V1', seeds=[42, 43, 44], overrides=['level1.lr=1e-4'])
     count = lambda jobs, kind: sum(j.kind == kind for j in jobs)  # noqa: E731
     assert count(three, 'train') == 3 * count(one, 'train')
-    trains = [j for j in three if j.kind == 'train' and 'e1_hjepa_l2' in j.name]
-    assert all('level2.stride=6' in j.command for j in trains)
-    assert not any('level2.stride=6' in j.command for j in three if j.kind != 'train')
+    assert all('level1.lr=1e-4' in j.command for j in three if j.kind == 'train')
+    assert not any('level1.lr=1e-4' in j.command for j in three if j.kind != 'train')
 
 
-def test_reused_models_are_not_retrained(spec):
-    jobs = by_name(jobs_of(spec, 'E6'))
-    assert not any(j.kind == 'train' for j in jobs.values())
-    ev = jobs['eval_e6_hjepa_l2_project_s42_A']
-    assert ev.after == ['tasks_A']
-    assert 'policy=ckpts/craftax/e1_hjepa_l2/seed42' in ev.command
-    assert '--config-name' in ev.command and 'craftax_l2_project' in ev.command
+def test_variants_set_their_overrides(spec):
+    v1 = by_name(jobs_of(spec, 'V1'))
+    assert 'level1.wm.history_size=1' in v1['train_flat_h1_s42'].command
+    assert 'level1.wm.rollout_n=4' in v1['train_flat_rollout4_s42'].command
+    assert v1['probe_flat_h1_s42'].after == ['train_flat_h1_s42']
+    assert v1['eval_flat_rollout4_s42_B'].after == ['tasks_B', 'train_flat_rollout4_s42']
 
 
-def test_ablations_set_their_overrides(spec):
-    e5 = by_name(jobs_of(spec, 'E5'))
-    assert 'level1.idm_coeff=0' in e5['train_e5_l1_noidm_s42'].command
-    e3 = by_name(jobs_of(spec, 'E3'))
-    assert 'level2.wm.rollout_n=4' in e3['train_e3_hjepa_l2_rollout4_s42'].command
-
-
-def test_probe_experiment_has_no_training(spec):
-    jobs = jobs_of(spec, 'E4')
+def test_a_probe_of_an_existing_run_has_no_training(spec):
+    spec['experiments']['P'] = {'title': 'probes only', 'probe': ['flat']}
+    jobs = jobs_of(spec, 'P')
     probes = [j for j in jobs if j.kind == 'probe']
-    assert len(probes) == 4 and not any(j.kind == 'train' for j in jobs)
-    assert '--run' in probes[0].command and '/data/ckpts/craftax/e1_l1/seed42' in probes[0].command
+    assert len(probes) == 1 and probes[0].after == []
+    assert not any(j.kind == 'train' for j in jobs)
 
 
 def test_planner_scale_changes_samples_and_iterations_together(spec, tmp_path, monkeypatch):
@@ -110,11 +113,21 @@ def test_planner_scale_changes_samples_and_iterations_together(spec, tmp_path, m
     flat = [o.split('=')[0] for o in run.scaled_overrides('flat', 0.25)]
     assert flat == ['solver.num_samples', 'solver.n_iters', 'solver.topk']
     monkeypatch.undo()
-    jobs = by_name(jobs_of(spec, 'C1'))
-    ev = jobs['eval_c1_x4_s42_A']
+    spec['experiments']['S'] = {
+        'title': 'compute scaling',
+        'protocols': ['A'],
+        'compare': 'scaling',
+        'runs': [
+            {'name': f'flat_x{s}', 'train': False, 'model': 'flat', 'eval': 'craftax_plan', 'planner_scale': s}
+            for s in (1, 4)
+        ],
+    }
+    jobs = by_name(jobs_of(spec, 'S'))
+    ev = jobs['eval_flat_x4_s42_A']
     assert 'output.dir=seed42/eval_A_val_craftax_plan_x4' in ev.command
     assert 'solver.solvers.level1.num_samples=%d' % big['solver.solvers.level1.num_samples'] in ev.command
-    assert '--scaling' in jobs['compare_C1_A'].command
+    assert '--scaling' in jobs['compare_S_A'].command
+    assert '--planning' in by_name(jobs_of(spec, 'F3'))['compare_F3_A'].command
 
 
 def test_local_run_skips_finished_jobs_and_stops_on_failure(spec, tmp_path):
@@ -141,7 +154,7 @@ def test_sbatch_scripts_chain_dependencies(spec, tmp_path, monkeypatch):
     monkeypatch.setattr(run, 'HERE', tmp_path)
     slurm = yaml.safe_load((Path(run.__file__).parent / 'slurm.yaml').read_text())
     slurm.update(partition='gpu', account='lab', venv='/venvs/h')
-    jobs = jobs_of(spec, 'E6')
+    jobs = jobs_of(spec, 'F3')
     counter = iter(range(100, 200))
 
     class Result:
@@ -154,49 +167,53 @@ def test_sbatch_scripts_chain_dependencies(spec, tmp_path, monkeypatch):
         submitted.append(Path(cmd[-1]).read_text())
         return Result(next(counter))
 
-    ids = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'E6', submit=True, runner=fake_sbatch)
+    ids = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'F3', submit=True, runner=fake_sbatch)
     assert ids['tasks_A'] == '100'
-    evaluation = next(t for t in submitted if '--job-name=eval_e6_hjepa_l2_project_s42_A' in t)
+    evaluation = next(t for t in submitted if '--job-name=eval_flat_s42_A' in t)
     assert '#SBATCH --dependency=afterok:100' in evaluation
     assert '#SBATCH --gres=gpu:1' in evaluation and '#SBATCH --partition=gpu' in evaluation
     assert 'source /venvs/h/bin/activate' in evaluation and 'eval.py' in evaluation
-    compare = next(t for t in submitted if '--job-name=compare_E6_A' in t)
+    compare = next(t for t in submitted if '--job-name=compare_F3_A' in t)
     assert 'gres' not in compare  # no GPU for the comparison
     assert 'afterok:' in compare and compare.count(':') >= 3  # waits for both evaluations
 
-    dry = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'E6', submit=False)
+    dry = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'F3', submit=False)
     assert all(v.startswith('<') for v in dry.values())  # written, not submitted
-    assert (tmp_path / 'generated' / 'E6').is_dir()
+    assert (tmp_path / 'generated' / 'F3').is_dir()
 
 
-def test_cli_list_and_plan(spec, capsys):
+def test_cli_list_and_plan(spec, capsys, tmp_path):
     run.main(['list'])
     out = capsys.readouterr().out
-    assert 'E1:' in out and '[blocked' in out
-    run.main(['plan', 'E2', '--final'])
+    assert 'F1:' in out and '[blocked' in out
+    run.main(['plan', 'F1', '--final'])
     plan = capsys.readouterr().out
     assert 'seed=43' in plan and 'seed=44' in plan
-    assert 'e2_hwm_l3' not in plan  # optional runs only with --include-optional
-    run.main(['plan', 'E2', '--include-optional'])
-    assert 'e2_hwm_l3' in capsys.readouterr().out
+    spec['experiments']['V1']['runs'][1]['optional'] = True
+    path = tmp_path / 'spec.yaml'
+    path.write_text(yaml.safe_dump(spec))
+    run.main(['plan', 'V1', '--spec', str(path)])
+    assert 'flat_rollout4' not in capsys.readouterr().out  # optional runs only with --include-optional
+    run.main(['plan', 'V1', '--spec', str(path), '--include-optional'])
+    assert 'flat_rollout4' in capsys.readouterr().out
     with pytest.raises(SystemExit):
-        run.main(['plan', 'E7'])
+        run.main(['plan', 'F4'])
 
 
 def test_final_runs_take_their_tasks_from_the_test_split(spec):
-    jobs = by_name(run.build_jobs(spec, 'E1', [42], home='/data', final=True))
+    jobs = by_name(run.build_jobs(spec, 'V1', [42], home='/data', final=True))
     assert 'craftax_expert_test' in jobs['tasks_A'].command
     assert jobs['tasks_A'].output == '/data/eval_tasks/A_test.pt'
-    ev = jobs['eval_e1_hjepa_l2_s42_A']
+    ev = jobs['eval_flat_h1_s42_A']
     assert 'eval.dataset_name=craftax_expert_test' in ev.command
     # training still validates on the validation worlds
-    assert 'data.dataset.val_name=craftax_expert_val' in jobs['train_e1_hjepa_l2_s42'].command
+    assert 'data.dataset.val_name=craftax_expert_val' in jobs['train_flat_h1_s42'].command
 
 
 def test_final_and_exploration_results_never_share_a_directory(spec):
     # a headline run must not skip jobs, or reuse chunks, of the exploration run
-    explore = run.build_jobs(spec, 'E1', [42], home='/data')
-    final = run.build_jobs(spec, 'E1', [42], home='/data', final=True)
+    explore = run.build_jobs(spec, 'V1', [42], home='/data')
+    final = run.build_jobs(spec, 'V1', [42], home='/data', final=True)
     outputs = lambda jobs: {  # noqa: E731
         j.name: j.output for j in jobs if j.kind in ('eval', 'compare') and j.output
     }
@@ -206,7 +223,7 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
         if name.endswith('_models'):
             continue  # probes and training reports do not depend on the task split
         assert out_e[name] != out_f[name], name
-    ev = {j.name: j for j in final}['eval_e1_hjepa_l2_s42_A']
+    ev = {j.name: j for j in final}['eval_flat_h1_s42_A']
     assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 

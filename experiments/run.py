@@ -1,10 +1,10 @@
 """Plan, run, or submit the Craftax experiments listed in experiments.yaml.
 
     python run.py list
-    python run.py plan E1                     # print every command, with dependencies
-    python run.py plan E1 --final             # three seeds instead of one
-    python run.py run E1 --mode local         # run them here, in order
-    python run.py run E1 --mode slurm         # write sbatch scripts (and submit with --submit)
+    python run.py plan F1                     # print every command, with dependencies
+    python run.py plan F1 --final             # three seeds instead of one
+    python run.py run F1 --mode local         # run them here, in order
+    python run.py run F1 --mode slurm         # write sbatch scripts (and submit with --submit)
 
 `HJEPA_HOME` must point at the directory with the datasets and checkpoints. Jobs whose
 output exists are skipped (`--force` runs them again). Experiments whose code is not
@@ -210,10 +210,13 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
         for seed in seeds:
             cmd = [python, "probe_eval.py", "--run", _run_dir(home, model, seed), "--train-dataset", train_ds,
                    "--val-dataset", val_ds, "--max-clips", "512"]  # fmt: skip
-            jobs.append(Job(f"probe_{model}_s{seed}", "probe", cmd, output=f"{_run_dir(home, model, seed)}/health/probe_report.md"))
+            train = f"train_{model}_s{seed}"  # a model trained in the same experiment is probed after its training
+            after = [train] if any(j.name == train for j in jobs) else []
+            jobs.append(Job(f"probe_{model}_s{seed}", "probe", cmd, after=after,
+                            output=f"{_run_dir(home, model, seed)}/health/probe_report.md"))  # fmt: skip
             probes.append(f"{model}_s{seed}={_run_dir(home, model, seed)}")
 
-    flag = "--scaling" if exp_id == "C1" else "--planning"
+    flag = "--scaling" if exp.get("compare") == "scaling" else "--planning"
     for p, dirs in eval_dirs.items():  # one comparison per protocol: the baseline differs between task sets
         out = f"{home}/reports/{exp_id}_{p}_{split}.md"
         cmd = [python, str(ROOT / "analysis" / "compare_runs.py"), "--out", out, flag, *dirs]
@@ -350,7 +353,10 @@ def main(argv=None):
     seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else spec["settings"]["seeds_final" if args.final else "seeds_explore"]
     if not args.include_optional:
         for e in spec["experiments"].values():
+            dropped = {r["name"] for r in e.get("runs", []) if r.get("optional")}
             e["runs"] = [r for r in e.get("runs", []) if not r.get("optional")]
+            if "probe" in e:
+                e["probe"] = [m for m in e["probe"] if m not in dropped]
 
     home = os.environ.get("HJEPA_HOME")
     jobs = build_jobs(spec, args.experiment, seeds, args.override, home or HOME_VAR, final=args.final,

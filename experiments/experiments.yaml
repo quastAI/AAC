@@ -1,9 +1,12 @@
-# The Craftax experiments (README table). `run.py` turns this into commands.
+# The Craftax jobs: the data plan (D1), the dataset numbers (D0) and the flat-model phase (README,
+# "Current phase"). `run.py` turns this into commands.
 #
 # A run trains `config` as `name` (unless `train: false` and `model` names an existing run),
 # then is evaluated with the evaluation config `eval` on the task sets of the experiment's
 # protocols. Overrides are Hydra overrides of the training config. Seeds come from the
-# command line (exploration: one seed; headline results: three).
+# command line (exploration: one seed; headline results: three). `probe` lists runs to probe
+# (after their training if it is in the same experiment); `planner_scale` on a run multiplies the
+# planner's samples x iterations, and `compare: scaling` compares such runs by compute.
 #
 # Everything marked placeholder is to be set from the data analysis and the first runs.
 
@@ -50,82 +53,43 @@ experiments:
     title: Dataset section numbers (lengths, achievements, change matrix, clip coverage, actions, entity gap; `dataset_section compute`)
     analysis: true
 
-  E1:
-    title: Level 1 alone (LeWM) vs HWM vs H-JEPA at matched depth (the depth is `num_levels`)
-    rq: [1]
-    protocols: [A, B]
+  # The flat-model phase. Every variant runs the cycle: training, probes, planning P1-P3 (protocols A, B and
+  # the oracle chain), each with the random baseline. The planning settings (goal offset, horizon, CEM) are
+  # set on the F1 model (F2) and then frozen for every variant. Coefficient, delta and CLS/patch variants are
+  # added when they are run (README).
+  F1:
+    title: Default flat model (level 1 alone, IDM on, history 3, rollout_n 1, CLS latent), training and probes
+    runs:
+      - {name: flat, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
+    probe: [flat]
+
+  F2:
+    title: Planning settings (goal offset, planning horizon, CEM) on the F1 model, then frozen for every variant
+    blocked: not designed yet (no full sweep; decided once the F1 model exists)
+
+  F3:
+    title: P1, planning toward fixed-offset goals (protocol A) with the F1 model
+    protocols: [A]
     baseline: true  # a random policy on the same tasks
     runs:
-      - {name: e1_l1, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
-      - {name: e1_hwm_l2, config: craftax_hwm, eval: craftax_plan, overrides: [num_levels=2]}
-      - {name: e1_hjepa_l2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=2]}
+      - {name: flat, train: false, model: flat, eval: craftax_plan}
 
-  E2:
-    title: Depth, 2 vs 3 levels (set the strides from the dataset section with --override level2.stride=.. level3.stride=..)
-    rq: [1]
+  F4:
+    title: P2, planning to the diamond through oracle subgoals (the expert's frames at multiples of the goal offset)
+    blocked: the oracle-chain task mode and goal switching in the evaluation are not built
+
+  F5:
+    title: P3, planning to the diamond from the final goal only (protocol B) with the F1 model
+    protocols: [B]
+    baseline: true
+    runs:
+      - {name: flat, train: false, model: flat, eval: craftax_plan}
+
+  V1:
+    title: Context and rollout loss, each against F1 (placeholders for the values)
     protocols: [A, B]
-    baseline: true
+    baseline: true  # the same jobs as in F3 and F5: skipped when done
     runs:
-      - {name: e1_hjepa_l2, train: false, model: e1_hjepa_l2, eval: craftax_plan}
-      - {name: e2_hjepa_l3, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=3]}
-      - {name: e2_hwm_l3, config: craftax_hwm, eval: craftax_plan, overrides: [num_levels=3], optional: true}
-
-  E3:
-    title: Rollout loss on/off, set per model (off is the E1 run with rollout_n 1)
-    rq: [1, 2]
-    protocols: [A]
-    baseline: true
-    runs:
-      - {name: e3_l1_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.rollout_n=4]}
-      - name: e3_hjepa_l2_rollout4
-        config: craftax_hjepa
-        eval: craftax_plan
-        overrides: [num_levels=2, level1.wm.rollout_n=4, level2.wm.rollout_n=4]
-
-  E4:
-    title: Per-level probes (larger probe sets than the end of training), frequency gap, cost geometry
-    rq: [2]
-    probe: [e1_l1, e1_hwm_l2, e1_hjepa_l2, e2_hjepa_l3]
-
-  E5:
-    title: IDM on/off, set per model (on is the E1 run; level 1 alone first, then H-JEPA, HWM if the budget allows)
-    rq: [1, 2]
-    protocols: [A]
-    baseline: true
-    runs:
-      - {name: e5_l1_noidm, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.idm_coeff=0]}
-      - name: e5_hjepa_l2_noidm
-        config: craftax_hjepa
-        eval: craftax_plan
-        overrides: [num_levels=2, level1.idm_coeff=0, level2.idm_coeff=0]
-      - name: e5_hwm_l2_noidm
-        config: craftax_hwm
-        eval: craftax_plan
-        overrides: [num_levels=2, level1.idm_coeff=0, level2.idm_coeff=0]
-        optional: true
-
-  E6:
-    title: Cost only, level-1 planning with the cost in the level-2 latent (evaluation of E1 models)
-    rq: [1]
-    protocols: [A]
-    runs:
-      - {name: e6_hjepa_l2_project, train: false, model: e1_hjepa_l2, eval: craftax_l2_project}
-      - {name: e6_hwm_l2_project, train: false, model: e1_hwm_l2, eval: craftax_l2_project}
-
-  E7:
-    title: Variable band vs fixed stride, including the band width
-    rq: [3]
-    blocked: the irregular-spacing dataset sampler, passing action_duration through the hierarchical encode and the hierarchical solver's fixed-stride horizon coupling are not built
-
-  E8:
-    title: Learned jumps vs fixed vs band
-    rq: [4]
-    blocked: learned jumps are not built
-
-  C1:
-    title: Planner compute scaling of the E1 H-JEPA model (success or progress falling with compute means exploitation)
-    protocols: [A]
-    runs:
-      - {name: c1_x0.25, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 0.25}
-      - {name: c1_x1, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 1}
-      - {name: c1_x4, train: false, model: e1_hjepa_l2, eval: craftax_plan, planner_scale: 4}
+      - {name: flat_h1, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.history_size=1]}
+      - {name: flat_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.rollout_n=4]}
+    probe: [flat_h1, flat_rollout4]
