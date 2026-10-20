@@ -179,7 +179,9 @@ def fig_actions(rec, plt):
     actions = rec["splits"]["train"]["actions"]
     names = list(actions["steps"])
     outcome, asleep = actions["outcome"], actions["asleep"]
-    colors = {"succeeded": COLORS["train"], "failed": COLORS["test"], "asleep (action ignored)": "#6d6c68", "awake, not split": "#c9c8c3"}
+    # the succeeded steps carry the effect of an action: they get the strong colour, the others lighter ones
+    colors = {"succeeded": COLORS["train"], "failed": "#f2b9a1", "asleep (action ignored)": "#b9b8b3", "awake, not split": "#dddcd8"}
+    total = sum(actions["steps"].values())
     fig, ax = plt.subplots(figsize=(FIG_WIDTH, 6.6))
     height = 0.26
     shown = []
@@ -192,11 +194,11 @@ def fig_actions(rec, plt):
             offsets = (-height / 2, height / 2)
         for (label, c), off in zip(bars, offsets):
             ax.barh(i + off, c, height=height, color=colors[label], label=label)
-            ax.text(max(c, 1) * 1.15, i + off, f"{c:,}", va="center", fontsize=5.5, color=MUTED)
+            ax.text(max(c, 1) * 1.15, i + off, f"{c:,} ({100 * c / total:.2g}%)", va="center", fontsize=5.5, color=MUTED)
             shown.append(c)
     ax.set_yticks(range(len(names)), [n.replace("_", " ") for n in names])
     ax.invert_yaxis()
-    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded, failed and ignored (asleep) steps")
+    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded, failed and ignored (asleep) steps; in brackets the share of all steps")
     ax.set_xlim(max(1, min(c for c in shown if c > 0) / 3), max(shown) * 10)
     ax.xaxis.set_major_formatter(FuncFormatter(_si))
     ax.xaxis.set_minor_formatter(NullFormatter())
