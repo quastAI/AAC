@@ -1,6 +1,6 @@
 {
  "git": {
-  "commit": "cbba9504c2c063ed36b5debf85e7f9b34c0f3d84",
+  "commit": "7a400e92fc11d416b0508928c078ec3998cec072",
   "analysis_dirty": false
  },
  "lags": [
@@ -6599,70 +6599,89 @@
      "make_stone_sword": 0.014075933652539339,
      "make_iron_sword": 0.04651881071150568
     },
+    "asleep": {
+     "noop": 79258,
+     "left": 1882,
+     "right": 3774,
+     "up": 7230,
+     "down": 39549,
+     "do": 13908,
+     "sleep": 15308,
+     "place_stone": 5556,
+     "place_table": 2952,
+     "place_furnace": 16011,
+     "place_plant": 9665,
+     "make_wood_pickaxe": 7554,
+     "make_stone_pickaxe": 14481,
+     "make_iron_pickaxe": 59741,
+     "make_wood_sword": 7873,
+     "make_stone_sword": 21217,
+     "make_iron_sword": 40028
+    },
     "outcome": {
      "left": {
       "succeeded": 180410,
-      "failed": 21545
+      "failed": 19663
      },
      "right": {
       "succeeded": 172861,
-      "failed": 24007
+      "failed": 20233
      },
      "up": {
       "succeeded": 252586,
-      "failed": 31889
+      "failed": 24659
      },
      "down": {
       "succeeded": 254240,
-      "failed": 60089
+      "failed": 20540
      },
      "do": {
-      "succeeded": 209570,
-      "failed": 124279
+      "succeeded": 209254,
+      "failed": 110687
      },
      "sleep": {
-      "succeeded": 22668,
-      "failed": 8822
+      "succeeded": 8565,
+      "failed": 7617
      },
      "place_stone": {
       "succeeded": 27289,
-      "failed": 10456
+      "failed": 4900
      },
      "place_table": {
       "succeeded": 13129,
-      "failed": 11406
+      "failed": 8454
      },
      "place_furnace": {
       "succeeded": 12013,
-      "failed": 61697
+      "failed": 45686
      },
      "place_plant": {
       "succeeded": 3723,
-      "failed": 19375
+      "failed": 9710
      },
      "make_wood_pickaxe": {
       "succeeded": 3588,
-      "failed": 19625
+      "failed": 12071
      },
      "make_stone_pickaxe": {
       "succeeded": 2830,
-      "failed": 37637
+      "failed": 23156
      },
      "make_iron_pickaxe": {
       "succeeded": 2037,
-      "failed": 91045
+      "failed": 31304
      },
      "make_wood_sword": {
       "succeeded": 3392,
-      "failed": 34047
+      "failed": 26174
      },
      "make_stone_sword": {
       "succeeded": 2825,
-      "failed": 25294
+      "failed": 4077
      },
      "make_iron_sword": {
       "succeeded": 1723,
-      "failed": 91206
+      "failed": 51178
      }
     }
    },
@@ -8494,70 +8513,89 @@
      "make_stone_sword": 0.01598620277934397,
      "make_iron_sword": 0.04669828529733674
     },
+    "asleep": {
+     "noop": 5963,
+     "left": 182,
+     "right": 201,
+     "up": 542,
+     "down": 3123,
+     "do": 1029,
+     "sleep": 1122,
+     "place_stone": 439,
+     "place_table": 122,
+     "place_furnace": 1268,
+     "place_plant": 746,
+     "make_wood_pickaxe": 322,
+     "make_stone_pickaxe": 897,
+     "make_iron_pickaxe": 4255,
+     "make_wood_sword": 564,
+     "make_stone_sword": 1966,
+     "make_iron_sword": 3077
+    },
     "outcome": {
      "left": {
       "succeeded": 13570,
-      "failed": 1568
+      "failed": 1386
      },
      "right": {
       "succeeded": 13343,
-      "failed": 1534
+      "failed": 1333
      },
      "up": {
       "succeeded": 19158,
-      "failed": 2544
+      "failed": 2002
      },
      "down": {
       "succeeded": 19629,
-      "failed": 4621
+      "failed": 1498
      },
      "do": {
-      "succeeded": 15826,
-      "failed": 9206
+      "succeeded": 15809,
+      "failed": 8194
      },
      "sleep": {
-      "succeeded": 1673,
-      "failed": 685
+      "succeeded": 641,
+      "failed": 595
      },
      "place_stone": {
       "succeeded": 2163,
-      "failed": 762
+      "failed": 323
      },
      "place_table": {
       "succeeded": 996,
-      "failed": 669
+      "failed": 547
      },
      "place_furnace": {
       "succeeded": 932,
-      "failed": 4611
+      "failed": 3343
      },
      "place_plant": {
       "succeeded": 261,
-      "failed": 1622
+      "failed": 876
      },
      "make_wood_pickaxe": {
       "succeeded": 263,
-      "failed": 1134
+      "failed": 812
      },
      "make_stone_pickaxe": {
       "succeeded": 209,
-      "failed": 2529
+      "failed": 1632
      },
      "make_iron_pickaxe": {
       "succeeded": 152,
-      "failed": 6563
+      "failed": 2308
      },
      "make_wood_sword": {
       "succeeded": 251,
-      "failed": 2674
+      "failed": 2110
      },
      "make_stone_sword": {
       "succeeded": 210,
-      "failed": 2200
+      "failed": 234
      },
      "make_iron_sword": {
       "succeeded": 125,
-      "failed": 6915
+      "failed": 3838
      }
     }
    },
@@ -10369,70 +10407,89 @@
      "make_stone_sword": 0.017660983589116153,
      "make_iron_sword": 0.05259063223129505
     },
+    "asleep": {
+     "noop": 7775,
+     "left": 63,
+     "right": 150,
+     "up": 455,
+     "down": 2397,
+     "do": 1604,
+     "sleep": 862,
+     "place_stone": 333,
+     "place_table": 173,
+     "place_furnace": 640,
+     "place_plant": 382,
+     "make_wood_pickaxe": 587,
+     "make_stone_pickaxe": 825,
+     "make_iron_pickaxe": 5585,
+     "make_wood_sword": 463,
+     "make_stone_sword": 2210,
+     "make_iron_sword": 4409
+    },
     "outcome": {
      "left": {
       "succeeded": 13617,
-      "failed": 1349
+      "failed": 1286
      },
      "right": {
       "succeeded": 13213,
-      "failed": 1485
+      "failed": 1335
      },
      "up": {
       "succeeded": 20411,
-      "failed": 1942
+      "failed": 1487
      },
      "down": {
       "succeeded": 20751,
-      "failed": 3924
+      "failed": 1527
      },
      "do": {
-      "succeeded": 16526,
-      "failed": 9900
+      "succeeded": 16488,
+      "failed": 8334
      },
      "sleep": {
-      "succeeded": 1376,
-      "failed": 113
+      "succeeded": 609,
+      "failed": 18
      },
      "place_stone": {
       "succeeded": 2286,
-      "failed": 428
+      "failed": 95
      },
      "place_table": {
       "succeeded": 990,
-      "failed": 705
+      "failed": 532
      },
      "place_furnace": {
       "succeeded": 907,
-      "failed": 893
+      "failed": 253
      },
      "place_plant": {
       "succeeded": 216,
-      "failed": 548
+      "failed": 166
      },
      "make_wood_pickaxe": {
       "succeeded": 190,
-      "failed": 1081
+      "failed": 494
      },
      "make_stone_pickaxe": {
       "succeeded": 185,
-      "failed": 2064
+      "failed": 1239
      },
      "make_iron_pickaxe": {
       "succeeded": 190,
-      "failed": 7208
+      "failed": 1623
      },
      "make_wood_sword": {
       "succeeded": 191,
-      "failed": 2269
+      "failed": 1806
      },
      "make_stone_sword": {
       "succeeded": 187,
-      "failed": 2469
+      "failed": 259
      },
      "make_iron_sword": {
       "succeeded": 178,
-      "failed": 7731
+      "failed": 3322
      }
     }
    },
