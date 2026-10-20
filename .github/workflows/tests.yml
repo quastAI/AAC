@@ -1,9 +1,10 @@
 # CPU tests of both stacks. NOTE: written without being able to run it (no runner access when it was
 # written): the first run on GitHub may need small fixes, for example to the dependency installation.
 name: tests
+# Switched off for pushes and pull requests: it only runs when started by hand (Actions tab, "Run workflow").
+# To turn the automatic runs back on, restore `push: {branches: [main]}` and `pull_request:` under `on:`.
 on:
-  push: {branches: [main]}
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   jax:
