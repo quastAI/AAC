@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 import h5py
 import numpy as np
@@ -36,6 +37,19 @@ VIEW_TILES = VIEW_ROWS * VIEW_COLS
 VIEW_CHANNELS, BLOCK_TYPES = 21, 17
 VIEW_DIM = VIEW_TILES * VIEW_CHANNELS
 STATE_DIM = 1345
+SLEEPING_COLUMN = STATE_DIM - 1  # the last entry of `state`: the player is asleep
+PLAYER_TILE = (VIEW_ROWS // 2, VIEW_COLS // 2)  # (row, column) of the player in the view
+FACING_STEP = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}  # `facing` -> the neighbouring tile it looks at (left, right, up, down)
+CREATURES = 0b0111  # bits of a tile's mob code: zombie, cow, skeleton (the arrows are the fourth bit)
+STATE_CHUNK = 50_000  # frames per read of the `state` column
+
+
+class View(NamedTuple):
+    """The `state` column reduced to what the analysis needs, per frame."""
+
+    block: np.ndarray  # (frames, 63) uint8: block id of every tile of the view
+    mob: np.ndarray  # (frames, 63) uint8: 4-bit code of the mobs on every tile (zombie, cow, skeleton, arrow)
+    sleeping: np.ndarray  # (frames,) bool
 
 
 class Split:
@@ -64,9 +78,28 @@ class Split:
         self.n_episodes = len(self.lengths)
         self.episode = np.repeat(np.arange(self.n_episodes), self.lengths)
         self.final_achievements = self.cols["achievements"][last].astype(bool) if "achievements" in self.cols else None
+        self._view = None
 
     def has(self, *names) -> bool:
         return all(n in self.cols for n in names)
+
+    def view(self) -> View:
+        """The 7x9 view and the sleeping flag from the `state` column, read once (needs `state_ok`)."""
+        if self._view is None:
+            block = np.empty((self.total, VIEW_TILES), np.uint8)
+            mob = np.empty((self.total, VIEW_TILES), np.uint8)
+            sleeping = np.empty(self.total, bool)
+            weights = (1 << np.arange(4)).astype(np.uint8)
+            with h5py.File(self.path, "r") as f:
+                state = f["state"]
+                for a in range(0, self.total, STATE_CHUNK):
+                    x = state[a : min(a + STATE_CHUNK, self.total)]
+                    tiles = x[:, :VIEW_DIM].reshape(-1, VIEW_TILES, VIEW_CHANNELS)
+                    block[a : a + len(x)] = tiles[:, :, :BLOCK_TYPES].argmax(2)
+                    mob[a : a + len(x)] = ((tiles[:, :, BLOCK_TYPES:] > 0.5).astype(np.uint8) * weights).sum(2, dtype=np.uint8)
+                    sleeping[a : a + len(x)] = x[:, SLEEPING_COLUMN] > 0.5
+            self._view = View(block, mob, sleeping)
+        return self._view
 
     def episodes(self, name) -> list[np.ndarray]:
         """The rows of a column, one array per episode."""

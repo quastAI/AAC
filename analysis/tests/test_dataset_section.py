@@ -207,7 +207,7 @@ def test_length_time_to_diamond_achievements_and_actions(world_file):
     counts = actions.action_numbers(d)
     assert sum(counts["steps"].values()) == 175 - 3 and set(counts["steps"]) == set(data.ACTIONS)
     assert sum(counts["share"].values()) == pytest.approx(1)
-    assert set(counts["outcome"]) == set(actions.MOVES) | set(actions.SUCCESS)  # noop, do and sleep are not split
+    assert set(counts["outcome"]) == set(actions.MOVES) | set(actions.SUCCESS) | {"do", "sleep"}  # only noop is not split
     for name, o in counts["outcome"].items():
         assert o["succeeded"] + o["failed"] == counts["steps"][name]
 
@@ -395,3 +395,36 @@ def test_the_length_figure_counts_frames_not_episodes():
     assert share.sum() == pytest.approx(1)
     assert share[edges.tolist().index(0)] == pytest.approx(30 / 120)  # three short episodes hold a quarter of the frames
     assert share[edges.tolist().index(50)] == pytest.approx(90 / 120)
+
+
+def test_do_and_sleep_outcomes_come_from_the_state_column(tmp_path):
+    n = 10
+    # frames: 0 sleep (asleep after), 1 sleep (awake after), 2 do facing left (the cow on that tile is gone after), 3 do (nothing left
+    # to hit), 4 do gaining wood, 5 do eating (food rises), 6 do facing right (a cow is on the left tile, not the faced one)
+    action = np.array([6, 6, 5, 5, 5, 5, 5, 0, 0, np.nan], np.float32)
+    facing = np.array([1, 1, 1, 1, 1, 1, 2, 1, 1, 1], np.int8)
+    state = np.zeros((n, data.STATE_DIM), np.float32)
+    state[1, data.SLEEPING_COLUMN] = 1  # asleep after frame 0's action; frame 2's state is awake again
+    left = data.PLAYER_TILE[0] * data.VIEW_COLS + data.PLAYER_TILE[1] - 1
+    cow = data.BLOCK_TYPES + 1  # channel of the cows
+    for frame in (0, 1, 2, 6):  # a cow on the tile left of the player: gone from frame 3 on (and shown again at frame 6)
+        state[frame, left * data.VIEW_CHANNELS + cow] = 1
+    inventory = np.zeros((n, 12), np.int16)
+    inventory[5:, 0] = 1  # wood appears after frame 4's action
+    vitals = np.full((n, 4), 5, np.int8)
+    vitals[6:, 1] = 8  # food rises after frame 5's action
+    path = tmp_path / "doSleep.h5"
+    with h5py.File(path, "w") as f:
+        f["action"] = action[:, None]
+        f["facing"] = facing[:, None]
+        f["inventory"] = inventory
+        f["vitals"] = vitals
+        f["position"] = np.zeros((n, 2), np.int16)
+        f["achievements"] = np.zeros((n, 22), np.uint8)
+        f["state"] = state
+        f["ep_len"] = np.array([n], np.int32)
+        f["ep_offset"] = np.array([0], np.int64)
+    out = actions.action_numbers(data.Split(path))["outcome"]
+    assert out["sleep"] == {"succeeded": 1, "failed": 1}
+    # do at frames 2 (cow vanishes from the faced tile), 3 (nothing: the cow is already gone), 4 (wood), 5 (food), 6 (faces right)
+    assert out["do"] == {"succeeded": 3, "failed": 2}

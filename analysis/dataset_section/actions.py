@@ -6,23 +6,57 @@ import math
 
 import numpy as np
 
-from .data import ACTIONS, Split
+from .data import ACTIONS, CREATURES, FACING_STEP, PLAYER_TILE, VIEW_COLS, VIEW_ROWS, Split
 
 CHUNKS = (1, 2, 3, 4, 6, 8, 12, 16)  # chunk lengths (steps)
 MIN_CHUNK_COUNT = 20  # chunks seen fewer times are left out of the mutual information (plug-in bias)
 MAX_WINDOWS = 500_000  # windows per chunk length (a random subset above this)
 
 
-# actions whose success the state shows: (column, index, +1 if the value must rise, -1 if it must fall). `move` rows compare the
-# position. Not split: noop (never an effect), do (an attack that does not kill, and the water or food that only change a vital, are
-# not told apart) and sleep (the sleeping flag is not in the columns).
+# Success as the state shows it. Moves: the player's position changed (a blocked move only turns the player). Place and make: the
+# placed or crafted item changed in the inventory (SUCCESS: column, index, +1 if it must rise, -1 if it must fall). `do`: an item
+# was gained, food or drink rose (eating, drinking), an achievement was unlocked, or a zombie, cow or skeleton vanished from the
+# tile the player faces (a hit that does not kill counts as failed). `sleep`: the player is asleep afterwards (it fails with full
+# energy). `noop` is never split: it cannot succeed. Without the `state` column `do` and `sleep` are not split either.
 SUCCESS = {
     "place_stone": ("inventory", 1, -1), "place_table": ("inventory", 0, -1), "place_furnace": ("inventory", 1, -1),
     "place_plant": ("inventory", 5, -1),
     "make_wood_pickaxe": ("inventory", 6, 1), "make_stone_pickaxe": ("inventory", 7, 1), "make_iron_pickaxe": ("inventory", 8, 1),
     "make_wood_sword": ("inventory", 9, 1), "make_stone_sword": ("inventory", 10, 1), "make_iron_sword": ("inventory", 11, 1),
 }  # fmt: skip
-MOVES = ("left", "right", "up", "down")  # succeeded: the player's position changed (a blocked move only turns the player)
+MOVES = ("left", "right", "up", "down")
+ITEMS = 6  # wood, stone, coal, iron, diamond, sapling: what `do` can gain
+
+
+def _removed_from_facing_tile(s: Split, at: np.ndarray) -> np.ndarray:
+    """Per step: a zombie, cow or skeleton was on the tile the player faces before the step and is gone after it."""
+    mob = s.view().mob.reshape(-1, VIEW_ROWS, VIEW_COLS)
+    facing = s.cols["facing"][at, 0].astype(int)
+    out = np.zeros(len(at), bool)
+    for direction, (dr, dc) in FACING_STEP.items():
+        here = facing == direction
+        r, c = PLAYER_TILE[0] + dr, PLAYER_TILE[1] + dc
+        before, after = mob[at[here], r, c] & CREATURES, mob[at[here] + 1, r, c] & CREATURES
+        out[here] = (before & ~after) != 0
+    return out
+
+
+def _succeeded(s: Split, name: str, at: np.ndarray) -> np.ndarray | None:
+    """Per step of the action `name` (frames `at`): did it succeed? None for actions that are not split."""
+    if name in MOVES:
+        return (s.cols["position"][at + 1] != s.cols["position"][at]).any(1)
+    if name in SUCCESS:
+        column, index, sign = SUCCESS[name]
+        return sign * (s.cols[column][at + 1, index].astype(np.int64) - s.cols[column][at, index]) > 0
+    if name == "do" and s.state_ok:
+        inventory, vitals, achievements = (s.cols[c] for c in ("inventory", "vitals", "achievements"))
+        gained = (inventory[at + 1, :ITEMS] > inventory[at, :ITEMS]).any(1)
+        ate = (vitals[at + 1, 1:3] > vitals[at, 1:3]).any(1)  # food, drink: they only fall on their own
+        unlocked = (achievements[at + 1] > achievements[at]).any(1)
+        return gained | ate | unlocked | _removed_from_facing_tile(s, at)
+    if name == "sleep" and s.state_ok:
+        return s.view().sleeping[at + 1]
+    return None
 
 
 def action_numbers(s: Split) -> dict:
@@ -35,15 +69,9 @@ def action_numbers(s: Split) -> dict:
     steps = np.bincount(taken, minlength=len(ACTIONS))
     outcome = {}
     for i, name in enumerate(ACTIONS):
-        at = steps_at[taken == i]
-        if name in MOVES:
-            ok = (s.cols["position"][at + 1] != s.cols["position"][at]).any(1)
-        elif name in SUCCESS:
-            column, index, sign = SUCCESS[name]
-            ok = sign * (s.cols[column][at + 1, index].astype(np.int64) - s.cols[column][at, index]) > 0
-        else:
-            continue
-        outcome[name] = {"succeeded": int(ok.sum()), "failed": int((~ok).sum())}
+        ok = _succeeded(s, name, steps_at[taken == i])
+        if ok is not None:
+            outcome[name] = {"succeeded": int(ok.sum()), "failed": int((~ok).sum())}
     return {
         "steps": {n: int(c) for n, c in zip(ACTIONS, steps)}, "share": {n: float(c / steps.sum()) for n, c in zip(ACTIONS, steps)},
         "outcome": outcome,

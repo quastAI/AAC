@@ -9,18 +9,15 @@ two views always overlap. `half_lag` is the first lag of the grid with a share o
 
 from __future__ import annotations
 
-import h5py
 import numpy as np
 
-from .data import (BLOCK_TYPES, INVENTORY, MOBS, STATE_DIM, VIEW_CHANNELS, VIEW_COLS, VIEW_DIM, VIEW_ROWS, VIEW_TILES,
-                   VITALS, Split)
+from .data import INVENTORY, MOBS, VIEW_COLS, VIEW_ROWS, VITALS, Split
 
 LAGS = (1, 2, 3, 5, 10, 20, 50, 100, 200, 300, 400, 600, 800)  # steps between the two frames of a pair
 DAYLIGHT_TOL = 0.05  # a light change above this counts as a change (the light moves at most 0.031 per step)
 WORLD_LAG_MAX = 6  # two views at most this many steps apart always overlap (the player moves one tile per step)
 HALF = 0.5  # share of pairs that defines the half-change lag
 PAIR_CHUNK = 200_000  # frame pairs per block of the view comparison (memory)
-STATE_CHUNK = 50_000  # frames per read of the `state` column
 # (group, label, column, index in the column; None: any of its columns): the rows read from small columns
 COLUMN_ROWS = (
     [("position", n, "position", i) for i, n in enumerate(("row", "column"))]
@@ -54,22 +51,6 @@ def column_changes(s: Split, column: str, index: int | None, t: np.ndarray, k: i
     if column == "daylight":
         return np.abs(x[t + k, index].astype(np.float64) - x[t, index]) > DAYLIGHT_TOL
     return x[t + k, index] != x[t, index]
-
-
-def view_tiles(path, total: int) -> tuple[np.ndarray, np.ndarray]:
-    """Per frame and tile of the 7x9 view from the `state` column: the block id and the mobs as a 4-bit code."""
-    block = np.empty((total, VIEW_TILES), np.uint8)
-    mob = np.empty((total, VIEW_TILES), np.uint8)
-    weights = (1 << np.arange(4)).astype(np.uint8)
-    with h5py.File(path, "r") as f:
-        state = f["state"]
-        if state.shape[1] != STATE_DIM:
-            raise SystemExit(f"{path}: state has {state.shape[1]} columns, expected {STATE_DIM}")
-        for a in range(0, total, STATE_CHUNK):
-            x = state[a : min(a + STATE_CHUNK, total), :VIEW_DIM].reshape(-1, VIEW_TILES, VIEW_CHANNELS)
-            block[a : a + len(x)] = x[:, :, :BLOCK_TYPES].argmax(2)
-            mob[a : a + len(x)] = ((x[:, :, BLOCK_TYPES:] > 0.5).astype(np.uint8) * weights).sum(2, dtype=np.uint8)
-    return block, mob
 
 
 def world_changes(block, mob, position, t: np.ndarray, k: int) -> dict:
@@ -157,7 +138,8 @@ def change_matrix(s: Split, lags=LAGS) -> dict:
             share.append(float(column_changes(s, column, index, t, k).mean()) if len(t) else None)
         rows.append({"group": group, "name": name, "share": share})
     if s.has("position") and s.state_ok:
-        block, mob = view_tiles(s.path, s.total)
+        view = s.view()
+        block, mob = view.block, view.mob
         rows += view_rows(s, block, mob, lags)
     for r in rows:
         r["half_lag"] = None if r["group"] == "view overlap" else half_lag(r["share"], lags)
