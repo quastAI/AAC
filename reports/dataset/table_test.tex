@@ -1,13 +1,19 @@
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\caption{Test split (task set, final expert only): 151K frames, 185 episodes, world seeds 2\,000\,001 to 2\,000\,306.}
+\caption{Statistics of the test dataset, collected with the final expert only.}
 \label{tab:data-test}
 \small
-\begin{tabular}{lrrrrrrr}
+\begin{tabular}{lrrrrrrrr}
 \toprule
-Policy & Train steps & Share & Length & Diamond & Return & Achiev. & Death \\
+Policy & Train steps & Share & Episodes & Length & Diamond & Return & Achiev. & Death \\
 \midrule
-Final expert & 1000M & 100\% & 814 & 100\% & 20.55 & 21.10 & 51.9\% \\
+Final expert & 1000M & 100\% & 185 & 814 & 100.0\% & 20.55 & 21.10 & 51.9\% \\
 \bottomrule
 \end{tabular}
+
+\vspace{4pt}
+\begin{minipage}{\linewidth}
+\footnotesize\raggedright
+\textbf{Columns.} Policy: the policy that collected the episodes. Train steps: environment steps of PQN-RNN training at which the policy was taken. Share: fraction of frames. Episodes: number of episodes. Length: mean frames per episode. Diamond: fraction of episodes that collect a diamond. Return: mean undiscounted episode return. Achiev.: mean number of distinct achievements (of 22) unlocked per episode. Death: fraction of episodes that end in death; the remaining episodes end 500 steps after the diamond.
+\end{minipage}
 \end{table}

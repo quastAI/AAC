@@ -1,19 +1,25 @@
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\caption{Train split: 2.0M frames, 3\,529 episodes, world seeds 0 to 875\,292.}
+\caption{Composition and statistics of the training dataset by data-collection policy.}
 \label{tab:data-train}
 \small
-\begin{tabular}{lrrrrrrr}
+\begin{tabular}{lrrrrrrrr}
 \toprule
-Policy & Train steps & Share & Length & Diamond & Return & Achiev. & Death \\
+Policy & Train steps & Share & Episodes & Length & Diamond & Return & Achiev. & Death \\
 \midrule
-Snapshot 1 & 50M & 7.5\% & 198 & 0.0\% & 6.83 & 7.73 & 100\% \\
-Snapshot 2 & 150M & 7.5\% & 375 & 0.0\% & 16.08 & 16.98 & 100\% \\
-Snapshot 3 & 300M & 7.5\% & 459 & 0.0\% & 16.85 & 17.75 & 100\% \\
-Snapshot 4 & 400M & 7.5\% & 513 & 0.3\% & 17.79 & 18.69 & 100\% \\
-Final expert & 1000M & 70.0\% & 800 & 100\% & 20.60 & 21.10 & 46.7\% \\
+Snapshot 1 & 50M & 7.5\% & 759 & 198 & 0.0\% & 6.83 & 7.73 & 100\% \\
+Snapshot 2 & 150M & 7.5\% & 400 & 375 & 0.0\% & 16.08 & 16.98 & 100\% \\
+Snapshot 3 & 300M & 7.5\% & 327 & 459 & 0.0\% & 16.85 & 17.75 & 100\% \\
+Snapshot 4 & 400M & 7.5\% & 293 & 513 & 0.3\% & 17.79 & 18.69 & 100\% \\
+Final expert & 1000M & 70.0\% & 1\,750 & 800 & 100.0\% & 20.60 & 21.10 & 46.7\% \\
 \midrule
-All & --- & 100\% & 567 & 49.6\% & 16.54 & 17.24 & 73.6\% \\
+All & --- & 100\% & 3\,529 & 567 & 49.6\% & 16.54 & 17.24 & 73.6\% \\
 \bottomrule
 \end{tabular}
+
+\vspace{4pt}
+\begin{minipage}{\linewidth}
+\footnotesize\raggedright
+\textbf{Columns.} Policy: the policy that collected the episodes. Train steps: environment steps of PQN-RNN training at which the snapshot was taken. Share: fraction of frames. Episodes: number of episodes. Length: mean frames per episode. Diamond: fraction of episodes that collect a diamond. Return: mean undiscounted episode return. Achiev.: mean number of distinct achievements (of 22) unlocked per episode. Death: fraction of episodes that end in death; the remaining expert episodes end 500 steps after the diamond.
+\end{minipage}
 \end{table}

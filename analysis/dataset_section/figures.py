@@ -135,8 +135,8 @@ def fig_change(rec, plt):
                 ax.text(j, i, text, ha="center", va="center", fontsize=5.5, color="white" if (not np.isnan(v) and v > 55) else INK)
         n_episodes = rec["splits"][s]["length"]["episodes"]
         reach = rec["splits"][s]["change"].get("episodes", {})
-        ax.set_xticks(range(len(lags)), [f"{k}\n{100 * reach[str(k)] / n_episodes:.0f}%" if str(k) in reach else str(k) for k in lags], fontsize=6)
-        ax.set(xlabel="lag k (steps); below: share of episodes\nlong enough to have a pair", title=s)
+        ax.set_xticks(range(len(lags)), [f"{k}\n{100 * reach[str(k)] / n_episodes:.0f}" if str(k) in reach else str(k) for k in lags], fontsize=5.5)
+        ax.set(xlabel="lag k (steps); below: % of episodes\nlong enough to have a pair at k", title=s)
         ax.grid(False)
         ax.tick_params(length=0)
         for spine in ax.spines.values():
