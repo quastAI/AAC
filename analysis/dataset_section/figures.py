@@ -172,38 +172,38 @@ def fig_clips(rec, key, ylabel, title, plt):
 
 
 def fig_actions(rec, plt):
-    """Steps per action in train. Where the state shows whether an action worked, it is split into succeeded and failed steps."""
+    """Steps per action in train: succeeded and failed (awake steps, where the state shows it), and the steps taken while asleep,
+    which the game turns into noops."""
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     actions = rec["splits"]["train"]["actions"]
     names = list(actions["steps"])
-    outcome = actions["outcome"]
-    grey = "#9a9893"
-    fig, ax = plt.subplots(figsize=(FIG_WIDTH, 5.0))
-    height = 0.36
-    lows = []
+    outcome, asleep = actions["outcome"], actions["asleep"]
+    colors = {"succeeded": COLORS["train"], "failed": COLORS["test"], "asleep (action ignored)": "#6d6c68", "awake, not split": "#c9c8c3"}
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH, 6.6))
+    height = 0.26
+    shown = []
     for i, n in enumerate(names):
         if n in outcome:
-            for off, key, color in ((-height / 2, "succeeded", COLORS["train"]), (height / 2, "failed", COLORS["test"])):
-                c = outcome[n][key]
-                ax.barh(i + off, c, height=height, color=color, label=key)
-                ax.text(max(c, 1) * 1.15, i + off, f"{c:,}", va="center", fontsize=6, color=MUTED)
-                lows.append(c)
-        else:
-            c = actions["steps"][n]
-            ax.barh(i, c, height=height, color=grey, label="not split")
-            ax.text(max(c, 1) * 1.15, i, f"{c:,}", va="center", fontsize=6, color=MUTED)
-            lows.append(c)
+            bars = [("succeeded", outcome[n]["succeeded"]), ("failed", outcome[n]["failed"]), ("asleep (action ignored)", asleep[n])]
+            offsets = (-height, 0, height)
+        else:  # noop: awake steps cannot succeed or fail
+            bars = [("awake, not split", actions["steps"][n] - asleep[n]), ("asleep (action ignored)", asleep[n])]
+            offsets = (-height / 2, height / 2)
+        for (label, c), off in zip(bars, offsets):
+            ax.barh(i + off, c, height=height, color=colors[label], label=label)
+            ax.text(max(c, 1) * 1.15, i + off, f"{c:,}", va="center", fontsize=5.5, color=MUTED)
+            shown.append(c)
     ax.set_yticks(range(len(names)), [n.replace("_", " ") for n in names])
     ax.invert_yaxis()
-    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded and failed steps")
-    ax.set_xlim(max(1, min(c for c in lows if c > 0) / 3), max(lows) * 10)
+    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded, failed and ignored (asleep) steps")
+    ax.set_xlim(max(1, min(c for c in shown if c > 0) / 3), max(shown) * 10)
     ax.xaxis.set_major_formatter(FuncFormatter(_si))
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(axis="y", visible=False)
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
-    ax.legend(unique.values(), unique.keys(), loc="lower right", fontsize=7)
+    ax.legend([unique[k] for k in colors], list(colors), loc="lower right", fontsize=7)
     return fig
 
 

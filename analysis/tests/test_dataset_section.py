@@ -209,7 +209,7 @@ def test_length_time_to_diamond_achievements_and_actions(world_file):
     assert sum(counts["share"].values()) == pytest.approx(1)
     assert set(counts["outcome"]) == set(actions.MOVES) | set(actions.SUCCESS) | {"do", "sleep"}  # only noop is not split
     for name, o in counts["outcome"].items():
-        assert o["succeeded"] + o["failed"] == counts["steps"][name]
+        assert o["succeeded"] + o["failed"] + counts["asleep"][name] == counts["steps"][name]  # the asleep steps are neither
 
 
 def test_clip_coverage_follows_the_span_formula(world_file):
@@ -401,10 +401,11 @@ def test_do_and_sleep_outcomes_come_from_the_state_column(tmp_path):
     n = 10
     # frames: 0 sleep (asleep after), 1 sleep (awake after), 2 do facing left (the cow on that tile is gone after), 3 do (nothing left
     # to hit), 4 do gaining wood, 5 do eating (food rises), 6 do facing right (a cow is on the left tile, not the faced one)
-    action = np.array([6, 6, 5, 5, 5, 5, 5, 0, 0, np.nan], np.float32)
+    action = np.array([6, 6, 5, 5, 5, 5, 5, 13, 0, np.nan], np.float32)
     facing = np.array([1, 1, 1, 1, 1, 1, 2, 1, 1, 1], np.int8)
     state = np.zeros((n, data.STATE_DIM), np.float32)
     state[1, data.SLEEPING_COLUMN] = 1  # asleep after frame 0's action; frame 2's state is awake again
+    state[7, data.SLEEPING_COLUMN] = 1  # asleep at frame 7 (its action is ignored)
     left = data.PLAYER_TILE[0] * data.VIEW_COLS + data.PLAYER_TILE[1] - 1
     cow = data.BLOCK_TYPES + 1  # channel of the cows
     for frame in (0, 1, 2, 6):  # a cow on the tile left of the player: gone from frame 3 on (and shown again at frame 6)
@@ -424,7 +425,11 @@ def test_do_and_sleep_outcomes_come_from_the_state_column(tmp_path):
         f["state"] = state
         f["ep_len"] = np.array([n], np.int32)
         f["ep_offset"] = np.array([0], np.int64)
-    out = actions.action_numbers(data.Split(path))["outcome"]
-    assert out["sleep"] == {"succeeded": 1, "failed": 1}
+    numbers = actions.action_numbers(data.Split(path))
+    out = numbers["outcome"]
+    assert out["sleep"] == {"succeeded": 1, "failed": 0}  # frame 0 falls asleep; frame 1 is pressed while asleep: ignored
+    assert numbers["asleep"]["sleep"] == 1
     # do at frames 2 (cow vanishes from the faced tile), 3 (nothing: the cow is already gone), 4 (wood), 5 (food), 6 (faces right)
     assert out["do"] == {"succeeded": 3, "failed": 2}
+    # frame 7 presses make_iron_pickaxe while asleep: not a failed craft
+    assert out["make_iron_pickaxe"] == {"succeeded": 0, "failed": 0} and numbers["asleep"]["make_iron_pickaxe"] == 1
