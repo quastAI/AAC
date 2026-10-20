@@ -32,6 +32,7 @@ import h5py
 import numpy as np
 
 from .data import ACHIEVEMENTS, DIAMOND_INDEX, file_record, git_state
+from .tables import TABCOLSEP
 
 NUM_ACHIEVEMENTS = len(ACHIEVEMENTS)
 SOURCE_NAMES = {0: "Final expert", 1: "Noised expert", 2: "Random", 3: "Snapshot"}  # the collector's `source` column
@@ -137,6 +138,7 @@ def latex_table(label: str, rows: list[dict]) -> str:
         f"\\caption{{{caption}}}",
         f"\\label{{tab:data-{label}}}",
         "\\small",
+        f"\\setlength{{\\tabcolsep}}{{{TABCOLSEP}}}",
         "\\begin{tabular}{lrrrrrrrr}",
         "\\toprule",
         "Policy & Train steps & Share & Episodes & Length & Diamond & Return & Achiev. & Death \\\\",

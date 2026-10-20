@@ -7,13 +7,15 @@ from pathlib import Path
 
 from .data import ACHIEVEMENTS
 
+TABCOLSEP = "3.5pt"  # tighter than the default 6pt: the 9 and 10 column tables must fit the 5.5 in text width of ICLR
+
 
 def thousands(n) -> str:
     return f"{int(round(n)):,}".replace(",", "\\,")
 
 
 def tex_table(label: str, caption: str, columns: str, header: str, rows: list[str], note: str | None = None) -> str:
-    lines = ["\\begin{table}[t]", "\\centering", f"\\caption{{{caption}}}", f"\\label{{tab:{label}}}", "\\small",
+    lines = ["\\begin{table}[H]", "\\centering", f"\\caption{{{caption}}}", f"\\label{{tab:{label}}}", "\\small", f"\\setlength{{\\tabcolsep}}{{{TABCOLSEP}}}",
              f"\\begin{{tabular}}{{{columns}}}", "\\toprule", header + " \\\\", "\\midrule"]  # fmt: skip
     lines += [r if r.startswith("\\midrule") else r + " \\\\" for r in rows]
     lines += ["\\bottomrule", "\\end{tabular}"]

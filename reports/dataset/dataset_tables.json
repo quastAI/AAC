@@ -1,7 +1,7 @@
 {
  "git": {
-  "commit": "c9912ea067407bb5c12e80db55e7f1da4e86f695",
-  "analysis_dirty": false
+  "commit": "3076fc00e3d0dfab53e64f0f7766c97ebd8c5123",
+  "analysis_dirty": true
  },
  "steps_per_update": 131072,
  "final_updates": 7629,
@@ -10,8 +10,7 @@
    "file": {
     "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_train.h5",
     "bytes": 8270901761,
-    "mtime": 1792203739,
-    "sha256": "c64af8c93d768600a206bbf08eed9b32451b411834d0bd185fc1dbf4b3b1ce2f"
+    "mtime": 1792203739
    },
    "runs": [
     {
@@ -516,8 +515,7 @@
    "file": {
     "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_val.h5",
     "bytes": 624078480,
-    "mtime": 1792191328,
-    "sha256": "58298838f145a5b7388edf044ae735df7eca5e5430ea27f47a2ccf8fafde88de"
+    "mtime": 1792191328
    },
    "runs": [
     {
@@ -1022,8 +1020,7 @@
    "file": {
     "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_test.h5",
     "bytes": 628793275,
-    "mtime": 1792191329,
-    "sha256": "8c9b3623c095a34fc858673bd7e13794d41c858af9fcbcd4cabae0e4942890a0"
+    "mtime": 1792191329
    },
    "runs": [
     {

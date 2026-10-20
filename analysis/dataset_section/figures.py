@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .compute import JSON_NAME
+from .section import write_section
 from .tables import achievement_table, change_csv, chunk_table, ladder_order, length_table, spectral_table
 
 FIG_WIDTH = 6.0  # inches
@@ -240,4 +241,5 @@ def plot(out: Path) -> list[Path]:
             (out / f"{name}.tex").write_text(text)
             written.append(out / f"{name}.tex")
     written.append(change_csv(rec, out / "change_matrix.csv"))
+    written.append(write_section(out))
     return written
