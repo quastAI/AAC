@@ -26,14 +26,14 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
-import subprocess
 from pathlib import Path
 
 import h5py
 import numpy as np
 import yaml
+
+from dataset_section.data import file_record, git_state
 
 DIAMOND_INDEX = 19  # collect_diamond in the Craftax-Classic achievement order
 NUM_ACHIEVEMENTS = 22
@@ -153,29 +153,6 @@ def table_row(r: dict) -> str:
         percent(r["death"]),
     ]
     return " & ".join(cells) + " \\\\"
-
-
-def file_record(path, with_sha: bool) -> dict:
-    p = Path(path)
-    st = p.stat()
-    rec = {"path": str(p), "bytes": st.st_size, "mtime": int(st.st_mtime)}
-    if with_sha:
-        h = hashlib.sha256()
-        with open(p, "rb") as f:
-            for block in iter(lambda: f.read(1 << 24), b""):
-                h.update(block)
-        rec["sha256"] = h.hexdigest()
-    return rec
-
-
-def git_state() -> dict:
-    here = Path(__file__).resolve().parent
-    try:
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=here, text=True).strip()
-        dirty = bool(subprocess.check_output(["git", "status", "--porcelain", "--", str(here)], cwd=here, text=True).strip())
-        return {"commit": commit, "analysis_dirty": dirty}
-    except (OSError, subprocess.CalledProcessError):
-        return {"commit": None, "analysis_dirty": None}
 
 
 CAPTIONS = {
