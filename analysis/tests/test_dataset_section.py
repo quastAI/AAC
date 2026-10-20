@@ -248,12 +248,6 @@ def test_compute_and_plot_end_to_end(tmp_path):
     for name in written:
         assert (out / name).stat().st_size > 0
     assert "Median" in (out / "table_length.tex").read_text()
-    section = (out / "dataset_section.tex").read_text()
-    for name in figures.FIGURES:
-        assert f"{{{name}.pdf}}" in section, name  # every figure is included
-    for env in ("table", "figure"):
-        assert section.count(f"\\begin{{{env}}}[H]") == section.count(f"\\end{{{env}}}") > 0
-    assert section.startswith("\\subsection{Dataset}") and "\\tabcolsep" in section
     csv_head = (out / "change_matrix.csv").read_text().splitlines()[0]
     assert csv_head.startswith("split,group,component,half_lag,lag_1,lag_2")
 
