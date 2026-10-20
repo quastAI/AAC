@@ -1,6 +1,6 @@
 {
  "git": {
-  "commit": "4cc37c75f684c9be49222d176bb83feef4c6827f",
+  "commit": "cbba9504c2c063ed36b5debf85e7f9b34c0f3d84",
   "analysis_dirty": false
  },
  "lags": [
@@ -6616,6 +6616,14 @@
       "succeeded": 254240,
       "failed": 60089
      },
+     "do": {
+      "succeeded": 209570,
+      "failed": 124279
+     },
+     "sleep": {
+      "succeeded": 22668,
+      "failed": 8822
+     },
      "place_stone": {
       "succeeded": 27289,
       "failed": 10456
@@ -8503,6 +8511,14 @@
       "succeeded": 19629,
       "failed": 4621
      },
+     "do": {
+      "succeeded": 15826,
+      "failed": 9206
+     },
+     "sleep": {
+      "succeeded": 1673,
+      "failed": 685
+     },
      "place_stone": {
       "succeeded": 2163,
       "failed": 762
@@ -10369,6 +10385,14 @@
      "down": {
       "succeeded": 20751,
       "failed": 3924
+     },
+     "do": {
+      "succeeded": 16526,
+      "failed": 9900
+     },
+     "sleep": {
+      "succeeded": 1376,
+      "failed": 113
      },
      "place_stone": {
       "succeeded": 2286,
