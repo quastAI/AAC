@@ -7,8 +7,9 @@ Hierarchical JEPA world models (LeWM, HWM, H-JEPA) on Craftax-Classic, planning 
 - `H-JEPA/` PyTorch: world models (`h_jepa/`), planning and environments (`stable_worldmodel/`), tests (`tests/`). Imported from a fork with `git subtree`.
 - `purejaxql/` JAX: PQN-RNN expert and the episode collector (`scripts/collect_craftax_episodes.py`). Also a subtree.
 - `analysis/` (numpy, h5py): the package `dataset_section/` (the appendix figures and tables of the dataset section; run from `analysis/`: `python -m dataset_section compute` reads each split as one set, every frame, and writes `dataset_numbers.json`, `plot` makes the figures and tables from that JSON alone (needs matplotlib), `splits` writes the per-split composition tables with a provenance JSON; modules: `data`, `episodes`, `actions`, `spectral`, `change`, `compute`, `tables`, `figures`, `splits`) and `compare_runs.py`. `experiments/`: `experiments.yaml` (job specs: drafts of the training and planning jobs, D0 = `dataset_section compute`, D1) and `run.py`. `environment/`: install lists, reference freezes. `notebooks/`: the RunPod notebook (expert, D1, D0, Hub upload) (see `environment/README.md`, section RunPod). `.github/workflows/tests.yml` is untested (written without runner access).
-- `papers/` PDFs are gitignored. `Craftax/` and `stable-worldmodel-craftax/` are read-only reference clones, gitignored, never edit them.
 - The two code folders only share the HDF5 episode file (column table in the README).
+
+**Where to look.** Work in: `H-JEPA/h_jepa/` (world models, training), `H-JEPA/stable_worldmodel/` (planning, environments), `purejaxql/` (expert, collector), `analysis/dataset_section/` (dataset appendix), `experiments/` (jobs). Leave alone unless asked, and exclude from searches: `data/` (9 GB, never read the HDF5 files directly: go through `dataset_section`), `Craftax/` and `stable-worldmodel-craftax/` (read-only reference clones, gitignored, never edit), `papers/` (PDFs, gitignored), `reports/` (generated: rerun the commands instead of editing). Caches (`.pytest_cache`, `.ruff_cache`, `__pycache__`) are throwaway.
 
 ## Environments (nothing persistent is checked in)
 
