@@ -67,7 +67,9 @@ wandb:
     resume: allow
     log_model: false
 planning_eval:
-  enabled: true
+  # off: planning runs as its own jobs with task files (F3-F5), after the planning settings are set (F2);
+  # craftax_plan has no task file, so a run at the end of training would fail
+  enabled: false
   config_name: ???
   output_subdir: planning_eval
   run_on_train_end: true
