@@ -40,7 +40,7 @@ The first deliverable is a strong flat model (level 1 alone, `num_levels=1`): th
 - delta prediction (predicted latent = last latent + predictor output, same loss): only if the default model barely beats copying the last latent, or static entities drift in the rollout probes;
 - CLS vs patch tokens in the predictor: last, and only if the rollout probes show the CLS latent losing fast entities (position, mobs). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step.
 
-Built: training, probes on encoded latents, P1, P3. Not built: rollout probes and the event split, planning videos, P2.
+Built: training, probes (encoded and rollouts, the event split, IDM per action), P1, P3. Not built: planning videos, P2.
 
 ## Method
 
@@ -164,7 +164,7 @@ Training, planning and probing each write a report that names collapses and othe
 | Training | every epoch, long validation clips | adds open-loop drift (planning history 1 and training history), cost geometry (latent distance vs time gap), IDM on held-out worlds | `health_val/*`, `health/epoch_*.json` |
 | Training | at the end | all of it, findings, optional probing | `health/report.md`, `summary.json`, `probe_report.md` |
 | Planning | per task and replanning | progress, latent distance to the goal, CEM improvement and entropy, FLOPs, executed-action diversity; plan diagnostics replay the chosen plan in a cloned simulator (prediction error vs random plans, optimism, cost ranking, distance to the data) | `planning_report.md`, `planning_health.json`, `planning_records.json` |
-| Probing | at the end, or `probe_eval.py` | ridge probes to fast (position, facing, mobs), medium (vitals) and slow (inventory, achievements, daylight) state on held-out worlds, with an untrained encoder as control | `probe_report.md` |
+| Probing | at the end, or `probe_eval.py` | ridge probes to fast (position, facing, mobs, blocks in view, block faced), medium (vitals, sleeping) and slow (inventory, achievements, daylight) state on held-out worlds, with an untrained encoder as control; level 1 also on open-loop rollouts (k = 1 to 64, against copy and encoded), after place and make actions (successful vs failed presses), and the IDM per action | `probe_report.md` |
 
 Findings are `critical` (collapse or a failure that makes the model unusable), `warn`, or `info`, each with a hint. Failure signals beyond collapse include: predictor not better than copying the last latent, actions ignored, rollout drift beyond copy, latent distance that saturates after a few steps, IDM at chance, plans predicted worse than random plans (exploitation), predicted progress that reality does not deliver, and probes no better than an untrained encoder. `analysis/compare_runs.py` compares planning against the random baseline, compute scaling, training and probing across runs.
 

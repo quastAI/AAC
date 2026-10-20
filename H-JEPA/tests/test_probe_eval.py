@@ -144,7 +144,7 @@ def test_findings_describe_what_upper_levels_keep():
 # --- the whole pipeline on a synthetic dataset ------------------------------
 
 
-def write_dataset(path, episodes=6, length=70):
+def write_dataset(path, episodes=6, length=70, with_state=False):
     rng = np.random.default_rng(0)
     n = episodes * length
     action = rng.integers(0, 17, (n, 1)).astype(np.float32)
@@ -161,6 +161,13 @@ def write_dataset(path, episodes=6, length=70):
         'mobs_in_view': rng.integers(0, 3, (n, 4)).astype(np.int8),
         'step_idx': np.tile(np.arange(length), episodes).astype(np.int32),
     }
+    if with_state:
+        state = np.zeros((n, pe.STATE_DIM), np.float32)
+        tiles = state[:, : 7 * 9 * 21].reshape(n, 63, 21)
+        blocks = rng.integers(0, 17, (n, 63))
+        tiles[np.arange(n)[:, None], np.arange(63), blocks] = 1
+        state[:, -1] = rng.random(n) > 0.8  # asleep
+        columns['state'] = state
     with h5py.File(path, 'w') as f:
         for name, value in columns.items():
             f.create_dataset(name, data=value)
@@ -171,8 +178,8 @@ def write_dataset(path, episodes=6, length=70):
 
 
 def test_run_probing_end_to_end(tmp_path):
-    write_dataset(tmp_path / 'probe_train.h5')
-    write_dataset(tmp_path / 'probe_val.h5')
+    write_dataset(tmp_path / 'probe_train.h5', with_state=True)
+    write_dataset(tmp_path / 'probe_val.h5', with_state=True)
     if not OmegaConf.has_resolver('eval'):
         OmegaConf.register_new_resolver('eval', eval)
     with hydra.initialize_config_dir(
@@ -210,7 +217,9 @@ def test_run_probing_end_to_end(tmp_path):
     assert set(summary['levels']) == {1, 2}
     for entry in summary['levels'].values():
         assert set(entry['groups']) == {'fast', 'medium', 'slow'}
-        assert set(entry['targets']) == set(pe.TARGETS)
+        assert set(entry['targets']) == set(pe.TARGETS) | set(
+            pe.STATE_TARGETS
+        )
         assert (
             entry['control_groups'] and 'control' in entry['targets']['vitals']
         )
@@ -218,8 +227,18 @@ def test_run_probing_end_to_end(tmp_path):
     assert summary['n_train'][1] == summary['n_train'][2]
     assert summary['n_val'][1] == summary['n_val'][2]
     assert model.training  # the model is left in the mode it was in
+    # level 1 on rollouts (history 1, clips of 33 frames: k up to 32)
+    assert summary['state_targets']
+    assert sorted(summary['rollout']['by_k']) == [1, 2, 4, 8, 16, 32]
+    k1 = summary['rollout']['by_k'][1]
+    assert set(k1) == {'pred', 'copy', 'encoded'}
+    assert set(k1['pred']['targets']) == set(entry['targets'])
+    assert 'make (all)' in summary['events']
+    assert summary['idm']['asleep']['steps'] > 0
     report = health.render_probing_report(summary, findings)
     assert '# Probing report' in report and 'untrained' in report
+    assert '## Rollouts (level 1)' in report
+    assert '## Place and make' in report and '## Inverse dynamics' in report
 
 
 def test_levels_are_probed_on_the_frames_they_share():
@@ -242,3 +261,170 @@ def test_levels_are_probed_on_the_frames_they_share():
     assert pe.common_frames(
         SimpleNamespace(num_levels=1), cfg, 8, thin=1
     ).tolist() == list(range(8))
+
+
+# --- targets from the state column, rollouts, events, inverse dynamics -----
+
+
+def make_state(blocks, sleeping=False):
+    """A `state` vector with the given (7, 9) block ids and no mobs."""
+    state = torch.zeros(pe.STATE_DIM)
+    tiles = state[: 7 * 9 * 21].view(7, 9, 21)
+    for r in range(7):
+        for c in range(9):
+            tiles[r, c, int(blocks[r, c])] = 1
+    state[-1] = float(sleeping)
+    return state
+
+
+def test_state_targets_count_blocks_and_read_the_faced_tile():
+    blocks = torch.full((7, 9), 2)  # grass
+    blocks[3, 3] = 5  # a tree left of the player (row 3, column 4)
+    blocks[2, 4] = 11  # a table above
+    blocks[0, 0] = 3  # water
+    state = torch.stack([make_state(blocks), make_state(blocks, True)])
+    facing = torch.tensor([[1], [3]])  # left, up
+    out = pe.state_targets(state, facing)
+    names = pe.BLOCK_NAMES
+    counts = out['view_blocks'][0]
+    assert counts[names.index('grass')] == 60
+    assert counts[names.index('tree')] == 1 and counts.sum() == 63
+    assert out['facing_block'][:, 0].tolist() == [5, 11]
+    assert out['sleeping'][:, 0].tolist() == [0, 1]
+
+
+class LookupJepa:
+    """Returns the next latent of a table (exact), or copies the context."""
+
+    def __init__(self, table, exact=True):
+        self.table, self.exact = table, exact
+        self.predictor = torch.nn.Identity()
+
+    def predict(self, ctx, act):
+        last = ctx[:, -1]
+        if not self.exact:
+            return ctx
+        b, t = last[:, 0].long(), last[:, 1].long()
+        nxt = self.table[b, (t + 1).clamp(max=self.table.shape[1] - 1)]
+        return torch.cat([ctx[:, 1:], nxt[:, None]], dim=1)
+
+
+def frame_index_latents(B=3, T=20, extra=None):
+    """Latents whose first two entries are the clip and the frame index."""
+    b = torch.arange(B)[:, None].expand(B, T).float()
+    t = torch.arange(T)[None].expand(B, T).float()
+    parts = [b[..., None], t[..., None]] + ([] if extra is None else [extra])
+    return torch.cat(parts, dim=-1)
+
+
+def test_rollouts_align_predictions_with_their_target_frames():
+    emb = frame_index_latents()
+    jepa = LookupJepa(emb)
+    act = torch.zeros(3, 20, 1)
+    pred, copy, true, clip, last = pe.rollout_latents(
+        jepa, emb, act, 2, (1, 4, 64), every=5, device='cpu'
+    )
+    assert set(pred) == {1, 4}  # k = 64 does not fit into the clip
+    for k in pred:
+        assert torch.equal(pred[k], true[k])  # the exact predictor
+        assert torch.equal(true[k][:, 1], (last + k).float())
+    assert torch.equal(copy[:, 1], last.float()) and torch.equal(
+        copy[:, 0], clip.float()
+    )
+    lazy = LookupJepa(emb, exact=False)
+    pred, copy, *_ = pe.rollout_latents(
+        lazy, emb, act, 2, (1, 4), every=5, device='cpu'
+    )
+    assert torch.equal(pred[4], copy)
+
+
+def event_clips(B=4, T=30):
+    """Every step a place_stone (action 7); every second one succeeds."""
+    stone = torch.zeros(B, T)
+    for t in range(1, T):
+        stone[:, t] = stone[:, t - 1] - (1 if t % 2 == 0 else 0)
+    inventory = torch.zeros(B, T, 12)
+    inventory[..., 1] = stone + 100
+    emb = frame_index_latents(B, T, inventory)
+    action = torch.full((B, T), 7)
+    action[:, -1] = -1
+    return {
+        'emb': emb,
+        'act': torch.zeros(B, T, 1),
+        'action': action,
+        'sleeping': torch.zeros(B, T, dtype=torch.bool),
+        'y': {'inventory': inventory},
+    }
+
+
+def test_events_tell_a_predictor_that_shows_the_change_from_a_copy():
+    clips = event_clips()
+    z, y = clips['emb'].flatten(0, 1), clips['y']['inventory'].flatten(0, 1)
+    fitted = pe.fit_targets(z, {'inventory': y}, pe.TARGETS)
+    exact = pe.event_probes(
+        fitted, clips, LookupJepa(clips['emb']), history=1, device='cpu'
+    )
+    e = exact['place_stone']
+    assert e['succeeded'] == 4 * 14 and e['failed'] == 4 * 15
+    assert e['encoded'] == pytest.approx(1, abs=0.15)  # ridge shrinks a little
+    assert e['shown'] == pytest.approx(1, abs=1e-4)
+    assert exact['place (all)']['succeeded'] == e['succeeded']
+    lazy = pe.event_probes(
+        fitted,
+        clips,
+        LookupJepa(clips['emb'], exact=False),
+        history=1,
+        device='cpu',
+    )
+    assert lazy['place_stone']['shown'] == pytest.approx(0, abs=0.1)
+    found = health.diagnose_probing({'events': lazy})
+    assert 'PROBE_EVENT_IGNORED' in codes(found)
+    # steps taken asleep are ignored by the game: no event
+    clips['sleeping'][:] = True
+    assert pe.event_probes(
+        fitted, clips, LookupJepa(clips['emb']), history=1, device='cpu'
+    ) == {}
+
+
+def test_idm_accuracy_per_action_counts_awake_steps_and_outcomes():
+    clips = event_clips(B=2, T=10)
+    clips['action'][:, :4] = 0  # noop, then place_stone
+    clips['sleeping'][:, 1] = True
+
+    class AlwaysNoop(torch.nn.Module):
+        num_slots, num_classes = 1, 17
+
+        def idm(self, a, b, extra):
+            logits = torch.zeros(len(a), 17)
+            logits[:, 0] = 1
+            return logits
+
+    jepa = type('J', (), {'idm_loss_fn': AlwaysNoop()})()
+    out = pe.idm_per_action(clips, jepa, 'cpu')
+    assert out['asleep']['steps'] == 2 and out['awake']['steps'] == 16
+    assert out['actions']['noop'] == {'steps': 6, 'accuracy': 1.0}
+    stone = out['actions']['place_stone']
+    assert stone['steps'] == 10 and stone['accuracy'] == 0.0
+    # actions 4..8 lead to frames 5..9: stone falls into the even frames
+    assert stone['succeeded']['steps'] + stone['failed']['steps'] == 10
+
+
+def rollout_summary(pred, copy):
+    by_k = {}
+    for k, p, c in zip((1, 2, 4), pred, copy):
+        by_k[k] = {
+            src: {'groups': {'fast': v, 'medium': v, 'slow': v}}
+            for src, v in (('pred', p), ('copy', c), ('encoded', 0.9))
+        }
+    return {'rollout': {'by_k': by_k}}
+
+
+def test_rollout_findings_give_the_readable_horizon():
+    found = health.diagnose_probing(
+        rollout_summary((0.8, 0.6, 0.3), (0.5, 0.4, 0.35))
+    )
+    horizon = [f for f in found if f.code == 'PROBE_ROLLOUT_HORIZON']
+    assert horizon and '2 (fast)' in horizon[0].message
+    assert 'PROBE_ROLLOUT_NO_GAIN' not in codes(found)
+    none = rollout_summary((0.4, 0.3, 0.2), (0.5, 0.4, 0.35))
+    assert 'PROBE_ROLLOUT_NO_GAIN' in codes(health.diagnose_probing(none))

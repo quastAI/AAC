@@ -75,6 +75,7 @@ class Thresholds:
     subgoal_reach_warn: float = 0.2
     # probing
     probe_group_r2_warn: float = 0.1
+    probe_event_shown_warn: float = 0.25  # share of the real inventory change a one-step prediction shows
 
 
 @dataclass
@@ -794,7 +795,39 @@ def diagnose_probing(summary: dict, thr: Thresholds | None = None) -> list[Findi
             if fast is not None and slow is not None and fast >= 0.9 and slow >= 0.9:
                 _f(f, "info", "PROBE_NO_SPECIALISATION", n, "keeps fast and slow state alike",
                    "no frequency specialisation between the levels")
+    _diagnose_rollouts(f, summary, thr)
     return sort_findings(f)
+
+
+def rollout_beats_copy(by_k: dict, group: str) -> int:
+    """The largest k up to which the predicted latents score above copying the last latent, at every k scored."""
+    reached = 0
+    for k in sorted(by_k, key=int):
+        pred, copy = by_k[k]["pred"]["groups"].get(group), by_k[k]["copy"]["groups"].get(group)
+        if pred is None or copy is None or pred <= copy:
+            break
+        reached = int(k)
+    return reached
+
+
+def _diagnose_rollouts(f: list[Finding], summary: dict, thr: Thresholds):
+    """Level-1 findings: how far predictions stay readable, and whether crafting shows in them."""
+    by_k = (summary.get("rollout") or {}).get("by_k") or {}
+    if by_k:
+        reach = {g: rollout_beats_copy(by_k, g) for g in ("fast", "medium", "slow")}
+        _f(f, "info", "PROBE_ROLLOUT_HORIZON", 1, "predictions are more readable than copying the last latent up to k = "
+           + ", ".join(f"{v} ({g})" for g, v in reach.items()),
+           "the probe-readable rollout horizon: an input to the planning horizon")
+        if reach["fast"] == 0:
+            _f(f, "warn", "PROBE_ROLLOUT_NO_GAIN", 1, "one-step predictions are no more readable than the last latent (fast state)",
+               "the predictor does not move position, view or mobs: check the action conditioning")
+    for group in ("make", "place"):
+        e = (summary.get("events") or {}).get(f"{group} (all)") or {}
+        if e.get("shown") is not None and e["shown"] < thr.probe_event_shown_warn:
+            _f(f, "warn", "PROBE_EVENT_IGNORED", 1,
+               f"a one-step prediction after a successful {group} shows {e['shown']:.0%} of the inventory change "
+               f"({e['succeeded']} successful, {e['failed']} failed presses)",
+               "rare transitions are predicted as no change: oversampling them is the open decision")
 
 
 def render_probing_report(summary: dict, findings: list[Finding]) -> str:
@@ -808,12 +841,13 @@ def render_probing_report(summary: dict, findings: list[Finding]) -> str:
         if has_control:
             row += " " + " | ".join(_fmt((e.get("control_groups") or {}).get(g), 2) for g in ("fast", "medium", "slow")) + " |"
         out.append(row)
-    out += ["", "Score: R^2 for counts and levels, 2*AUROC-1 for flags, (accuracy-majority)/(1-majority) for facing.", "",
+    out += ["", "Score: R^2 for counts and levels, 2*AUROC-1 for flags, (accuracy-majority)/(1-majority) for classes (facing, block faced).", "",
             "## Per target", "", "| target | group | " + " | ".join(f"level {n}" for n, _ in levels)
             + (" | untrained, level 1 |" if has_control else " |"), "|---|---|" + "---|" * len(levels) + ("---|" if has_control else "")]
     names = list(levels[0][1]["targets"])
     for name in names:
-        from_group = {"position": "fast", "facing": "fast", "mobs_in_view": "fast", "vitals": "medium"}.get(name, "slow")
+        from_group = levels[0][1]["targets"][name].get("group") or {
+            "position": "fast", "facing": "fast", "mobs_in_view": "fast", "vitals": "medium"}.get(name, "slow")  # fmt: skip
         row = f"| {name} | {from_group} | " + " | ".join(_fmt(e["targets"][name]["score"], 2) for _, e in levels)
         if has_control:
             row += " | " + _fmt(levels[0][1]["targets"][name].get("control"), 2)
@@ -825,4 +859,51 @@ def render_probing_report(summary: dict, findings: list[Finding]) -> str:
         out += ["", f"Level {n}: best " + ", ".join(f"{c} {s:.2f}" for c, s in best)
                 + "; worst " + ", ".join(f"{c} {s:.2f}" for c, s in worst)]
     out += ["", f"Samples (train/val): {summary.get('n_train')} / {summary.get('n_val')}"]
+    out += _render_rollouts(summary)
     return "\n".join(out) + "\n"
+
+
+def _render_rollouts(summary: dict) -> list[str]:
+    out = []
+    rollout = summary.get("rollout") or {}
+    by_k = rollout.get("by_k") or {}
+    if by_k:
+        ks = sorted(by_k, key=int)
+        out += ["", "## Rollouts (level 1)", "",
+                f"Probes fitted on encoded latents, applied to open-loop predictions k steps ahead (true actions, history "
+                f"{rollout.get('history')}, {rollout.get('n')} windows). Cells: predicted / copy of the last latent / encoded "
+                "latent of the same frame.", "",
+                "| k | fast | medium | slow |", "|---|---|---|---|"]  # fmt: skip
+        for k in ks:
+            cells = [" / ".join(_fmt(by_k[k][src]["groups"].get(g), 2) for src in ("pred", "copy", "encoded"))
+                     for g in ("fast", "medium", "slow")]  # fmt: skip
+            out.append(f"| {k} | " + " | ".join(cells) + " |")
+        out += ["", "Predicted score per target:", "", "| target | " + " | ".join(f"k={k}" for k in ks) + " |",
+                "|---|" + "---|" * len(ks)]  # fmt: skip
+        for name in by_k[ks[0]]["pred"]["targets"]:
+            out.append(f"| {name} | " + " | ".join(_fmt(by_k[k]["pred"]["targets"][name]["score"], 2) for k in ks) + " |")
+    events = summary.get("events") or {}
+    if events:
+        out += ["", "## Place and make (level 1, one step)", "",
+                "Signed change of the inventory probe for the item the action changes, from the latent before the step: "
+                "to the encoded next latent, and to the predicted one, after successful and failed presses. Shown: the "
+                "predicted gap between successful and failed presses as a share of the encoded gap (1 as a real frame, "
+                "0 no change predicted).", "",
+                "| action | successful | failed | encoded | encoded (failed) | predicted | predicted (failed) | shown |",
+                "|---|---|---|---|---|---|---|---|"]  # fmt: skip
+        for name, e in events.items():
+            out.append(f"| {name} | {e['succeeded']} | {e['failed']} | {_fmt(e['encoded'], 2)} | "
+                       f"{_fmt(e.get('encoded_failed'), 2)} | {_fmt(e['pred'], 2)} | {_fmt(e['pred_failed'], 2)} | "
+                       f"{_fmt(e['shown'], 2)} |")  # fmt: skip
+    idm = summary.get("idm") or {}
+    if idm:
+        awake, asleep = idm["awake"], idm["asleep"]
+        out += ["", "## Inverse dynamics per action (level 1)", "",
+                f"Awake steps: {awake['steps']}, accuracy {_fmt(awake['accuracy'], 2)} (majority {_fmt(awake.get('majority'), 2)}); "
+                f"asleep steps (the game ignores the action): {asleep['steps']}, accuracy {_fmt(asleep['accuracy'], 2)}.", "",
+                "| action | steps | accuracy | successful | failed |", "|---|---|---|---|---|"]  # fmt: skip
+        for name, e in idm["actions"].items():
+            ok, bad = e.get("succeeded"), e.get("failed")
+            split = [f"{_fmt(x['accuracy'], 2)} ({x['steps']})" if x else "" for x in (ok, bad)]
+            out.append(f"| {name} | {e['steps']} | {_fmt(e['accuracy'], 2)} | {split[0]} | {split[1]} |")
+    return out
