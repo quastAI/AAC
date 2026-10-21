@@ -1,6 +1,6 @@
 {
  "git": {
-  "commit": "7a400e92fc11d416b0508928c078ec3998cec072",
+  "commit": "2057b40857bfd1fd0168e5dc354c61affde34902",
   "analysis_dirty": false
  },
  "lags": [
@@ -6132,18 +6132,18 @@
       "name": "view, share of tiles",
       "share": [
        0.1367356706415057,
-       0.20099156918561406,
-       0.24439521482483753,
-       0.3036912424736975,
+       0.20099156918561412,
+       0.2443952148248375,
+       0.30369124247369755,
        0.3935652624998595,
        0.4894947147417087,
-       0.6088902524957915,
+       0.6088902524957917,
        0.707226964775807,
-       0.7626141433544495,
-       0.7785071804203915,
+       0.7626141433544498,
+       0.7785071804203914,
        0.7853967978430939,
        0.7914546425541431,
-       0.7891368036653278
+       0.7891368036653279
       ],
       "half_lag": 50
      },
@@ -6562,61 +6562,42 @@
    },
    "actions": {
     "steps": {
-     "noop": 160362,
-     "left": 201955,
-     "right": 196868,
-     "up": 284475,
-     "down": 314329,
-     "do": 333849,
-     "sleep": 31490,
-     "place_stone": 37745,
-     "place_table": 24535,
-     "place_furnace": 73710,
-     "place_plant": 23098,
-     "make_wood_pickaxe": 23213,
-     "make_stone_pickaxe": 40467,
-     "make_iron_pickaxe": 93082,
-     "make_wood_sword": 37439,
-     "make_stone_sword": 28119,
-     "make_iron_sword": 92929
+     "noop": 427091,
+     "left": 200073,
+     "right": 193094,
+     "up": 277245,
+     "down": 274780,
+     "do": 319941,
+     "sleep": 16182,
+     "place_stone": 32189,
+     "place_table": 21583,
+     "place_furnace": 57699,
+     "place_plant": 13433,
+     "make_wood_pickaxe": 15659,
+     "make_stone_pickaxe": 25986,
+     "make_iron_pickaxe": 33341,
+     "make_wood_sword": 29566,
+     "make_stone_sword": 6902,
+     "make_iron_sword": 52901
     },
     "share": {
-     "noop": 0.08027472073645982,
-     "left": 0.1010955290301427,
-     "right": 0.09854905602290674,
-     "up": 0.14240375638558017,
-     "down": 0.15734820402820293,
-     "do": 0.16711961214718182,
-     "sleep": 0.015763403773906035,
-     "place_stone": 0.01889455939809728,
-     "place_table": 0.012281839047087474,
-     "place_furnace": 0.03689807850665652,
-     "place_plant": 0.011562499217836825,
-     "make_wood_pickaxe": 0.01162006642755417,
-     "make_stone_pickaxe": 0.02025715022288522,
-     "make_iron_pickaxe": 0.04659540012965137,
-     "make_wood_sword": 0.01874138056180591,
-     "make_stone_sword": 0.014075933652539339,
-     "make_iron_sword": 0.04651881071150568
-    },
-    "asleep": {
-     "noop": 79258,
-     "left": 1882,
-     "right": 3774,
-     "up": 7230,
-     "down": 39549,
-     "do": 13908,
-     "sleep": 15308,
-     "place_stone": 5556,
-     "place_table": 2952,
-     "place_furnace": 16011,
-     "place_plant": 9665,
-     "make_wood_pickaxe": 7554,
-     "make_stone_pickaxe": 14481,
-     "make_iron_pickaxe": 59741,
-     "make_wood_sword": 7873,
-     "make_stone_sword": 21217,
-     "make_iron_sword": 40028
+     "noop": 0.21379510578600516,
+     "left": 0.10015342912850753,
+     "right": 0.09665985037531317,
+     "up": 0.1387845309398723,
+     "down": 0.1375505903141918,
+     "do": 0.16015748386240936,
+     "sleep": 0.00810045728387893,
+     "place_stone": 0.01611331229210103,
+     "place_table": 0.010804113802864845,
+     "place_furnace": 0.028883221160705123,
+     "place_plant": 0.006724350679418221,
+     "make_wood_pickaxe": 0.00783865162577309,
+     "make_stone_pickaxe": 0.013008187058390672,
+     "make_iron_pickaxe": 0.016689985558139126,
+     "make_wood_sword": 0.014800279326113237,
+     "make_stone_sword": 0.0034550337519053493,
+     "make_iron_sword": 0.026481417054411024
     },
     "outcome": {
      "left": {
@@ -6683,23 +6664,24 @@
       "succeeded": 1723,
       "failed": 51178
      }
-    }
+    },
+    "asleep_steps": 345987
    },
    "chunks": {
     "1": {
      "windows": 500000,
      "distinct_chunks": 17,
-     "chunk_entropy_bits": 3.531693309817079,
+     "chunk_entropy_bits": 3.2567774107171465,
      "distinct_effects": 406,
      "effect_entropy_bits": 3.6759370544805217,
      "information_with_motion": {
-      "mi_bits": 1.9442925608577744,
+      "mi_bits": 2.0665566711988657,
       "h_effect_bits": 3.676521345972082,
       "coverage": 1.0,
       "chunk_classes": 17
      },
      "information_interaction": {
-      "mi_bits": 0.5198439965374881,
+      "mi_bits": 0.5702945234515369,
       "h_effect_bits": 1.9775722227520134,
       "coverage": 1.0,
       "chunk_classes": 17
@@ -6708,134 +6690,134 @@
     "2": {
      "windows": 500000,
      "distinct_chunks": 289,
-     "chunk_entropy_bits": 6.445859103896179,
+     "chunk_entropy_bits": 5.728394876482895,
      "distinct_effects": 2217,
      "effect_entropy_bits": 5.856161454290206,
      "information_with_motion": {
-      "mi_bits": 3.1430511814787043,
-      "h_effect_bits": 5.859358466500815,
-      "coverage": 1.0,
-      "chunk_classes": 289
+      "mi_bits": 3.2945993640382643,
+      "h_effect_bits": 5.859529384871959,
+      "coverage": 0.999708,
+      "chunk_classes": 279
      },
      "information_interaction": {
-      "mi_bits": 0.8725100920980031,
-      "h_effect_bits": 3.180248398991237,
-      "coverage": 1.0,
-      "chunk_classes": 289
+      "mi_bits": 0.9415574924926098,
+      "h_effect_bits": 3.180020604722535,
+      "coverage": 0.999708,
+      "chunk_classes": 279
      }
     },
     "3": {
      "windows": 500000,
-     "distinct_chunks": 4519,
-     "chunk_entropy_bits": 8.790508924836928,
+     "distinct_chunks": 3938,
+     "chunk_entropy_bits": 7.778757301017407,
      "distinct_effects": 7324,
      "effect_entropy_bits": 7.507516817235841,
      "information_with_motion": {
-      "mi_bits": 4.17940879198097,
-      "h_effect_bits": 7.538197503417458,
-      "coverage": 0.966484,
-      "chunk_classes": 1760
+      "mi_bits": 4.2913243519440725,
+      "h_effect_bits": 7.5087433232415774,
+      "coverage": 0.973662,
+      "chunk_classes": 1483
      },
      "information_interaction": {
-      "mi_bits": 1.2759036565761273,
-      "h_effect_bits": 4.178637646761247,
-      "coverage": 0.966484,
-      "chunk_classes": 1760
+      "mi_bits": 1.3359447574167058,
+      "h_effect_bits": 4.171840062073882,
+      "coverage": 0.973662,
+      "chunk_classes": 1483
      }
     },
     "4": {
      "windows": 498084,
-     "distinct_chunks": 27550,
-     "chunk_entropy_bits": 10.8616360965671,
+     "distinct_chunks": 22282,
+     "chunk_entropy_bits": 9.620283128931387,
      "distinct_effects": 15879,
      "effect_entropy_bits": 8.796670648809492,
      "information_with_motion": {
-      "mi_bits": 4.875873939164138,
-      "h_effect_bits": 8.667676562718617,
-      "coverage": 0.8247644975546293,
-      "chunk_classes": 2681
+      "mi_bits": 4.910233397068485,
+      "h_effect_bits": 8.551983510250139,
+      "coverage": 0.8544422225969917,
+      "chunk_classes": 2307
      },
      "information_interaction": {
-      "mi_bits": 1.5097674875421898,
-      "h_effect_bits": 4.853075021443815,
-      "coverage": 0.8247644975546293,
-      "chunk_classes": 2681
+      "mi_bits": 1.5725015180700552,
+      "h_effect_bits": 4.837705184777857,
+      "coverage": 0.8544422225969917,
+      "chunk_classes": 2307
      }
     },
     "6": {
      "windows": 331424,
-     "distinct_chunks": 102441,
-     "chunk_entropy_bits": 13.917746498399248,
+     "distinct_chunks": 87676,
+     "chunk_entropy_bits": 12.423829112884999,
      "distinct_effects": 34945,
-     "effect_entropy_bits": 10.75586596520615,
+     "effect_entropy_bits": 10.755865965206148,
      "information_with_motion": {
-      "mi_bits": 5.372214399652471,
-      "h_effect_bits": 9.421218028363608,
-      "coverage": 0.46770903736603264,
-      "chunk_classes": 1895
+      "mi_bits": 5.085931196065712,
+      "h_effect_bits": 8.91097668193771,
+      "coverage": 0.5341194361301536,
+      "chunk_classes": 1678
      },
      "information_interaction": {
-      "mi_bits": 1.6315410193560553,
-      "h_effect_bits": 5.378240281568329,
-      "coverage": 0.46770903736603264,
-      "chunk_classes": 1895
+      "mi_bits": 1.6798046284447095,
+      "h_effect_bits": 5.27595020387816,
+      "coverage": 0.5341194361301536,
+      "chunk_classes": 1678
      }
     },
     "8": {
      "windows": 248166,
-     "distinct_chunks": 143096,
-     "chunk_entropy_bits": 15.537048600316904,
+     "distinct_chunks": 126181,
+     "chunk_entropy_bits": 13.946955395584922,
      "distinct_effects": 51056,
      "effect_entropy_bits": 12.089276397708549,
      "information_with_motion": {
-      "mi_bits": 4.1122204622901295,
-      "h_effect_bits": 8.108319759669607,
-      "coverage": 0.21763658196529742,
-      "chunk_classes": 690
+      "mi_bits": 3.485001592759264,
+      "h_effect_bits": 7.158169569411018,
+      "coverage": 0.3065931674766084,
+      "chunk_classes": 579
      },
      "information_interaction": {
-      "mi_bits": 1.5065063546584598,
-      "h_effect_bits": 5.321011930482872,
-      "coverage": 0.21763658196529742,
-      "chunk_classes": 690
+      "mi_bits": 1.479498661375326,
+      "h_effect_bits": 5.042766099934754,
+      "coverage": 0.3065931674766084,
+      "chunk_classes": 579
      }
     },
     "12": {
      "windows": 164824,
-     "distinct_chunks": 139619,
-     "chunk_entropy_bits": 16.41439076223779,
+     "distinct_chunks": 124402,
+     "chunk_entropy_bits": 14.86046469341648,
      "distinct_effects": 66404,
-     "effect_entropy_bits": 13.528893592019054,
+     "effect_entropy_bits": 13.528893592019056,
      "information_with_motion": {
-      "mi_bits": 1.9148246641645148,
-      "h_effect_bits": 5.811340336795025,
-      "coverage": 0.08081954084356648,
-      "chunk_classes": 115
+      "mi_bits": 1.6165939308171016,
+      "h_effect_bits": 4.872066763037579,
+      "coverage": 0.18428748240547493,
+      "chunk_classes": 108
      },
      "information_interaction": {
-      "mi_bits": 1.0779106421036015,
-      "h_effect_bits": 4.897136493674032,
-      "coverage": 0.08081954084356648,
-      "chunk_classes": 115
+      "mi_bits": 1.1324174688143165,
+      "h_effect_bits": 4.345051622898658,
+      "coverage": 0.18428748240547493,
+      "chunk_classes": 108
      }
     },
     "16": {
      "windows": 123235,
-     "distinct_chunks": 113645,
-     "chunk_entropy_bits": 16.407379521062424,
+     "distinct_chunks": 101711,
+     "chunk_entropy_bits": 14.9722917816994,
      "distinct_effects": 67372,
-     "effect_entropy_bits": 14.127715372420994,
+     "effect_entropy_bits": 14.127715372420997,
      "information_with_motion": {
-      "mi_bits": 0.9879890143513395,
-      "h_effect_bits": 4.867567338518231,
-      "coverage": 0.046975291110479975,
-      "chunk_classes": 30
+      "mi_bits": 0.8408422246144243,
+      "h_effect_bits": 4.121154084907149,
+      "coverage": 0.14602994279222622,
+      "chunk_classes": 34
      },
      "information_interaction": {
-      "mi_bits": 0.7684945090625295,
-      "h_effect_bits": 4.6006914272912125,
-      "coverage": 0.046975291110479975,
-      "chunk_classes": 30
+      "mi_bits": 0.6942999914347547,
+      "h_effect_bits": 3.9537221004858614,
+      "coverage": 0.14602994279222622,
+      "chunk_classes": 34
      }
     }
    }
@@ -8046,15 +8028,15 @@
       "name": "view, share of tiles",
       "share": [
        0.137491557046464,
-       0.2020438856039183,
+       0.20204388560391828,
        0.24539056413969046,
-       0.3051017855936796,
-       0.3965213004883618,
-       0.49385934223734435,
+       0.30510178559367973,
+       0.39652130048836176,
+       0.49385934223734423,
        0.6139371149268407,
        0.7119256502949223,
        0.7656135762625744,
-       0.7822994140184811,
+       0.782299414018481,
        0.7878623236009545,
        0.7896871272593816,
        0.7969394204644076
@@ -8476,61 +8458,42 @@
    },
    "actions": {
     "steps": {
-     "noop": 12157,
-     "left": 15138,
-     "right": 14877,
-     "up": 21702,
-     "down": 24250,
-     "do": 25032,
-     "sleep": 2358,
-     "place_stone": 2925,
-     "place_table": 1665,
-     "place_furnace": 5543,
-     "place_plant": 1883,
-     "make_wood_pickaxe": 1397,
-     "make_stone_pickaxe": 2738,
-     "make_iron_pickaxe": 6715,
-     "make_wood_sword": 2925,
-     "make_stone_sword": 2410,
-     "make_iron_sword": 7040
+     "noop": 32012,
+     "left": 14956,
+     "right": 14676,
+     "up": 21160,
+     "down": 21127,
+     "do": 24003,
+     "sleep": 1236,
+     "place_stone": 2486,
+     "place_table": 1543,
+     "place_furnace": 4275,
+     "place_plant": 1137,
+     "make_wood_pickaxe": 1075,
+     "make_stone_pickaxe": 1841,
+     "make_iron_pickaxe": 2460,
+     "make_wood_sword": 2361,
+     "make_stone_sword": 444,
+     "make_iron_sword": 3963
     },
     "share": {
-     "noop": 0.08064077476700607,
-     "left": 0.10041457994759709,
-     "right": 0.09868329408643163,
-     "up": 0.14395542436403436,
-     "down": 0.1608570196676727,
-     "do": 0.16604424397200757,
-     "sleep": 0.015641272262943186,
-     "place_stone": 0.019402341547544028,
-     "place_table": 0.011044409803986601,
-     "place_furnace": 0.03676826639249113,
-     "place_plant": 0.012490464661205267,
-     "make_wood_pickaxe": 0.00926669098869026,
-     "make_stone_pickaxe": 0.018161918344333523,
-     "make_iron_pickaxe": 0.04454246956983185,
-     "make_wood_sword": 0.019402341547544028,
-     "make_stone_sword": 0.01598620277934397,
-     "make_iron_sword": 0.04669828529733674
-    },
-    "asleep": {
-     "noop": 5963,
-     "left": 182,
-     "right": 201,
-     "up": 542,
-     "down": 3123,
-     "do": 1029,
-     "sleep": 1122,
-     "place_stone": 439,
-     "place_table": 122,
-     "place_furnace": 1268,
-     "place_plant": 746,
-     "make_wood_pickaxe": 322,
-     "make_stone_pickaxe": 897,
-     "make_iron_pickaxe": 4255,
-     "make_wood_sword": 564,
-     "make_stone_sword": 1966,
-     "make_iron_sword": 3077
+     "noop": 0.2123445325196511,
+     "left": 0.09920732314019436,
+     "right": 0.09735000497495937,
+     "up": 0.14036018705847236,
+     "down": 0.14014128884614108,
+     "do": 0.15921859971476898,
+     "sleep": 0.008198733043680143,
+     "place_stone": 0.016490331995622037,
+     "place_table": 0.010235149746277072,
+     "place_furnace": 0.028357268415641273,
+     "place_plant": 0.007542038406686345,
+     "make_wood_pickaxe": 0.007130775098670028,
+     "make_stone_pickaxe": 0.01221186693642002,
+     "make_iron_pickaxe": 0.016317866737421645,
+     "make_wood_sword": 0.015661172100427848,
+     "make_stone_sword": 0.00294517594772976,
+     "make_iron_sword": 0.026287685317236575
     },
     "outcome": {
      "left": {
@@ -8597,23 +8560,24 @@
       "succeeded": 125,
       "failed": 3838
      }
-    }
+    },
+    "asleep_steps": 25818
    },
    "chunks": {
     "1": {
      "windows": 150755,
      "distinct_chunks": 17,
-     "chunk_entropy_bits": 3.5221808064016216,
+     "chunk_entropy_bits": 3.2526572418945903,
      "distinct_effects": 326,
      "effect_entropy_bits": 3.6805365990323975,
      "information_with_motion": {
-      "mi_bits": 1.9618790381546365,
+      "mi_bits": 2.0846992939340407,
       "h_effect_bits": 3.6820916913619683,
       "coverage": 1.0,
       "chunk_classes": 17
      },
      "information_interaction": {
-      "mi_bits": 0.5266171823337611,
+      "mi_bits": 0.5757921899934022,
       "h_effect_bits": 1.9752931825937479,
       "coverage": 1.0,
       "chunk_classes": 17
@@ -8621,135 +8585,135 @@
     },
     "2": {
      "windows": 75304,
-     "distinct_chunks": 289,
-     "chunk_entropy_bits": 6.409020047205145,
+     "distinct_chunks": 282,
+     "chunk_entropy_bits": 5.709297097970888,
      "distinct_effects": 1250,
      "effect_entropy_bits": 5.846693371968128,
      "information_with_motion": {
-      "mi_bits": 3.20803842749309,
-      "h_effect_bits": 5.867539815894794,
-      "coverage": 0.9939445447784978,
-      "chunk_classes": 244
+      "mi_bits": 3.3406133005623193,
+      "h_effect_bits": 5.8585291092364535,
+      "coverage": 0.9919526187187931,
+      "chunk_classes": 206
      },
      "information_interaction": {
-      "mi_bits": 0.9074840981111141,
-      "h_effect_bits": 3.173357418393895,
-      "coverage": 0.9939445447784978,
-      "chunk_classes": 244
+      "mi_bits": 0.9551479338223192,
+      "h_effect_bits": 3.1632492539996138,
+      "coverage": 0.9919526187187931,
+      "chunk_classes": 206
      }
     },
     "3": {
      "windows": 50166,
-     "distinct_chunks": 2774,
-     "chunk_entropy_bits": 8.679019990306633,
+     "distinct_chunks": 2273,
+     "chunk_entropy_bits": 7.702064698163802,
      "distinct_effects": 2854,
      "effect_entropy_bits": 7.435945341799787,
      "information_with_motion": {
-      "mi_bits": 4.11831265388996,
-      "h_effect_bits": 7.336068175290005,
-      "coverage": 0.7953793405892438,
-      "chunk_classes": 348
+      "mi_bits": 4.1249683614820825,
+      "h_effect_bits": 7.194826039246949,
+      "coverage": 0.829964517800901,
+      "chunk_classes": 287
      },
      "information_interaction": {
-      "mi_bits": 1.1022501472713278,
-      "h_effect_bits": 3.910097619080186,
-      "coverage": 0.7953793405892438,
-      "chunk_classes": 348
+      "mi_bits": 1.1376529120304664,
+      "h_effect_bits": 3.883074625683599,
+      "coverage": 0.829964517800901,
+      "chunk_classes": 287
      }
     },
     "4": {
      "windows": 37580,
-     "distinct_chunks": 7571,
-     "chunk_entropy_bits": 10.443997315936269,
+     "distinct_chunks": 6335,
+     "chunk_entropy_bits": 9.305982046538148,
      "distinct_effects": 4479,
      "effect_entropy_bits": 8.6054235811525,
      "information_with_motion": {
-      "mi_bits": 4.720443639125056,
-      "h_effect_bits": 8.203140602124826,
-      "coverage": 0.5669505055880788,
-      "chunk_classes": 299
+      "mi_bits": 4.481595008204341,
+      "h_effect_bits": 7.761185105389498,
+      "coverage": 0.6313996806812134,
+      "chunk_classes": 262
      },
      "information_interaction": {
-      "mi_bits": 1.3035216101285876,
-      "h_effect_bits": 4.434097054703842,
-      "coverage": 0.5669505055880788,
-      "chunk_classes": 299
+      "mi_bits": 1.3061717495653475,
+      "h_effect_bits": 4.329216246999576,
+      "coverage": 0.6313996806812134,
+      "chunk_classes": 262
      }
     },
     "6": {
      "windows": 25013,
-     "distinct_chunks": 13474,
-     "chunk_entropy_bits": 12.42610086045131,
+     "distinct_chunks": 11839,
+     "chunk_entropy_bits": 11.170705273048432,
      "distinct_effects": 7018,
      "effect_entropy_bits": 10.187016113182684,
      "information_with_motion": {
-      "mi_bits": 3.019539979077235,
-      "h_effect_bits": 6.515585216635587,
-      "coverage": 0.19613800823571742,
-      "chunk_classes": 71
+      "mi_bits": 2.4340296933824757,
+      "h_effect_bits": 5.624158995411368,
+      "coverage": 0.29212809339143647,
+      "chunk_classes": 64
      },
      "information_interaction": {
-      "mi_bits": 1.0020888461598774,
-      "h_effect_bits": 4.292543699751427,
-      "coverage": 0.19613800823571742,
-      "chunk_classes": 71
+      "mi_bits": 0.9368243929602174,
+      "h_effect_bits": 4.0371495142393155,
+      "coverage": 0.29212809339143647,
+      "chunk_classes": 64
      }
     },
     "8": {
      "windows": 18727,
-     "distinct_chunks": 14365,
-     "chunk_entropy_bits": 13.104390287535491,
+     "distinct_chunks": 12735,
+     "chunk_entropy_bits": 11.833660190320774,
      "distinct_effects": 8210,
-     "effect_entropy_bits": 11.092331167401122,
+     "effect_entropy_bits": 11.092331167401124,
      "information_with_motion": {
-      "mi_bits": 1.3992774861721515,
-      "h_effect_bits": 5.050858118552096,
-      "coverage": 0.09905484060447482,
-      "chunk_classes": 20
+      "mi_bits": 1.0671884302762908,
+      "h_effect_bits": 4.355072442296414,
+      "coverage": 0.20216799273775832,
+      "chunk_classes": 19
      },
      "information_interaction": {
-      "mi_bits": 0.6918531652096456,
-      "h_effect_bits": 4.210211566361417,
-      "coverage": 0.09905484060447482,
-      "chunk_classes": 20
+      "mi_bits": 0.6467967822425194,
+      "h_effect_bits": 3.9083443096833057,
+      "coverage": 0.20216799273775832,
+      "chunk_classes": 19
      }
     },
     "12": {
      "windows": 12443,
-     "distinct_chunks": 11318,
-     "chunk_entropy_bits": 13.143647646656202,
+     "distinct_chunks": 10102,
+     "chunk_entropy_bits": 11.976455801543677,
      "distinct_effects": 8135,
      "effect_entropy_bits": 11.72782539910217,
      "information_with_motion": {
-      "mi_bits": 1.0771875678792329,
-      "h_effect_bits": 4.689497344110099,
-      "coverage": 0.05673872860242707,
-      "chunk_classes": 10
+      "mi_bits": 0.7219485751759325,
+      "h_effect_bits": 3.7795285111033423,
+      "coverage": 0.1582415816121514,
+      "chunk_classes": 9
      },
      "information_interaction": {
-      "mi_bits": 0.7687406234503449,
-      "h_effect_bits": 4.339859430520215,
-      "coverage": 0.05673872860242707,
-      "chunk_classes": 10
+      "mi_bits": 0.6139867309228171,
+      "h_effect_bits": 3.660526547674562,
+      "coverage": 0.1582415816121514,
+      "chunk_classes": 9
      }
     },
     "16": {
      "windows": 9304,
-     "distinct_chunks": 8838,
-     "chunk_entropy_bits": 12.923819506617944,
+     "distinct_chunks": 7944,
+     "chunk_entropy_bits": 11.892000844518327,
      "distinct_effects": 6986,
      "effect_entropy_bits": 11.847970605294567,
      "information_with_motion": {
-      "mi_bits": 0.9039251609251369,
-      "h_effect_bits": 4.534779987685486,
-      "coverage": 0.036435941530524506,
-      "chunk_classes": 6
+      "mi_bits": 0.3765388880039917,
+      "h_effect_bits": 3.565614613154013,
+      "coverage": 0.1282244196044712,
+      "chunk_classes": 4
      },
      "information_interaction": {
-      "mi_bits": 0.7952198640961927,
-      "h_effect_bits": 4.426074690856542,
-      "coverage": 0.036435941530524506,
-      "chunk_classes": 6
+      "mi_bits": 0.3765388880039917,
+      "h_effect_bits": 3.565614613154013,
+      "coverage": 0.1282244196044712,
+      "chunk_classes": 4
      }
     }
    }
@@ -9940,15 +9904,15 @@
       "name": "view, share of tiles",
       "share": [
        0.14522720277833717,
-       0.2163206851595232,
-       0.26462115551424825,
-       0.33021310113553237,
+       0.21632068515952324,
+       0.2646211555142483,
+       0.3302131011355324,
        0.43020736643780827,
-       0.531908303459235,
+       0.5319083034592352,
        0.6504323260831402,
-       0.7430796749128278,
+       0.7430796749128277,
        0.7827535300350142,
-       0.7939320475299063,
+       0.7939320475299061,
        0.7960265865739714,
        0.7940860960970576,
        0.7957974577682967
@@ -10370,61 +10334,42 @@
    },
    "actions": {
     "steps": {
-     "noop": 14865,
-     "left": 14966,
-     "right": 14698,
-     "up": 22353,
-     "down": 24675,
-     "do": 26426,
-     "sleep": 1489,
-     "place_stone": 2714,
-     "place_table": 1695,
-     "place_furnace": 1800,
-     "place_plant": 764,
-     "make_wood_pickaxe": 1271,
-     "make_stone_pickaxe": 2249,
-     "make_iron_pickaxe": 7398,
-     "make_wood_sword": 2460,
-     "make_stone_sword": 2656,
-     "make_iron_sword": 7909
+     "noop": 36003,
+     "left": 14903,
+     "right": 14548,
+     "up": 21898,
+     "down": 22278,
+     "do": 24822,
+     "sleep": 627,
+     "place_stone": 2381,
+     "place_table": 1522,
+     "place_furnace": 1160,
+     "place_plant": 382,
+     "make_wood_pickaxe": 684,
+     "make_stone_pickaxe": 1424,
+     "make_iron_pickaxe": 1813,
+     "make_wood_sword": 1997,
+     "make_stone_sword": 446,
+     "make_iron_sword": 3500
     },
     "share": {
-     "noop": 0.09884432268532063,
-     "left": 0.09951591882331037,
-     "right": 0.09773386174428811,
-     "up": 0.14863552943053968,
-     "down": 0.16407559113759076,
-     "do": 0.1757188073516504,
-     "sleep": 0.009901055935313988,
-     "place_stone": 0.018046652658456792,
-     "place_table": 0.011270846078144534,
-     "place_furnace": 0.011969040082985345,
-     "place_plant": 0.005080192568556002,
-     "make_wood_pickaxe": 0.008451472191930208,
-     "make_stone_pickaxe": 0.014954650637018911,
-     "make_iron_pickaxe": 0.049192754741069766,
-     "make_wood_sword": 0.016357688113413305,
-     "make_stone_sword": 0.017660983589116153,
-     "make_iron_sword": 0.05259063223129505
-    },
-    "asleep": {
-     "noop": 7775,
-     "left": 63,
-     "right": 150,
-     "up": 455,
-     "down": 2397,
-     "do": 1604,
-     "sleep": 862,
-     "place_stone": 333,
-     "place_table": 173,
-     "place_furnace": 640,
-     "place_plant": 382,
-     "make_wood_pickaxe": 587,
-     "make_stone_pickaxe": 825,
-     "make_iron_pickaxe": 5585,
-     "make_wood_sword": 463,
-     "make_stone_sword": 2210,
-     "make_iron_sword": 4409
+     "noop": 0.2394007500598452,
+     "left": 0.09909700242040588,
+     "right": 0.09673644173737267,
+     "up": 0.14561002207622947,
+     "down": 0.14813681942708196,
+     "do": 0.1650530627443679,
+     "sleep": 0.004169215628906562,
+     "place_stone": 0.015832380243104502,
+     "place_table": 0.010120488336835386,
+     "place_furnace": 0.007713381386812778,
+     "place_plant": 0.002540096284278001,
+     "make_wood_pickaxe": 0.004548235231534431,
+     "make_stone_pickaxe": 0.009468840598983962,
+     "make_iron_pickaxe": 0.01205548315025135,
+     "make_wood_sword": 0.013278985025400963,
+     "make_stone_sword": 0.0029656621538952576,
+     "make_iron_sword": 0.023273133494693725
     },
     "outcome": {
      "left": {
@@ -10491,23 +10436,24 @@
       "succeeded": 178,
       "failed": 3322
      }
-    }
+    },
+    "asleep_steps": 28913
    },
    "chunks": {
     "1": {
      "windows": 150388,
      "distinct_chunks": 17,
-     "chunk_entropy_bits": 3.411145560086091,
+     "chunk_entropy_bits": 3.072689816592103,
      "distinct_effects": 316,
      "effect_entropy_bits": 3.7010622267128124,
      "information_with_motion": {
-      "mi_bits": 2.0296541970186706,
+      "mi_bits": 2.1443434428628985,
       "h_effect_bits": 3.7025731482553557,
       "coverage": 1.0,
       "chunk_classes": 17
      },
      "information_interaction": {
-      "mi_bits": 0.5488469781775558,
+      "mi_bits": 0.6042193280678974,
       "h_effect_bits": 1.974420332998004,
       "coverage": 1.0,
       "chunk_classes": 17
@@ -10515,135 +10461,135 @@
     },
     "2": {
      "windows": 75145,
-     "distinct_chunks": 284,
-     "chunk_entropy_bits": 6.244072440836523,
+     "distinct_chunks": 265,
+     "chunk_entropy_bits": 5.427325692773946,
      "distinct_effects": 1201,
      "effect_entropy_bits": 5.930351811802367,
      "information_with_motion": {
-      "mi_bits": 3.326362366355347,
-      "h_effect_bits": 5.944489752819341,
-      "coverage": 0.9917226695056225,
-      "chunk_classes": 217
+      "mi_bits": 3.440537783719783,
+      "h_effect_bits": 5.936223829090928,
+      "coverage": 0.9910572892408012,
+      "chunk_classes": 168
      },
      "information_interaction": {
-      "mi_bits": 0.9254651477842484,
-      "h_effect_bits": 3.179532921153806,
-      "coverage": 0.9917226695056225,
-      "chunk_classes": 217
+      "mi_bits": 0.9700403894655611,
+      "h_effect_bits": 3.1723822622345055,
+      "coverage": 0.9910572892408012,
+      "chunk_classes": 168
      }
     },
     "3": {
      "windows": 50065,
-     "distinct_chunks": 2508,
-     "chunk_entropy_bits": 8.510721578603878,
+     "distinct_chunks": 1942,
+     "chunk_entropy_bits": 7.376213027795061,
      "distinct_effects": 2753,
      "effect_entropy_bits": 7.505456348077514,
      "information_with_motion": {
-      "mi_bits": 4.210779918719381,
-      "h_effect_bits": 7.402247068235188,
-      "coverage": 0.8170977728952362,
-      "chunk_classes": 329
+      "mi_bits": 4.194202553828602,
+      "h_effect_bits": 7.257650764113808,
+      "coverage": 0.8543493458503945,
+      "chunk_classes": 262
      },
      "information_interaction": {
-      "mi_bits": 1.0732031395773207,
-      "h_effect_bits": 3.8788155975681615,
-      "coverage": 0.8170977728952362,
-      "chunk_classes": 329
+      "mi_bits": 1.093513305308662,
+      "h_effect_bits": 3.84655486802764,
+      "coverage": 0.8543493458503945,
+      "chunk_classes": 262
      }
     },
     "4": {
      "windows": 37527,
-     "distinct_chunks": 6958,
-     "chunk_entropy_bits": 10.320793228410158,
+     "distinct_chunks": 5667,
+     "chunk_entropy_bits": 8.989254094966324,
      "distinct_effects": 4394,
      "effect_entropy_bits": 8.712473707821962,
      "information_with_motion": {
-      "mi_bits": 4.897393748265813,
-      "h_effect_bits": 8.35545943456409,
-      "coverage": 0.5935193327470888,
-      "chunk_classes": 321
+      "mi_bits": 4.628953488853702,
+      "h_effect_bits": 7.921462839258449,
+      "coverage": 0.6639219761771524,
+      "chunk_classes": 272
      },
      "information_interaction": {
-      "mi_bits": 1.3138506565571921,
-      "h_effect_bits": 4.457751687228441,
-      "coverage": 0.5935193327470888,
-      "chunk_classes": 321
+      "mi_bits": 1.2957218524300962,
+      "h_effect_bits": 4.35079248835912,
+      "coverage": 0.6639219761771524,
+      "chunk_classes": 272
      }
     },
     "6": {
      "windows": 24986,
-     "distinct_chunks": 13124,
-     "chunk_entropy_bits": 12.403180992541351,
+     "distinct_chunks": 11266,
+     "chunk_entropy_bits": 10.912735680195258,
      "distinct_effects": 6965,
      "effect_entropy_bits": 10.304662765220812,
      "information_with_motion": {
-      "mi_bits": 3.5331185933104536,
-      "h_effect_bits": 7.054935887120968,
-      "coverage": 0.19126710958136556,
-      "chunk_classes": 72
+      "mi_bits": 2.6944984620561443,
+      "h_effect_bits": 5.935169683025239,
+      "coverage": 0.3096133834947571,
+      "chunk_classes": 68
      },
      "information_interaction": {
-      "mi_bits": 1.1039256508411044,
-      "h_effect_bits": 4.477476868808433,
-      "coverage": 0.19126710958136556,
-      "chunk_classes": 72
+      "mi_bits": 0.9689596490419619,
+      "h_effect_bits": 4.147163743989204,
+      "coverage": 0.3096133834947571,
+      "chunk_classes": 68
      }
     },
     "8": {
      "windows": 18713,
-     "distinct_chunks": 14240,
-     "chunk_entropy_bits": 13.130941147343929,
+     "distinct_chunks": 12396,
+     "chunk_entropy_bits": 11.621006406053604,
      "distinct_effects": 8253,
      "effect_entropy_bits": 11.196344472462984,
      "information_with_motion": {
-      "mi_bits": 1.877297773883381,
-      "h_effect_bits": 5.4750666407627016,
-      "coverage": 0.08934964997595254,
+      "mi_bits": 1.1887653739800723,
+      "h_effect_bits": 4.492655141031644,
+      "coverage": 0.21343451076791536,
       "chunk_classes": 18
      },
      "information_interaction": {
-      "mi_bits": 0.8967679744894306,
-      "h_effect_bits": 4.4108216099414514,
-      "coverage": 0.08934964997595254,
+      "mi_bits": 0.6667462463428899,
+      "h_effect_bits": 3.955260912023584,
+      "coverage": 0.21343451076791536,
       "chunk_classes": 18
      }
     },
     "12": {
      "windows": 12447,
-     "distinct_chunks": 11474,
-     "chunk_entropy_bits": 13.22333075366754,
+     "distinct_chunks": 10005,
+     "chunk_entropy_bits": 11.808551756765343,
      "distinct_effects": 8257,
      "effect_entropy_bits": 11.772796448535331,
      "information_with_motion": {
-      "mi_bits": 0.6010484742624764,
-      "h_effect_bits": 3.877011764628485,
-      "coverage": 0.0428215634289387,
+      "mi_bits": 0.2920247118748365,
+      "h_effect_bits": 3.161966754791567,
+      "coverage": 0.1630915079938941,
       "chunk_classes": 6
      },
      "information_interaction": {
-      "mi_bits": 0.4818710996054496,
-      "h_effect_bits": 3.7527286722970783,
-      "coverage": 0.0428215634289387,
+      "mi_bits": 0.2920247118748365,
+      "h_effect_bits": 3.161966754791567,
+      "coverage": 0.1630915079938941,
       "chunk_classes": 6
      }
     },
     "16": {
      "windows": 9307,
-     "distinct_chunks": 8954,
-     "chunk_entropy_bits": 12.98552678483909,
+     "distinct_chunks": 7860,
+     "chunk_entropy_bits": 11.702151210403757,
      "distinct_effects": 7074,
      "effect_entropy_bits": 11.831472951576984,
      "information_with_motion": {
-      "mi_bits": 0.6143436772357131,
-      "h_effect_bits": 3.695949955576943,
-      "coverage": 0.02643171806167401,
-      "chunk_classes": 4
+      "mi_bits": 0.113493748166416,
+      "h_effect_bits": 3.1609326795244996,
+      "coverage": 0.14333297517997207,
+      "chunk_classes": 3
      },
      "information_interaction": {
-      "mi_bits": 0.6143436772357131,
-      "h_effect_bits": 3.695949955576943,
-      "coverage": 0.02643171806167401,
-      "chunk_classes": 4
+      "mi_bits": 0.113493748166416,
+      "h_effect_bits": 3.1609326795244996,
+      "coverage": 0.14333297517997207,
+      "chunk_classes": 3
      }
     }
    },
@@ -10961,9 +10907,9 @@
  "files": {
   "train": {
    "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_train.h5",
-   "bytes": 8270901761,
-   "mtime": 1792203739,
-   "sha256": "c64af8c93d768600a206bbf08eed9b32451b411834d0bd185fc1dbf4b3b1ce2f",
+   "bytes": 8279852121,
+   "mtime": 1792572953,
+   "sha256": "45512fea1f6886e6e25791ee85501ec95dfc89e467c75b7414ee02ab53596f79",
    "runs": [
     {
      "started": "2026-10-16T19:24:05+00:00",
@@ -11387,9 +11333,9 @@
   },
   "val": {
    "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_val.h5",
-   "bytes": 624078480,
-   "mtime": 1792191328,
-   "sha256": "58298838f145a5b7388edf044ae735df7eca5e5430ea27f47a2ccf8fafde88de",
+   "bytes": 624762664,
+   "mtime": 1792572953,
+   "sha256": "4914a38d0071603d70335785384b3f06bd97ad4dd98826cf70aee2ff81ff8acc",
    "runs": [
     {
      "started": "2026-10-16T21:59:20+00:00",
@@ -11813,9 +11759,9 @@
   },
   "test": {
    "path": "/Users/julian.quast/Documents/Kailash/AAC/data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_test.h5",
-   "bytes": 628793275,
-   "mtime": 1792191329,
-   "sha256": "8c9b3623c095a34fc858673bd7e13794d41c858af9fcbcd4cabae0e4942890a0",
+   "bytes": 629475446,
+   "mtime": 1792572954,
+   "sha256": "26c370f003a2d3cc6e28928508733d1f896ee61fe34398096900741fdab1b52f",
    "runs": [
     {
      "started": "2026-10-16T22:19:09+00:00",
@@ -11878,7 +11824,7 @@
   "val": {
    "length_ks": 0.027315655019803153,
    "achievements_per_episode_ks": 0.017975379570364602,
-   "action_share_max_abs_diff": 0.003508815639469781,
+   "action_share_max_abs_diff": 0.002590698531949265,
    "change_share_max_abs_diff": 0.2528772588060164
   }
  }
