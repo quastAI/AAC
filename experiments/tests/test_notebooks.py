@@ -63,6 +63,7 @@ def test_the_flat_notebook_runs_the_level_one_cycle():
         '"F3", "F4", "F5"',
         '"run", "V1"',
         'trainer.max_epochs',
+        'trainer.devices=1',  # several GPUs: DDP stops at the unused mask_token
         'start_new_session=True',  # detached from the kernel
         'HDF5_USE_FILE_LOCKING',
         'LD_LIBRARY_PATH',
