@@ -27,6 +27,7 @@ def dataset(episode, tmp_path):
         achievements=episode['achievements'],
         reward=episode['reward'],
         action=action,
+        action_policy=action.copy(),  # the collector's layout since the relabeling
         step_idx=np.arange(n, dtype=np.int32),
         ep_idx=np.zeros(n, dtype=np.int32),
         seed=np.full(n, episode['seed'], dtype=np.int64),

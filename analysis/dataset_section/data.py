@@ -38,6 +38,7 @@ VIEW_CHANNELS, BLOCK_TYPES = 21, 17
 VIEW_DIM = VIEW_TILES * VIEW_CHANNELS
 STATE_DIM = 1345
 SLEEPING_COLUMN = STATE_DIM - 1  # the last entry of `state`: the player is asleep
+NOOP = 0
 PLAYER_TILE = (VIEW_ROWS // 2, VIEW_COLS // 2)  # (row, column) of the player in the view
 FACING_STEP = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}  # `facing` -> the neighbouring tile it looks at (left, right, up, down)
 CREATURES = 0b0111  # bits of a tile's mob code: zombie, cow, skeleton (the arrows are the fourth bit)
@@ -79,6 +80,7 @@ class Split:
         self.episode = np.repeat(np.arange(self.n_episodes), self.lengths)
         self.final_achievements = self.cols["achievements"][last].astype(bool) if "achievements" in self.cols else None
         self._view = None
+        self._executed = None
 
     def has(self, *names) -> bool:
         return all(n in self.cols for n in names)
@@ -100,6 +102,28 @@ class Split:
                     sleeping[a : a + len(x)] = x[:, SLEEPING_COLUMN] > 0.5
             self._view = View(block, mob, sleeping)
         return self._view
+
+    def executed_action(self) -> np.ndarray:
+        """The `action` column as the game executed it, (frames,) float with NaN where there is no action.
+
+        While the player is asleep Craftax replaces every action by a noop, so a step taken asleep is a noop. Files
+        relabeled with purejaxql/scripts/relabel_asleep.py (and collected since) hold this already; older files hold
+        the policy's choice, and the rule is applied here, so both give the same numbers. Without the `state` column
+        (the sleeping flag) the column is used as it is.
+        """
+        if self._executed is None:
+            action = self.cols["action"][:, 0].astype(np.float32)
+            if self.state_ok:
+                action = action.copy()
+                action[self.view().sleeping & ~np.isnan(action)] = NOOP
+            self._executed = action
+        return self._executed
+
+    def asleep_steps(self) -> int:
+        """Steps taken while asleep (all noop by the game); 0 without the `state` column."""
+        if not self.state_ok:
+            return 0
+        return int((self.view().sleeping & ~np.isnan(self.cols["action"][:, 0])).sum())
 
     def episodes(self, name) -> list[np.ndarray]:
         """The rows of a column, one array per episode."""

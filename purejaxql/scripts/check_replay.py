@@ -11,7 +11,8 @@ The full state is compared leaf by leaf (the layout of `pack_state`): every inte
 inventory, random keys, timestep) must be identical; a float leaf may differ by FLOAT_TOLERANCE. The one float that
 is computed and not counted is the light level: a GPU and a CPU differ in its last bits, which changes the state bytes
 without changing the game. The float columns (observation, reward, daylight, rendered pixels) are reported with the
-largest difference.
+largest difference. The replay uses `action`, the actions the game executed; where the file also has `action_policy`
+(the policy's choice), `action` must follow the collector's rule (`executed_actions`: noop while asleep).
 """
 
 import argparse
@@ -110,6 +111,8 @@ def check(path, num_episodes=20, seed=0, source=None, collector=None) -> dict:
         chosen = np.random.default_rng(seed).choice(eligible, min(num_episodes, len(eligible)), replace=False)
         columns = [k for k in f if k not in ("ep_offset", "ep_len")]
         report = {"backend": str(jax.devices()[0]), "episodes": [], "columns": {}, "leaves": {}}
+        relabeled = "action_policy" in f
+        report["actions"] = {"relabeled": relabeled, "episodes_ok": 0}
         if "full_state" in f and f["full_state"].shape[1] != sum(leaf[3] for leaf in layout):
             raise SystemExit("the state layout of this Craftax version does not match the file: not the pinned version")
         for e in sorted(chosen):
@@ -117,6 +120,9 @@ def check(path, num_episodes=20, seed=0, source=None, collector=None) -> dict:
             stored = {k: f[k][o : o + n] for k in columns if k in DISCRETE or k in TOLERANCE}
             seed_of = int(f["seed"][o])
             actions = f["action"][o : o + n - 1, 0].astype(np.int32)  # n frames, n - 1 actions
+            if relabeled:
+                expected = collector.executed_actions(f["action_policy"][o : o + n], f["state"][o : o + n])
+                report["actions"]["episodes_ok"] += int(np.array_equal(f["action"][o : o + n], expected, equal_nan=True))
             result = compare(replay(seed_of, actions), stored, layout)
             failed = {k: v for k, v in result.items() if not v["ok"]}
             report["episodes"].append({"episode": int(e), "seed": seed_of, "frames": n, "failed": failed})
@@ -135,6 +141,8 @@ def check(path, num_episodes=20, seed=0, source=None, collector=None) -> dict:
         for k in DISCRETE
         if k in report["columns"]
     )
+    if report["actions"]["relabeled"]:
+        report["replayable"] &= report["actions"]["episodes_ok"] == len(report["episodes"])
     return report
 
 
@@ -156,6 +164,12 @@ def render(report: dict) -> str:
             lines.append(f"episode {e['episode']} (seed {e['seed']}): {name} differs from frame {v['first_frame']}"
                          + (f" ({v['note']})" if "note" in v else "")
                          + (f" in {', '.join(bad)}" if bad else ""))  # fmt: skip
+    actions = report.get("actions", {})
+    if actions.get("relabeled"):
+        lines.append(f"action follows the rule (noop while asleep, else action_policy) in {actions['episodes_ok']} of "
+                     f"{len(report['episodes'])} episodes")  # fmt: skip
+    else:
+        lines.append("no action_policy column: the file holds the policy's choice in `action` (run relabel_asleep.py)")
     lines.append("")
     if not report["episodes"]:
         return "\n".join(lines + ["No episode to replay (is --source in the file?)."])

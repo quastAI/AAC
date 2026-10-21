@@ -209,7 +209,7 @@ def test_length_time_to_diamond_achievements_and_actions(world_file):
     assert sum(counts["share"].values()) == pytest.approx(1)
     assert set(counts["outcome"]) == set(actions.MOVES) | set(actions.SUCCESS) | {"do", "sleep"}  # only noop is not split
     for name, o in counts["outcome"].items():
-        assert o["succeeded"] + o["failed"] + counts["asleep"][name] == counts["steps"][name]  # the asleep steps are neither
+        assert o["succeeded"] + o["failed"] == counts["steps"][name]  # executed actions: a step taken asleep is a noop
 
 
 def test_clip_coverage_follows_the_span_formula(world_file):
@@ -427,9 +427,15 @@ def test_do_and_sleep_outcomes_come_from_the_state_column(tmp_path):
         f["ep_offset"] = np.array([0], np.int64)
     numbers = actions.action_numbers(data.Split(path))
     out = numbers["outcome"]
-    assert out["sleep"] == {"succeeded": 1, "failed": 0}  # frame 0 falls asleep; frame 1 is pressed while asleep: ignored
-    assert numbers["asleep"]["sleep"] == 1
+    assert out["sleep"] == {"succeeded": 1, "failed": 0}  # frame 0 falls asleep; frame 1 is pressed while asleep: a noop
+    assert numbers["asleep_steps"] == 2  # frames 1 and 7
+    assert numbers["steps"]["noop"] == 3  # frame 8, and the two asleep steps
     # do at frames 2 (cow vanishes from the faced tile), 3 (nothing: the cow is already gone), 4 (wood), 5 (food), 6 (faces right)
     assert out["do"] == {"succeeded": 3, "failed": 2}
-    # frame 7 presses make_iron_pickaxe while asleep: not a failed craft
-    assert out["make_iron_pickaxe"] == {"succeeded": 0, "failed": 0} and numbers["asleep"]["make_iron_pickaxe"] == 1
+    # frame 7 presses make_iron_pickaxe while asleep: a noop, not a failed craft
+    assert out["make_iron_pickaxe"] == {"succeeded": 0, "failed": 0} and numbers["steps"]["make_iron_pickaxe"] == 0
+    # a relabeled file (the executed actions stored, the policy's choice in action_policy) gives the same numbers
+    with h5py.File(path, "r+") as f:
+        f["action_policy"] = f["action"][:]
+        f["action"][[1, 7], 0] = 0
+    assert actions.action_numbers(data.Split(path)) == numbers

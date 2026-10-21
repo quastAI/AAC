@@ -49,6 +49,19 @@ def test_a_collected_file_replays(check_replay, collect, episodes):
     assert "REPLAYABLE" in check_replay.render(report)
 
 
+def test_the_actions_must_follow_the_rule(check_replay, collect, episodes):
+    report = check_replay.check(episodes, num_episodes=3, collector=collect)
+    assert report["actions"] == {"relabeled": True, "episodes_ok": 3}
+    with h5py.File(episodes, "r+") as f:  # a policy action that `action` no longer follows (an awake step)
+        o = int(f["ep_offset"][0])
+        t = int(np.flatnonzero(f["state"][o : o + 50, collect.SLEEPING] < 0.5)[0])
+        f["action_policy"][o + t, 0] = (f["action"][o + t, 0] + 1) % 17
+    report = check_replay.check(episodes, num_episodes=3, collector=collect)
+    assert report["actions"]["episodes_ok"] == 2 and not report["replayable"]
+    assert all(c["episodes_ok"] == 3 for c in report["columns"].values())  # the replay itself is fine
+    assert "in 2 of 3 episodes" in check_replay.render(report)
+
+
 def test_a_changed_state_byte_is_found_at_its_frame(check_replay, collect, episodes):
     with h5py.File(episodes, "r+") as f:
         o = int(f["ep_offset"][1])

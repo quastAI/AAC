@@ -12,7 +12,10 @@ has L+1 frames o_0..o_L and L actions; `action[t]` is the action taken in frame
 Columns (N = total frames):
     pixels        (N, 63, 63, 3)  uint8
     state         (N, 1345)       float32  symbolic observation
-    action        (N, 1)          float32  action index 0..16, NaN in the last frame
+    action        (N, 1)          float32  the action the game executed, index 0..16, NaN in the last frame: the
+                                           policy's action, except noop (0) while the player is asleep (Craftax
+                                           replaces every action by a noop then; see `executed_actions`)
+    action_policy (N, 1)          float32  the action the policy chose, NaN in the last frame
     reward        (N,)            float32  reward of the transition into this frame (0 in frame 0)
     achievements  (N, 22)         uint8    cumulative flags, Craftax-Classic Achievement order
     full_state    (N, 20952)      uint8    snapshot of the complete env state (see pack_state)
@@ -34,7 +37,8 @@ Columns (N = total frames):
                                            snapshot name), -1 when not known (uniform random, or a final policy file)
 
 `full_state` lets the planning environment start from any frame. Episodes are also
-replayable from `seed` and the action sequence. With
+replayable from `seed` and the action sequence (`action` or `action_policy`: they differ only where the game
+ignores the action). With
     reset_key, step_key, _ = jax.random.split(jax.random.PRNGKey(seed), 3)
 the reset uses `reset_key` and the transition at step t (t = state.timestep before
 the step) uses `jax.random.fold_in(step_key, t)`. Anything that re-simulates an
@@ -85,6 +89,8 @@ NUM_ACHIEVEMENTS = len(Achievement)
 SOURCE_EXPERT, SOURCE_NOISED, SOURCE_RANDOM, SOURCE_EARLY = 0, 1, 2, 3
 SOURCES = {"expert": SOURCE_EXPERT, "noised": SOURCE_NOISED, "random": SOURCE_RANDOM, "early": SOURCE_EARLY}
 ROLLOUT_CHUNK = 250
+NOOP = 0
+SLEEPING = -1  # the last entry of the symbolic observation (`state`): the player is asleep
 REPLAY_CHUNK = 500
 
 
@@ -439,14 +445,28 @@ def provenance(args):
     return record
 
 
+def executed_actions(policy, state):
+    """The actions the game executed: noop wherever the player is asleep in the frame the action is taken in.
+
+    `craftax_step` starts with `action = select(state.is_sleeping, NOOP, action)`, so an action chosen while asleep has
+    no effect, and replaying the noop gives the same episode. policy: (N, 1) float with NaN where there is no action;
+    state: (N, 1345), the symbolic observation of the same frames.
+    """
+    out = np.array(policy, dtype=np.float32, copy=True)
+    asleep = (np.asarray(state)[:, SLEEPING] > 0.5) & ~np.isnan(out[:, 0])
+    out[asleep, 0] = NOOP
+    return out
+
+
 def build_episode(seed, actions, rendered, source, policy_updates=-1):
     length = len(actions)
-    action = np.full((length + 1, 1), np.nan, dtype=np.float32)
-    action[:length, 0] = actions
+    action_policy = np.full((length + 1, 1), np.nan, dtype=np.float32)
+    action_policy[:length, 0] = actions
     return dict(
         pixels=rendered["pixels"],
         state=rendered["state"],
-        action=action,
+        action=executed_actions(action_policy, rendered["state"]),
+        action_policy=action_policy,
         reward=rendered["reward"],
         achievements=rendered["achievements"],
         full_state=rendered["full_state"],

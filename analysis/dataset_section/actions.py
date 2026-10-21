@@ -13,13 +13,14 @@ MIN_CHUNK_COUNT = 20  # chunks seen fewer times are left out of the mutual infor
 MAX_WINDOWS = 500_000  # windows per chunk length (a random subset above this)
 
 
-# While the player is asleep the game replaces every action by a noop (the logged action is what the policy chose): such steps
-# are counted as `asleep`, not as failures. For the awake steps, success as the state shows it. Moves: the player's position
+# The actions are the ones the game executed (`Split.executed_action`): while the player is asleep the game replaces every
+# action by a noop, so those steps are noops (the policy's choice is kept in `action_policy`). Success as the state shows it:
+# moves: the player's position
 # changed (a blocked move only turns the player). Place and make: the placed or crafted item changed in the inventory (SUCCESS:
 # column, index, +1 if it must rise, -1 if it must fall). `do`: an item was gained, food or drink rose (eating, drinking), an
 # achievement was unlocked, or a zombie, cow or skeleton vanished from the tile the player faces (a hit that does not kill counts
 # as failed). `sleep`: the player fell asleep (it fails with full energy). `noop` is not split: it cannot succeed. Without the
-# `state` column (the sleeping flag) every step counts as awake, and `do` and `sleep` are not split.
+# `state` column (the sleeping flag) the actions are used as stored, and `do` and `sleep` are not split.
 SUCCESS = {
     "place_stone": ("inventory", 1, -1), "place_table": ("inventory", 0, -1), "place_furnace": ("inventory", 1, -1),
     "place_plant": ("inventory", 5, -1),
@@ -62,25 +63,22 @@ def _succeeded(s: Split, name: str, at: np.ndarray) -> np.ndarray | None:
 
 
 def action_numbers(s: Split) -> dict:
-    """Steps per action (the frames with an action: all but the last of an episode) over the 17 actions; how many of them were
-    taken while asleep (ignored by the game); and, for the actions whose success the state shows, how many awake steps
-    succeeded and how many failed."""
-    action = s.cols["action"][:, 0]
+    """Steps per executed action (the frames with an action: all but the last of an episode) over the 17 actions, and, for
+    the actions whose success the state shows, how many succeeded and how many failed. `asleep_steps`: the steps taken while
+    asleep, all of them noops."""
+    action = s.executed_action()
     steps_at = np.flatnonzero(~np.isnan(action))
     steps_at = steps_at[steps_at + 1 < s.total]  # every action has a next frame of its episode: the last frame has none
     taken = action[steps_at].astype(int)
     steps = np.bincount(taken, minlength=len(ACTIONS))
-    asleep_before = s.view().sleeping[steps_at] if s.state_ok else np.zeros(len(steps_at), bool)
-    asleep = np.bincount(taken[asleep_before], minlength=len(ACTIONS))
     outcome = {}
     for i, name in enumerate(ACTIONS):
-        here = taken == i
-        ok = _succeeded(s, name, steps_at[here & ~asleep_before])
+        ok = _succeeded(s, name, steps_at[taken == i])
         if ok is not None:
             outcome[name] = {"succeeded": int(ok.sum()), "failed": int((~ok).sum())}
     return {
         "steps": {n: int(c) for n, c in zip(ACTIONS, steps)}, "share": {n: float(c / steps.sum()) for n, c in zip(ACTIONS, steps)},
-        "asleep": {n: int(c) for n, c in zip(ACTIONS, asleep)}, "outcome": outcome,
+        "outcome": outcome, "asleep_steps": s.asleep_steps(),
     }  # fmt: skip
 
 
@@ -126,7 +124,7 @@ def chunk_numbers(s: Split, chunks=CHUNKS, max_windows=MAX_WINDOWS) -> dict:
     Effect `interaction`: change of inventory, achievements and the sign of the change of the vitals over the window;
     `with_motion` adds the player's displacement (clipped to k).
     """
-    action = np.nan_to_num(s.cols["action"][:, 0], nan=0).astype(np.int8)
+    action = np.nan_to_num(s.executed_action(), nan=0).astype(np.int8)
     inventory, achievements, vitals, position = (s.cols[c] for c in ("inventory", "achievements", "vitals", "position"))
     rng = np.random.default_rng(0)
     out = {}

@@ -68,6 +68,15 @@ def test_layout_and_replayability(collect, monkeypatch, tmp_path):
     assert ((health[last] > 0) | (dead[last] == 1)).all()  # no health left means dead
     assert (dead[last] == 1).any()  # random play dies within 500 steps
 
+    # `action` is what the game executed: the policy's action, noop while asleep (random play falls asleep)
+    policy = a["action_policy"][:, 0]
+    asleep = a["state"][:, collect.SLEEPING] > 0.5
+    valid = ~np.isnan(policy)
+    np.testing.assert_array_equal(np.isnan(action), ~valid)
+    assert (action[valid & asleep] == collect.NOOP).all()
+    np.testing.assert_array_equal(action[valid & ~asleep], policy[valid & ~asleep])
+    assert (policy[valid & asleep] != collect.NOOP).any()  # some asleep steps were not noops: the rule did something
+
     # The same world seed gives the same episode regardless of the batch size.
     for key in a:
         np.testing.assert_array_equal(a[key][:], b[key][:], err_msg=key)
@@ -222,3 +231,31 @@ def test_policy_updates_column_is_minus_one_without_a_snapshot(collect, monkeypa
     f = run(collect, monkeypatch, tmp_path / "u.h5", num_envs=2, no_require_diamond=True, no_stop_at_diamond=True)
     assert set(f["policy_updates"][:].tolist()) == {-1} and set(f["source"][:].tolist()) == {2}
     assert f["policy_updates"].dtype == np.int32
+
+
+def test_executed_actions_are_noop_exactly_where_the_player_sleeps(collect):
+    policy = np.array([[3], [5], [7], [16], [np.nan]], np.float32)
+    state = np.zeros((5, 1345), np.float32)
+    state[[1, 3, 4], collect.SLEEPING] = 1  # asleep in frames 1 and 3, and in the last frame (no action there)
+    out = collect.executed_actions(policy, state)
+    np.testing.assert_array_equal(out[:4, 0], [3, 0, 7, 0])
+    assert np.isnan(out[4, 0]) and out.dtype == np.float32
+    np.testing.assert_array_equal(policy[:4, 0], [3, 5, 7, 16])  # the input is not changed
+
+
+def test_the_executed_actions_replay_the_same_episode(collect, monkeypatch, tmp_path):
+    # the game ignores an action taken while asleep: replaying the noops instead gives the same frames, bit for bit
+    f = run(collect, monkeypatch, tmp_path / "a.h5", num_envs=2, num_episodes=2, no_require_diamond=True,
+            no_stop_at_diamond=True)  # fmt: skip
+    env = collect.make_craftax_env_from_name(collect.ENV_NAME, auto_reset=False)
+    replay = collect.make_replay(env, env.default_params)
+    differs = 0
+    for o, n in zip(f["ep_offset"][:], f["ep_len"][:]):
+        seed = int(f["seed"][o])
+        executed = f["action"][o : o + n - 1, 0].astype(np.int32)
+        policy = f["action_policy"][o : o + n - 1, 0].astype(np.int32)
+        differs += int((executed != policy).sum())
+        a, b = replay(seed, executed), replay(seed, policy)
+        for key in a:
+            np.testing.assert_array_equal(a[key], b[key], err_msg=key)
+    assert differs > 0  # the episodes did contain ignored actions

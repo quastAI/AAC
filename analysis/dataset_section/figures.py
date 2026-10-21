@@ -172,33 +172,34 @@ def fig_clips(rec, key, ylabel, title, plt):
 
 
 def fig_actions(rec, plt):
-    """Steps per action in train: succeeded and failed (awake steps, where the state shows it), and the steps taken while asleep,
-    which the game turns into noops."""
+    """Steps per executed action in train (a step taken while asleep is a noop: the game ignores the action), succeeded and failed
+    where the state shows it."""
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     actions = rec["splits"]["train"]["actions"]
     names = list(actions["steps"])
-    outcome, asleep = actions["outcome"], actions["asleep"]
+    outcome = actions["outcome"]
     # the succeeded steps carry the effect of an action: they get the strong colour, the others lighter ones
-    colors = {"succeeded": COLORS["train"], "failed": "#f2b9a1", "asleep (action ignored)": "#b9b8b3", "awake, not split": "#dddcd8"}
+    colors = {"succeeded": COLORS["train"], "failed": "#f2b9a1", "not split": "#dddcd8"}
     total = sum(actions["steps"].values())
     fig, ax = plt.subplots(figsize=(FIG_WIDTH, 6.6))
     height = 0.26
     shown = []
     for i, n in enumerate(names):
         if n in outcome:
-            bars = [("succeeded", outcome[n]["succeeded"]), ("failed", outcome[n]["failed"]), ("asleep (action ignored)", asleep[n])]
-            offsets = (-height, 0, height)
-        else:  # noop: awake steps cannot succeed or fail
-            bars = [("awake, not split", actions["steps"][n] - asleep[n]), ("asleep (action ignored)", asleep[n])]
+            bars = [("succeeded", outcome[n]["succeeded"]), ("failed", outcome[n]["failed"])]
             offsets = (-height / 2, height / 2)
+        else:  # noop cannot succeed or fail
+            bars = [("not split", actions["steps"][n])]
+            offsets = (0,)
         for (label, c), off in zip(bars, offsets):
             ax.barh(i + off, c, height=height, color=colors[label], label=label)
             ax.text(max(c, 1) * 1.15, i + off, f"{c:,} ({100 * c / total:.2g}%)", va="center", fontsize=5.5, color=MUTED)
             shown.append(c)
     ax.set_yticks(range(len(names)), [n.replace("_", " ") for n in names])
     ax.invert_yaxis()
-    ax.set(xscale="log", xlabel="steps in train", title="Action coverage: succeeded, failed and ignored (asleep) steps; in brackets the share of all steps")
+    ax.set(xscale="log", xlabel="steps in train",
+           title="Action coverage (executed actions: noop while asleep): succeeded and failed steps; in brackets the share of all steps")
     ax.set_xlim(max(1, min(c for c in shown if c > 0) / 3), max(shown) * 10)
     ax.xaxis.set_major_formatter(FuncFormatter(_si))
     ax.xaxis.set_minor_formatter(NullFormatter())

@@ -111,7 +111,8 @@ python scripts/collect_craftax_episodes.py --out data/expert.h5 --checkpoint mod
 |---|---|---|
 | `pixels` | (N, 63, 63, 3) uint8 | rendered frame |
 | `state` | (N, 1345) float32 | symbolic observation |
-| `action` | (N, 1) float32 | action index 0-16 |
+| `action` | (N, 1) float32 | the action the game executed, index 0-16: the policy's action, noop (0) while the player is asleep (Craftax ignores every action then) |
+| `action_policy` | (N, 1) float32 | the action the policy chose |
 | `reward` | (N,) float32 | reward of the transition into this frame |
 | `achievements` | (N, 22) uint8 | cumulative flags, Craftax-Classic order |
 | `full_state` | (N, 20952) uint8 | snapshot of the complete env state (about 1.5 KB per frame on disk) |
@@ -119,11 +120,12 @@ python scripts/collect_craftax_episodes.py --out data/expert.h5 --checkpoint mod
 | `dead` | (N,) uint8 | 1 on the last frame of an episode that ended in death (health 0, or walked into lava), else 0 |
 | `step_idx`, `ep_idx`, `seed`, `source`, `policy_updates` | (N,) int | `seed`: world seed; `source`: 0 expert, 1 noised expert, 2 random, 3 early checkpoint; `policy_updates` (int32, -1 unknown): training updates of the snapshot that acted |
 
-- **Replayable.** An episode is determined by `seed` and its actions: `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
+- **Executed actions.** About 17% of the steps are taken while asleep, when the game replaces every action by a noop; `action` holds that noop and `action_policy` the policy's choice. The collector writes both; files collected before were relabeled with `purejaxql/scripts/relabel_asleep.py` ([notebooks/relabel_dataset.ipynb](notebooks/relabel_dataset.ipynb) for the Hub files; `check_replay.py` checks the rule).
+- **Replayable.** An episode is determined by `seed` and its actions (`action` or `action_policy`, they replay identically): `reset_key, step_key, _ = split(PRNGKey(seed), 3)`; the reset uses `reset_key`, the step at `state.timestep == t` uses `fold_in(step_key, t)`. The planning environment follows the same convention.
 
 ### Dataset section (analysis)
 
-Run from `analysis/`: `python -m dataset_section compute --data expert_train.h5 --label train --data expert_val.h5 --label val --data expert_test.h5 --label test --out ../reports/dataset/ [--sha256]` writes `dataset_numbers.json`: episode length (weighted by frames) and time to the diamond, the entity frequency gap of the test split, the first-unlock ladder, the change matrix (share of frame pairs at lags 1 to 800 in which each state component differs), clips per stride, action coverage split into succeeded, failed and asleep steps, chunk information, file hashes, collector runs and the git commit. `plot --out ../reports/dataset/` makes `fig_*.pdf`, `table_*.tex` and `change_matrix.csv` from that JSON alone; `splits --checkpoints <hf>/checkpoints ...` writes one LaTeX table per split (share, length, diamond rate, return, achievements and death rate per policy and snapshot). Job D0 in `experiments.yaml` runs `compute`.
+Run from `analysis/`: `python -m dataset_section compute --data expert_train.h5 --label train --data expert_val.h5 --label val --data expert_test.h5 --label test --out ../reports/dataset/ [--sha256]` writes `dataset_numbers.json`: episode length (weighted by frames) and time to the diamond, the entity frequency gap of the test split, the first-unlock ladder, the change matrix (share of frame pairs at lags 1 to 800 in which each state component differs), clips per stride, action coverage of the executed actions split into succeeded and failed steps (a step taken asleep is a noop), chunk information, file hashes, collector runs and the git commit. `plot --out ../reports/dataset/` makes `fig_*.pdf`, `table_*.tex` and `change_matrix.csv` from that JSON alone; `splits --checkpoints <hf>/checkpoints ...` writes one LaTeX table per split (share, length, diamond rate, return, achievements and death rate per policy and snapshot). Job D0 in `experiments.yaml` runs `compute`.
 
 ### Planning environment (H-JEPA)
 

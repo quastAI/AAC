@@ -69,6 +69,7 @@ def test_the_flat_notebook_runs_the_level_one_cycle():
         'LD_LIBRARY_PATH',
         'PYTHONPATH',
         'data/craftax_expert_',  # the dataset from the Hub
+        'relabel_dataset.ipynb',  # refuses files that hold the policy's actions
         'path_in_repo="runs"',
     ):
         assert needle in text, needle
@@ -86,6 +87,28 @@ def test_the_flat_notebook_runs_real_jobs():
     )
     for exp in ('F1', 'F3', 'F4', 'F5', 'V1'):
         assert exp in text and not spec['experiments'][exp].get('blocked')
+
+
+def test_the_relabel_notebook_checks_before_it_replaces_the_hub_files():
+    nb = json.loads((NOTEBOOKS[0].parent / 'relabel_dataset.ipynb').read_text())
+    text = '\n'.join(''.join(c['source']) for c in nb['cells'])
+    for needle in (
+        'relabel_asleep.py',
+        'check_replay.py',
+        '"JAX_PLATFORMS": "cpu"',
+        'revision=SOURCE_REVISION',  # the files before, named in the commit
+        '"dataset_section", "compute"',
+        'asleep_steps',
+        'path_in_repo="data"',
+        'path_in_repo="reports/dataset"',
+    ):
+        assert needle in text, needle
+    upload = next(
+        ''.join(c['source'])
+        for c in nb['cells']
+        if 'path_in_repo="data"' in ''.join(c['source'])
+    )
+    assert upload.index('all(CHECKS.values())') < upload.index('upload_folder')
 
 
 def status_script():
