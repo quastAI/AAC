@@ -31,3 +31,6 @@ lightning>=2.5
 torchmetrics
 scikit-learn
 matplotlib
+# CPU, memory and GPU metrics of stable-pretraining's HardwareMonitor in the training log (it switches itself off without them)
+psutil
+nvidia-ml-py
