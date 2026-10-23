@@ -38,9 +38,19 @@ The first deliverable is a strong flat model (level 1 alone, `num_levels=1`): th
 - context and rollout loss (`level1.wm.history_size`, `level1.wm.rollout_n`);
 - SIGReg and IDM coefficients: no sweep, changed from the loss curves, probes and planning of the runs before;
 - delta prediction (predicted latent = last latent + predictor output, same loss): only if the default model barely beats copying the last latent, or static entities drift in the rollout probes;
-- CLS vs patch tokens in the predictor: last, and only if the rollout probes show the CLS latent losing fast entities (position, mobs). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step.
+- CLS vs patch tokens in the predictor: last, and only if the rollout probes show the CLS latent losing fast entities (position, mobs). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step;
+- encoder without projector (`level1.encoder.projector.type=identity`: the latent is the CLS token, both 192-d): candidate after F1, whose projector drops most of what the CLS token holds about rare tiles (below). The projector is part of the recipe, so this may train worse.
 
 Everything in the cycle is built except the search for the planning settings.
+
+### F1 result (default model, 2026-10-23)
+
+10 epochs (155,510 steps, batch 128), seed 42, A100. Run files: `data/runs/F1_flat_seed42/` (local, not in git; its README has the provenance and gaps). All numbers on held-out worlds.
+
+- **Health.** No collapse: effective rank 101 of 192 (57 after epoch 1), no dead dimensions, no loss spikes. One-step prediction error 0.20 of copying the last latent (0.29 after epoch 1); open-loop error at the planning horizon (10 steps) 0.41 of copy (0.60); action lift 0.86; IDM accuracy 0.93 (chance 0.20). Validation loss still falling at the end. The `OVERFIT` warning (validation loss 1.9x training) compares total losses: after epoch 1 the gap was all SIGReg (1.74 vs 1.0, prediction and IDM terms equal); not checked for the last epoch.
+- **Probes** (512 clips). Fast / medium / slow 0.33 / 0.90 / 0.91 (untrained 0.40 / 0.66 / 0.77); inventory 0.82, vitals 0.79, block faced 0.53. Mobs in view (0.08) and blocks in view (0.32) stay below the untrained encoder (0.39, 0.60) at every epoch. Predictions beat copying the last latent up to 32 steps (fast, medium) and 16 (slow); at 8 steps fast 0.23 vs 0.09, medium 0.86 vs 0.75, slow 0.90 vs 0.89. Crafts are predicted almost fully (0.97 of the real change), placements 0.78, `place_stone` worst (0.42: a failed press looks like half a success). The probe scores settled by epoch 2 to 3; later epochs improved the rollouts.
+- **Where the tile is lost** (`tile_probe.py`, block faced, MLP probe): the ViT's patch token at the faced tile reads it at 1.00, the CLS token before the projector 0.89, the latent 0.78 (linear: 0.85 vs 0.70). Rare tiles lose most at the projector (CLS → latent): coal 0.68 → 0.27, iron 0.67 → 0.20, diamond 0.76 → 0.26, crafting table 0.71 → 0.43. A class-balanced probe does not recover them (balanced accuracy: latent 0.51, CLS 0.69).
+- **Next.** Planning settings (F2) and P1-P3 on this model: do the lost tiles matter for planning? Then the projector variant.
 
 ## Method
 
@@ -146,6 +156,7 @@ python eval_tasks.py --dataset craftax_expert_val --mode offset --offsets 25 50 
 python eval.py --config-name craftax_plan policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
 python eval.py --config-name craftax_plan policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...
 python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan                   # step and solve timing
+python tile_probe.py --run <run dir> --checkpoint <ckpt> --out <dir>                            # where the faced tile is lost: latent, CLS, patch tokens
 python ../../analysis/plot_training.py --run <run dir>                                           # loss curves and health metrics of a run (health/loss_curves.png)
 python ../../experiments/run.py plan F1                                                          # print the commands of one job group
 ```
@@ -180,6 +191,8 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 About 15 A100-hours per month (~180 in total). One seed per variant; three seeds only for headline results. A training run and a planning evaluation are timed first (`time_run.py`), and the runs are sized from those numbers.
 
 Measured on an A100 (RunPod, 2026-10-23): the flat model trains at 0.064 s per step (batch 128, clips of 4 frames, 11.2 M parameters, 4.7 GB), 15,551 steps and 16.6 min per epoch, so 10 epochs take 2.8 GPU-hours; the loader gives 3,500 clips/s for the 2,000 the step uses. A planning solve of 8 environments takes 0.71 s at about 1% GPU use (the solver processes 5 environments at a time, `solver.solvers.level1.batch_size`): an upper bound of 18 s per task at a budget of 400 steps and 133 s at 3000, that is about 1 h for 200 tasks of set A and 3.7 h for 100 tasks of set B or C, per model, with the simulator not counted. Planning costs more than training until the batch size and the task sets are set (F2).
+
+The F1 run itself: 12.4 to 12.8 it/s while only training, 11.4 on average with the epoch-end evaluation and the probes alongside, so about 3.8 A100-hours for 10 epochs (the 2.8 above counts the step alone), plus the restarts.
 
 ## Open decisions
 
