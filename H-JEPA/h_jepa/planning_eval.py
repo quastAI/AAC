@@ -16,6 +16,7 @@ from omegaconf import DictConfig, OmegaConf
 from sklearn import preprocessing
 from torchvision.transforms import v2 as transforms
 
+from cpu_threads import limit_threads
 from data import (
     IMAGENET_STATS,
     NORMALIZER_ARTIFACT_FILENAME,
@@ -593,6 +594,7 @@ def run_planning_eval(
     model=None,
     results_dir: str | Path | None = None,
 ):
+    limit_threads()
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
     resolved_results_dir = resolve_results_dir(cfg, results_dir)
     resolved_results_dir.mkdir(parents=True, exist_ok=True)

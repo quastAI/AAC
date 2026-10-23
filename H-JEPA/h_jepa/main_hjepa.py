@@ -14,6 +14,7 @@ from loguru import logger as logging
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
+from cpu_threads import limit_threads
 from hjepa_utils import create_world_model, hjepa_forward
 from utils import (
     ModelObjectCallBack,
@@ -157,6 +158,7 @@ def run(cfg):
     #########################
 
     _configure_runtime_performance()
+    limit_threads()
 
     cache_dir = os.environ.get("HJEPA_HOME", None)
 

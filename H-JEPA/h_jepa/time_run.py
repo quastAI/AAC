@@ -27,6 +27,8 @@ from pathlib import Path
 import torch
 from torch.utils.flop_counter import FlopCounterMode
 
+from cpu_threads import limit_threads
+
 CONFIG_DIR = Path(__file__).parent / "config"
 
 
@@ -225,6 +227,7 @@ def main():
     parser.add_argument("--cache-dir", default=os.environ.get("HJEPA_HOME"), help="where the training file is")
     parser.add_argument("overrides", nargs="*", help="Hydra overrides of the training config, e.g. num_levels=3")
     args = parser.parse_args()
+    limit_threads()
 
     device = torch.device(args.device)
     cfg = compose("train", args.config_name, args.overrides)

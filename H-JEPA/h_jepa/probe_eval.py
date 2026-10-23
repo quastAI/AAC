@@ -573,6 +573,10 @@ def main():
     parser.add_argument("--rollout-every", type=int, default=8, help="frames between rollout starts in a clip")
     args = parser.parse_args()
 
+    from cpu_threads import limit_threads
+
+    limit_threads()
+
     from omegaconf import OmegaConf
 
     from data import Compose, OneHotColumn, discrete_num_actions
