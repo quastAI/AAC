@@ -64,7 +64,7 @@ experiments:
     title: Default flat model (level 1 alone, IDM on, history 3, rollout_n 1, CLS latent), training and probes
     runs:
       - {name: flat, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
-    probe: [flat]
+    probe: [flat]  # the training already probes at its end (health.probe_clips): this job only runs if that failed
 
   F2:
     title: Planning settings (goal offset, planning horizon, CEM) on the F1 model, then frozen for every variant
