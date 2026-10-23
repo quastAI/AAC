@@ -251,8 +251,7 @@ def run(cfg):
 
     ckpt_root = Path(os.getenv("HJEPA_HOME", str(swm.data.utils.get_cache_dir()))) / "ckpts"
     run_dir = ckpt_root / run_id
-    local_spt_dir(run_dir, cfg.get("spt_dir", None), run_id)
-    spt.set(cache_dir=str(run_dir / "spt"))
+    spt.set(cache_dir=str(local_spt_dir(run_dir, cfg.get("spt_dir", None), run_id)))
     logging.info(f"🫆🫆🫆 Run ID: {run_id} 🫆🫆🫆")
 
     logger = None

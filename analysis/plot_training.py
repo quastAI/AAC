@@ -2,7 +2,8 @@
 
     python plot_training.py --run $HJEPA_HOME/ckpts/craftax/flat/seed42
 
-stable-pretraining writes the CSV of a run to `<run>/spt/runs/<date>/<time>/<id>/metrics.csv`: every logged key is a column
+stable-pretraining writes the CSV of a run to `<run>/spt/runs/<date>/<time>/<id>/metrics.csv` (or, with `spt_dir`, to the local
+folder named in `<run>/spt_location.txt`): every logged key is a column
 and a row holds the keys of one logging call, the others are empty. The figure goes to `<run>/health/loss_curves.png` and a
 copy of the CSV next to it (`health/metrics.csv`; the notebook's upload leaves `spt/` out).
 """
@@ -31,10 +32,20 @@ PANELS = [
 def find_metrics(run: Path) -> Path:
     """The newest metrics CSV of the run (stable-pretraining's, else Lightning's CSV logger's)."""
     newest = lambda paths: sorted(paths, key=lambda p: p.stat().st_mtime)  # noqa: E731
-    for found in (newest((run / "spt" / "runs").glob("*/*/*/metrics.csv")), newest(run.glob("lightning_logs/version_*/metrics.csv"))):
+    roots = [run / "spt"]
+    if (run / "spt_location.txt").exists():  # `spt_dir`: the folder is on a local disk
+        roots.insert(0, Path((run / "spt_location.txt").read_text().strip()))
+    candidates = []
+    for root in roots:
+        try:
+            candidates.append(newest((root / "runs").glob("*/*/*/metrics.csv")))
+        except OSError:  # a link that cannot be read (old runs on a network volume)
+            pass
+    candidates.append(newest(run.glob("lightning_logs/version_*/metrics.csv")))
+    for found in candidates:
         if found:
             return found[-1]
-    raise SystemExit(f"no metrics.csv under {run} (spt/runs/*/*/*/ or lightning_logs/version_*/)")
+    raise SystemExit(f"no metrics.csv under {run} (spt/runs/*/*/*/, spt_location.txt or lightning_logs/version_*/)")
 
 
 def read_series(path: Path) -> dict[str, tuple[list[float], list[float]]]:

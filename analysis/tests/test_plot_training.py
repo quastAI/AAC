@@ -56,6 +56,14 @@ def test_find_metrics_takes_the_newest_spt_csv(tmp_path):
         pt.find_metrics(tmp_path / 'empty')
 
 
+def test_find_metrics_follows_spt_location_to_a_local_folder(tmp_path):
+    run, local = tmp_path / 'volume/run', tmp_path / 'local/run'
+    csv = write_csv(local / 'runs/20260101/0000/aaa/metrics.csv')
+    run.mkdir(parents=True)
+    (run / 'spt_location.txt').write_text(f'{local}\n')
+    assert pt.find_metrics(run) == csv
+
+
 def test_main_writes_the_figure_and_a_copy_of_the_csv(tmp_path, monkeypatch):
     pytest.importorskip('matplotlib')
     write_csv(tmp_path / 'spt/runs/20260101/0000/aaa/metrics.csv')

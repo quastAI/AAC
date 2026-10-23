@@ -205,31 +205,21 @@ class ResumeCheckpoint(Callback):
         self._save(trainer)
 
 
-def local_spt_dir(run_dir: Path, local_root: str | None, run_id: str) -> None:
-    """Keep stable-pretraining's folder (`<run_dir>/spt`: metrics CSV, summaries, checkpoints) on a local disk.
+def local_spt_dir(run_dir: Path, local_root: str | None, run_id: str) -> Path:
+    """The folder stable-pretraining writes to (`cache_dir`: metrics CSV, summaries, checkpoints).
 
     It writes there at every logging step, and a network volume stalled the training for 10 s each time (the main thread
-    waited in the FUSE layer). `<run_dir>/spt` becomes a link to `<local_root>/<run_id>`, so what reads it (plot_training)
-    still finds it; the real `spt` folder of an earlier run is renamed to `spt_volume`, not deleted. `None` leaves it.
+    waited in the FUSE layer). With `local_root` it is `<local_root>/<run_id>` on a local disk, and its path goes to
+    `<run_dir>/spt_location.txt` (plot_training reads it); without, `<run_dir>/spt`. Not a link on the volume: a symlink
+    there cannot be read back (`OSError: Invalid argument` when stable-pretraining resolves the path).
     """
     if not local_root:
-        return
+        return run_dir / 'spt'
     target = Path(local_root) / run_id
     target.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
-    link = run_dir / 'spt'
-    if link.is_symlink():
-        if link.resolve() == target.resolve():
-            return
-        link.unlink()
-    elif link.exists():
-        old = run_dir / 'spt_volume'
-        n = 1
-        while old.exists():
-            n += 1
-            old = run_dir / f'spt_volume{n}'
-        link.rename(old)
-    link.symlink_to(target)
+    (run_dir / 'spt_location.txt').write_text(f'{target}\n')
+    return target
 
 
 class PlanningEvalCallback(Callback):
