@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 import torch
 from pathlib import Path
 from lightning.pytorch.callbacks import Callback
@@ -185,17 +186,28 @@ class ResumeCheckpoint(Callback):
     not fast-forwarded: the resumed epoch restarts its sample order.
     """
 
-    def __init__(self, path: Path, every_n: int):
+    def __init__(self, path: Path, every_n: int, attempts: int = 3, wait: float = 5.0):
         super().__init__()
         self.path, self.every_n = Path(path), int(every_n)
+        self.attempts, self.wait = int(attempts), float(wait)
 
     def _save(self, trainer) -> None:
+        """Write the checkpoint; a failing write is tried again and then skipped, never fatal. A network volume fails
+        now and then (an `fsync` raised FileNotFoundError at an epoch end and stopped a run of 3 hours): the next
+        checkpoint is due soon, and the epoch-end callbacks after this one still run."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
-        trainer.save_checkpoint(str(tmp))
-        if trainer.is_global_zero:
-            tmp.replace(self.path)
-            logging.info(f"Resume checkpoint after train batch {_batches_done(trainer)} -> {self.path}")
+        for attempt in range(1, self.attempts + 1):
+            try:
+                trainer.save_checkpoint(str(tmp))
+                if trainer.is_global_zero:
+                    tmp.replace(self.path)
+                    logging.info(f"Resume checkpoint after train batch {_batches_done(trainer)} -> {self.path}")
+                return
+            except OSError as e:
+                logging.error(f"Resume checkpoint failed (attempt {attempt} of {self.attempts}): {e!r}")
+                time.sleep(self.wait)
+        logging.error(f"Resume checkpoint skipped, the training goes on (the previous one stays at {self.path})")
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         if _batches_done(trainer) % self.every_n == 0:
