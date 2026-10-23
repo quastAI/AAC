@@ -560,6 +560,8 @@ def run_probing(
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", required=True, help="run directory with config.yaml and *_object.ckpt")
+    parser.add_argument("--checkpoint", help="model to probe, e.g. an epoch checkpoint (default: the newest *_object.ckpt)")
+    parser.add_argument("--out", help="report directory (default: <run>/health); give another one for an epoch checkpoint")
     parser.add_argument("--cache-dir", default=os.environ.get("HJEPA_HOME"))
     parser.add_argument("--train-dataset"), parser.add_argument("--val-dataset")
     parser.add_argument("--frames", type=int, default=129)
@@ -582,7 +584,7 @@ def main():
         cfg.data.dataset.name = args.train_dataset
     if args.val_dataset:
         cfg.data.dataset.val_name = args.val_dataset
-    ckpt = sorted(run.glob("*_object.ckpt"), key=lambda p: p.stat().st_mtime)[-1]
+    ckpt = Path(args.checkpoint) if args.checkpoint else sorted(run.glob("*_object.ckpt"), key=lambda p: p.stat().st_mtime)[-1]
     model = torch.load(ckpt, map_location="cpu", weights_only=False)
     model = model if hasattr(model, "num_levels") else model.model
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -595,8 +597,8 @@ def main():
         rollouts=not args.no_rollouts, horizons=tuple(args.horizons), rollout_history=args.rollout_history,
         rollout_every=args.rollout_every,
     )  # fmt: skip
-    out = run / "health"
-    out.mkdir(exist_ok=True)
+    out = Path(args.out) if args.out else run / "health"
+    out.mkdir(parents=True, exist_ok=True)
     (out / "probe_report.md").write_text(health.render_probing_report(summary, findings))
     (out / "probe_summary.json").write_text(
         json.dumps({"summary": health.to_jsonable(summary), "findings": health.findings_to_json(findings)}, indent=1)
