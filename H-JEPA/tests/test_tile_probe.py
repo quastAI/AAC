@@ -117,11 +117,66 @@ def test_collect_features_reads_the_token_of_the_faced_tile():
     assert feats['latent'].shape == (2, 4)
 
 
-def test_the_report_has_a_row_per_class_and_names_the_left_out():
+def test_wilson_interval():
+    low, high = tp.wilson(50, 100)
+    assert abs(low - 0.404) < 0.002 and abs(high - 0.596) < 0.002
+    low, high = tp.wilson(0, 22)  # nothing right: the interval stays wide
+    assert abs(low) < 1e-9 and abs(high - 0.1487) < 0.002
+    assert tp.wilson(5, 0)[0] != tp.wilson(5, 0)[0]  # no samples: nan
+
+
+def test_balanced_accuracy_is_the_mean_recall_of_the_classes():
+    y = torch.tensor([0] * 100 + [1] * 25 + [2] * 3)
+    pred = torch.tensor([0] * 100 + [1] * 5 + [0] * 20 + [2] * 3)
+    # class 2 has fewer than 20 samples: left out; (1.0 + 0.2) / 2
+    assert abs(tp.balanced_accuracy(y, pred, min_n=20) - 0.6) < 1e-6
+
+
+def test_class_weights_average_to_one_per_present_class():
+    y = torch.tensor([0] * 90 + [1] * 10)
+    w = tp.class_weights(y, classes=3)
+    assert w[2] == 0  # absent
+    assert abs(float(w[0] * 90 + w[1] * 10) - 100) < 1e-4  # N in total
+    assert abs(float(w[0]) - 100 / (2 * 90)) < 1e-6
+    assert float(w[1]) > 4 * float(w[0])
+
+
+def test_the_balanced_loss_finds_a_rare_class_the_plain_loss_misses():
+    g = torch.Generator().manual_seed(0)
+    n = 8000
+    y = (torch.rand(n, generator=g) < 0.04).long()  # 4% rare
+    z = torch.randn(n, 8, generator=g)
+    z[:, 0] += 1.2 * y  # overlapping: the common class wins when unweighted
+    split = n // 2
+    recall = {}
+    for balanced in (False, True):
+        _, pred = tp.train_probe(
+            'linear', z[:split], y[:split], z[split:], classes=2,
+            epochs=30, balanced=balanced,
+        )  # fmt: skip
+        rare = y[split:] == 1
+        recall[balanced] = float((pred[rare] == 1).float().mean())
+    assert recall[True] > recall[False] + 0.2
+
+
+def test_per_class_has_the_interval_of_the_chosen_set():
+    names = ['a', 'b']
+    yva = torch.tensor([0] * 40 + [1] * 40)
+    pred = torch.tensor([0] * 40 + [1] * 20 + [0] * 20)
+    rows, _ = tp.per_class(yva, {'latent': pred}, names, min_n=20)
+    b = rows[1]
+    assert abs(b['latent'] - 0.5) < 1e-6
+    assert b['low'] < 0.5 < b['high'] and b['high'] - b['low'] < 0.4
+
+
+def test_the_report_has_both_tables_the_intervals_and_the_left_out():
+    probe = {'train': 0.9, 'val': 0.8, 'balanced': 0.6}
     accuracy = {
         f: {
-            'linear': {'train': 0.7, 'val': 0.6},
-            'mlp': {'train': 0.9, 'val': 0.8},
+            'linear': probe,
+            'mlp': probe,
+            'linear balanced': probe,
+            'mlp balanced': probe,
         }
         for f in tp.FEATURES
     }
@@ -134,12 +189,19 @@ def test_the_report_has_a_row_per_class_and_names_the_left_out():
     row = {
         'block': 'grass',
         'n': 30,
+        'low': 0.31,
+        'high': 0.69,
         'mistake': 'sand',
         'mistake_share': 0.05,
         **{f: 0.5 for f in tp.FEATURES},
     }
-    text = tp.render(summary, [row], {'lava': 35}, list(tp.FEATURES))
-    assert '| grass | 30 | 0.50 | 0.50 | 0.50 | 0.50 | sand (0.05) |' in text
-    assert 'lava (35)' in text
-    row = '| patch token at the faced tile | 0.70 | 0.60 | 0.90 | 0.80 |'
-    assert row in text
+    tables = [('MLP, plain loss', [row]), ('MLP, balanced loss', [row])]
+    text = tp.render(summary, tables, {'lava': 15}, list(tp.FEATURES))
+    line = (
+        '| grass | 30 | 0.50 | 0.50 | 0.50 | 0.50 | 0.31 to 0.69 '
+        '| sand (0.05) |'
+    )
+    assert text.count(line) == 2
+    assert '## MLP, balanced loss' in text
+    assert 'lava (15)' in text
+    assert '| mlp balanced | 0.90 | 0.80 | 0.60 |' in text

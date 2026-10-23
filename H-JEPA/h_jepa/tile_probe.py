@@ -12,12 +12,19 @@ worlds, a fixed number of epochs, nothing tuned on the held-out clips) on four f
 - faced patch: the ViT's patch token at the faced tile.
 
 If the faced patch reads the block and the latent does not, the encoder sees the tile and the summary drops it; if CLS
-reads it and the latent does not, the projector drops it. Per block type: the recall of each feature (MLP).
+reads it and the latent does not, the projector drops it. Per block type: the recall of each feature (MLP) with the 95%
+interval of the latent's recall.
+
+Every probe is trained twice: with the plain loss, which favours the common block types (grass is 35% of the samples,
+ores under 1%), and with a class-balanced loss (each type weighted by the inverse of its training frequency), which asks
+whether a rare type can be told apart at all. The report gives accuracy and balanced accuracy (mean recall over the types
+with enough held-out samples) for both.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 
@@ -97,29 +104,76 @@ def make_net(kind: str, dim: int, classes: int) -> nn.Module:
     )  # fmt: skip
 
 
-def train_probe(kind: str, ztr, ytr, zva, classes: int, epochs: int = 30, seed: int = 0, batch: int = 512):
-    """Fit a softmax probe ("linear") or an MLP on the standardised features; returns the predicted classes (train, val)."""
+PROBES = [("linear", False), ("mlp", False), ("linear", True), ("mlp", True)]  # (kind, class-balanced loss)
+
+
+def probe_name(kind: str, balanced: bool) -> str:
+    return kind + (" balanced" if balanced else "")
+
+
+def class_weights(y: torch.Tensor, classes: int) -> torch.Tensor:
+    """Inverse frequency of each class in `y`, scaled so that the weights of the present classes average to one per class
+    (0 for a class without samples)."""
+    counts = torch.bincount(y, minlength=classes).float()
+    present = (counts > 0).sum()
+    return torch.where(counts > 0, len(y) / (present * counts.clamp_min(1)), torch.zeros_like(counts))
+
+
+def train_probe(
+    kind: str, ztr, ytr, zva, classes: int, epochs: int = 30, seed: int = 0, batch: int = 512, balanced: bool = False,
+    device: str = "cpu",
+):  # fmt: skip
+    """Fit a softmax probe ("linear") or an MLP on the standardised features; returns the predicted classes (train, val).
+
+    `balanced`: the loss weights each class by the inverse of its frequency in the training samples, so rare block types
+    count as much as grass (the plain probe favours the common types).
+    """
     torch.manual_seed(seed)
     mean, std = ztr.mean(0), ztr.std(0).clamp_min(1e-6)
-    xtr, xva = (ztr - mean) / std, (zva - mean) / std
-    net = make_net(kind, xtr.shape[1], classes)
+    xtr, xva = ((ztr - mean) / std).to(device), ((zva - mean) / std).to(device)
+    y = ytr.to(device)
+    weight = class_weights(ytr, classes).to(device) if balanced else None
+    net = make_net(kind, xtr.shape[1], classes).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-2)
     for _ in range(epochs):
         net.train()
         perm = torch.randperm(len(xtr))
         for i in range(0, len(xtr), batch):
-            idx = perm[i : i + batch]
+            idx = perm[i : i + batch].to(device)
             opt.zero_grad()
-            F.cross_entropy(net(xtr[idx]), ytr[idx]).backward()
+            F.cross_entropy(net(xtr[idx]), y[idx], weight=weight).backward()
             opt.step()
     net.eval()
     with torch.no_grad():
-        return net(xtr).argmax(-1), net(xva).argmax(-1)
+        return net(xtr).argmax(-1).cpu(), net(xva).argmax(-1).cpu()
+
+
+def wilson(correct: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% interval (Wilson) of a share `correct` / `n`. It treats the samples as independent; frames of one clip are
+    not, so it is too narrow."""
+    if n == 0:
+        return float("nan"), float("nan")
+    p = correct / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def balanced_accuracy(y: torch.Tensor, pred: torch.Tensor, min_n: int = 20) -> float:
+    """Mean recall over the classes with at least `min_n` samples in `y` (every class counts the same)."""
+    recalls = []
+    for c in torch.unique(y).tolist():
+        mask = y == c
+        if int(mask.sum()) >= min_n:
+            recalls.append(float((pred[mask] == c).float().mean()))
+    return sum(recalls) / len(recalls) if recalls else float("nan")
 
 
 def per_class(yva: torch.Tensor, preds: dict, names: list[str], min_n: int = 20, mistake_of: str | None = None):
-    """Per block type of the held-out worlds with at least `min_n` samples: count, recall of each prediction set, and the
-    most frequent wrong answer of `mistake_of` (default: the last). Returns (rows, {skipped type: count})."""
+    """Per block type of the held-out worlds with at least `min_n` samples: count, recall of each prediction set, and for
+    `mistake_of` (default: the last) the 95% interval of its recall and its most frequent wrong answer.
+    Returns (rows, {skipped type: count})."""
     rows, skipped = [], {}
     chosen = preds[mistake_of] if mistake_of else list(preds.values())[-1]
     for c in range(len(names)):
@@ -132,11 +186,14 @@ def per_class(yva: torch.Tensor, preds: dict, names: list[str], min_n: int = 20,
             continue
         wrong = chosen[mask][chosen[mask] != c]
         top = torch.bincount(wrong, minlength=len(names)).argmax().item() if len(wrong) else None
+        low, high = wilson(n - len(wrong), n)
         rows.append(
             {
                 "block": names[c],
                 "n": n,
                 **{k: float((p[mask] == c).float().mean()) for k, p in preds.items()},
+                "low": low,
+                "high": high,
                 "mistake": None if top is None else names[top],
                 "mistake_share": 0.0 if top is None else float((wrong == top).float().sum() / n),
             }
@@ -144,36 +201,44 @@ def per_class(yva: torch.Tensor, preds: dict, names: list[str], min_n: int = 20,
     return rows, skipped
 
 
-def render(summary: dict, rows: list[dict], skipped: dict, columns: list[str]) -> str:
+def render(summary: dict, tables: list[tuple[str, list[dict]]], skipped: dict, columns: list[str]) -> str:
     lines = [
         "# Faced block: where is it lost?",
         "",
         f"Samples (train / held-out): {summary['n_train']} / {summary['n_val']}; majority class on the held-out worlds: "
         f"{summary['majority']:.2f}.",
         "",
-        "| feature | linear train | linear held-out | MLP train | MLP held-out |",
+        "Plain probes minimise the usual loss and favour the common block types. Balanced probes weight each block type by "
+        "the inverse of its frequency in the training samples, so rare types count as much as grass. Balanced accuracy is "
+        "the mean recall over the block types with enough held-out samples.",
+        "",
+        "| feature | probe | train accuracy | held-out accuracy | held-out balanced accuracy |",
         "|---|---|---|---|---|",
     ]
-    for feature, a in summary["accuracy"].items():
-        lines.append(
-            f"| {FEATURES.get(feature, feature)} | {a['linear']['train']:.2f} | {a['linear']['val']:.2f} | "
-            f"{a['mlp']['train']:.2f} | {a['mlp']['val']:.2f} |"
-        )
+    for feature, probes in summary["accuracy"].items():
+        for name, a in probes.items():
+            lines.append(
+                f"| {FEATURES.get(feature, feature)} | {name} | {a['train']:.2f} | {a['val']:.2f} | {a['balanced']:.2f} |"
+            )
     note = ""
     if skipped:
         note = " Left out, too few held-out samples: " + ", ".join(f"{k} ({v})" for k, v in skipped.items()) + "."
-    lines += [
-        "",
-        "Per block type of the held-out worlds: recall of the MLP on each feature; the mistake is the most frequent "
-        f"wrong answer of the first feature, as a share of all samples of the type.{note}",
-        "",
-        "| block | samples | " + " | ".join(columns) + " | most frequent mistake |",
-        "|---|---|" + "---|" * len(columns) + "---|",
-    ]
-    for r in rows:
-        recalls = " | ".join(f"{r[k]:.2f}" for k in columns)
-        mistake = "-" if r["mistake"] is None else f"{r['mistake']} ({r['mistake_share']:.2f})"
-        lines.append(f"| {r['block']} | {r['n']} | {recalls} | {mistake} |")
+    for heading, rows in tables:
+        lines += [
+            "",
+            f"## {heading}",
+            "",
+            "Per block type of the held-out worlds: recall of the MLP on each feature. The interval is the 95% interval of "
+            "the first feature's recall; it treats frames as independent, so it is too narrow. The mistake is the most "
+            f"frequent wrong answer of the first feature, as a share of all samples of the type.{note}",
+            "",
+            "| block | samples | " + " | ".join(columns) + f" | {columns[0]} 95% interval | most frequent mistake |",
+            "|---|---|" + "---|" * len(columns) + "---|---|",
+        ]
+        for r in rows:
+            recalls = " | ".join(f"{r[k]:.2f}" for k in columns)
+            mistake = "-" if r["mistake"] is None else f"{r['mistake']} ({r['mistake_share']:.2f})"
+            lines.append(f"| {r['block']} | {r['n']} | {recalls} | {r['low']:.2f} to {r['high']:.2f} | {mistake} |")
     return "\n".join(lines) + "\n"
 
 
@@ -220,22 +285,32 @@ def main():
     del model
     (ftr, ytr), (fva, yva) = data["train"], data["val"]
     classes = len(pe.BLOCK_NAMES)
-    accuracy, mlp_preds = {}, {}
+    accuracy = {feature: {} for feature in FEATURES}
+    mlp_preds = {"mlp": {}, "mlp balanced": {}}
     for feature in FEATURES:
-        accuracy[feature] = {}
-        for kind in ("linear", "mlp"):
-            ptr, pva = train_probe(kind, ftr[feature], ytr, fva[feature], classes, epochs=args.epochs)
-            accuracy[feature][kind] = {"train": float((ptr == ytr).float().mean()), "val": float((pva == yva).float().mean())}
+        for kind, balanced in PROBES:
+            name = probe_name(kind, balanced)
+            ptr, pva = train_probe(
+                kind, ftr[feature], ytr, fva[feature], classes, epochs=args.epochs, balanced=balanced, device=device
+            )  # fmt: skip
+            accuracy[feature][name] = {
+                "train": float((ptr == ytr).float().mean()),
+                "val": float((pva == yva).float().mean()),
+                "balanced": balanced_accuracy(yva, pva, args.min_samples),
+            }
             if kind == "mlp":
-                mlp_preds[feature] = pva
+                mlp_preds[name][feature] = pva
     summary = {
         "n_train": len(ytr),
         "n_val": len(yva),
         "majority": float(torch.bincount(yva, minlength=classes).max() / len(yva)),
         "accuracy": accuracy,
     }
-    rows, skipped = per_class(yva, mlp_preds, pe.BLOCK_NAMES, min_n=args.min_samples, mistake_of="latent")
-    report = render(summary, rows, skipped, list(FEATURES))
+    tables, skipped = [], {}
+    for name, heading in (("mlp", "MLP, plain loss"), ("mlp balanced", "MLP, balanced loss")):
+        rows, skipped = per_class(yva, mlp_preds[name], pe.BLOCK_NAMES, min_n=args.min_samples, mistake_of="latent")
+        tables.append((heading, rows))
+    report = render(summary, tables, skipped, list(FEATURES))
     out = Path(args.out) if args.out else run / "health" / "tile_probe"
     out.mkdir(parents=True, exist_ok=True)
     (out / "tile_probe.md").write_text(report)
