@@ -87,9 +87,11 @@ health:  # collapse and failure monitor, see health.py and training_monitor.py
   long_clip_frames: 129  # level-1 frames per validation clip (drift, cost geometry)
   clip_batch_size: 16
   max_clips: 512
-  drift_horizon: 8  # open-loop rollout steps per level
+  drift_horizon: 10  # open-loop rollout steps per level; the flat model plans 10 steps (craftax_plan level1.horizon)
   plan_history: 1  # context frames the planner uses in its rollouts
-  stop_after_critical_epochs: 0  # stop after this many epochs with a critical finding (0 = never)
+  # stop after this many epochs in a row with a critical finding (0 = never): a collapsed run stops paying for GPU
+  # time; the model is still saved, so the jobs after it run, and the report lists the critical findings
+  stop_after_critical_epochs: 2
   probe_at_end: true  # probe every level on held-out worlds when training ends (probe_eval.py)
   probe_clips: 256
   thresholds: {}  # overrides of health.Thresholds

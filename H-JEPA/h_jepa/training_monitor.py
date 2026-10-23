@@ -91,6 +91,7 @@ class TrainingHealthCallback(Callback):
         self.generator = torch.Generator().manual_seed(0)
 
         self.live: dict[int, dict] = {n: {} for n in range(1, self.num_levels + 1)}
+        self.sigreg_levels = self._sigreg_levels(cfg, self.live)
         self.grad_norms = {n: deque(maxlen=200) for n in self.live}
         self.explosions = {n: 0 for n in self.live}
         self.losses = deque(maxlen=200)
@@ -125,8 +126,20 @@ class TrainingHealthCallback(Callback):
                 out[f"{prefix}/{k}"] = float(v)
         return out
 
+    @staticmethod
+    def _sigreg_levels(cfg, levels) -> list[int]:
+        """Levels whose latents SIGReg regularises: their scale is expected near unit variance."""
+        from hjepa_utils import _loss_components, _loss_term_enabled
+
+        return [n for n in levels if _loss_term_enabled(_loss_components(cfg[f"level{n}"].loss).get("embed", {}), "sigreg")]
+
     def _summary(self, levels: dict) -> dict:
-        return {"levels": levels, "plan_history": self.plan_history, "training": self._training_summary()}
+        return {
+            "levels": levels,
+            "plan_history": self.plan_history,
+            "sigreg_levels": self.sigreg_levels,
+            "training": self._training_summary(),
+        }
 
     def _training_summary(self) -> dict:
         return {

@@ -36,6 +36,8 @@ class Thresholds:
     erank_frac_critical: float = 0.02  # effective rank / dim
     erank_frac_warn: float = 0.10
     std_mean_critical: float = 1e-4  # per-dimension std of the latents
+    std_mean_low_warn: float = 0.3  # SIGReg pulls the latents toward unit variance: a level with SIGReg
+    std_mean_high_warn: float = 3.0  # whose mean std leaves this band is not held at that scale
     dead_dim_frac_warn: float = 0.25  # dims with std < 1% of the largest
     static_step_ratio: float = 1e-3  # latent change per step / unrelated-sample distance
     incoherent_step_ratio: float = 0.8
@@ -354,12 +356,14 @@ def diagnose_training(summary: dict, thr: Thresholds | None = None) -> list[Find
 
     summary = {
       'levels': {n: {'rep': .., 'dyn': .., 'drift': {history: ..}, 'geometry': .., 'vq': .., 'idm': .., 'grad': ..}},
+      'sigreg_levels': [n, ..],  # levels whose latents SIGReg regularises (the scale check applies to them)
       'training': {'val_first', 'val_last', 'train_last', 'spikes', 'nonfinite'},
     }
     """
     thr = thr or Thresholds()
     findings: list[Finding] = []
     levels = summary.get("levels", {})
+    sigreg_levels = {int(n) for n in summary.get("sigreg_levels", [])}
 
     for n, m in levels.items():
         n = int(n)
@@ -372,6 +376,11 @@ def diagnose_training(summary: dict, thr: Thresholds | None = None) -> list[Find
                 _f(findings, "critical", "REP_CONSTANT", n,
                    f"latents are constant (mean std {rep['std_mean']:.2e})",
                    "complete collapse: raise the SIGReg weight, lower the learning rate, check the projector")
+            elif n in sigreg_levels and not thr.std_mean_low_warn <= rep.get("std_mean", 1) <= thr.std_mean_high_warn:
+                _f(findings, "warn", "REP_SCALE", n,
+                   f"mean latent std {rep['std_mean']:.2g}, SIGReg pulls it toward 1",
+                   "SIGReg does not hold the scale (the effective rank cannot see this): raise its weight, "
+                   "or check whether the prediction loss shrinks the latents")
             frac = rep.get("erank_frac")
             if frac is not None and not math.isnan(frac):
                 if frac < thr.erank_frac_critical:

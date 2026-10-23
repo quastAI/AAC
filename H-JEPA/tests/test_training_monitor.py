@@ -124,6 +124,7 @@ def test_report_and_findings_from_an_untrained_model(
     _, module, _ = setup
     levels = callback.evaluate(module, max_batches=1)
     summary = callback._summary(levels)
+    assert summary['sigreg_levels'] == [1, 2]  # SIGReg on both levels
     findings = diagnose_training(summary)
     report = render_training_report(summary, findings)
     assert '# Training report' in report

@@ -225,6 +225,20 @@ def test_diagnose_training_flags_each_failure():
     assert all(f.hint for f in found)
 
 
+def test_diagnose_flags_the_latent_scale_only_where_sigreg_acts():
+    shrunk = healthy_level()
+    shrunk['rep']['std_mean'] = 0.05  # not constant, full rank: only scale
+    summary = {'levels': {1: shrunk, 2: healthy_level()}}
+    assert 'REP_SCALE' not in codes(health.diagnose_training(summary))
+    summary['sigreg_levels'] = [1, 2]
+    found = health.diagnose_training(summary)
+    assert [(f.code, f.level) for f in found if f.code == 'REP_SCALE'] == [
+        ('REP_SCALE', 1)
+    ]
+    shrunk['rep']['std_mean'] = 5.0
+    assert 'REP_SCALE' in codes(health.diagnose_training(summary))
+
+
 def test_diagnose_flags_a_level_without_abstraction():
     upper = healthy_level()
     upper['rep']['step_to_scale'] = 0.05
