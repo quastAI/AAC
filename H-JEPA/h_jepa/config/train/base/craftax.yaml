@@ -36,6 +36,7 @@ patch_size: 7
 encoder_scale: tiny
 dump_object: true
 save_every_n_epochs: 1
+spt_dir: null  # a local folder for stable-pretraining's logs and checkpoints (<run>/spt then links to it; the notebook sets it): they are written at every logging step
 resume_every_n_steps: 2000  # full-state resume checkpoint (0 = off), see utils.ResumeCheckpoint
 grad_clip_per_level: true  # each level clips its own gradient norm (trainer.gradient_clip_val), as in the DROID recipe
 trainer:
@@ -45,6 +46,7 @@ trainer:
   precision: bf16-mixed
   gradient_clip_val: 1.0
   num_sanity_val_steps: 1
+  log_every_n_steps: 250  # Lightning's default is 50: each logging step stalled the training 10 s on the RunPod volume
 loader:
   batch_size: 128
   num_workers: ${num_workers}
@@ -80,7 +82,7 @@ final_probing_decoding_eval:
   output_subdir: final_probing_decoding_eval
 health:  # collapse and failure monitor, see health.py and training_monitor.py
   enabled: true
-  live_every: 2000  # steps between live metrics from the training batch; each check costs seconds (every 50 steps: 3.5 it/s, every 500: 11.9, the timing says 15.6 without)
+  live_every: 2000  # steps between live metrics from the training batch
   warmup_steps: 200  # no findings before this step (the predictor starts as a copy)
   epoch_batches: 8  # validation batches per epoch evaluation
   final_batches: 32  # ... at the end of training

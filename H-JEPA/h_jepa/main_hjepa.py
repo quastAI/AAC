@@ -18,6 +18,7 @@ from cpu_threads import limit_threads
 from hjepa_utils import create_world_model, hjepa_forward
 from utils import (
     ModelObjectCallBack,
+    local_spt_dir,
     DebugArtifactCleanupCallback,
     PlanningEvalCallback,
     ResumeCheckpoint,
@@ -250,6 +251,7 @@ def run(cfg):
 
     ckpt_root = Path(os.getenv("HJEPA_HOME", str(swm.data.utils.get_cache_dir()))) / "ckpts"
     run_dir = ckpt_root / run_id
+    local_spt_dir(run_dir, cfg.get("spt_dir", None), run_id)
     spt.set(cache_dir=str(run_dir / "spt"))
     logging.info(f"🫆🫆🫆 Run ID: {run_id} 🫆🫆🫆")
 
