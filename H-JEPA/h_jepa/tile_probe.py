@@ -117,7 +117,7 @@ def train_probe(kind: str, ztr, ytr, zva, classes: int, epochs: int = 30, seed: 
         return net(xtr).argmax(-1), net(xva).argmax(-1)
 
 
-def per_class(yva: torch.Tensor, preds: dict, names: list[str], min_n: int = 50, mistake_of: str | None = None):
+def per_class(yva: torch.Tensor, preds: dict, names: list[str], min_n: int = 20, mistake_of: str | None = None):
     """Per block type of the held-out worlds with at least `min_n` samples: count, recall of each prediction set, and the
     most frequent wrong answer of `mistake_of` (default: the last). Returns (rows, {skipped type: count})."""
     rows, skipped = [], {}
@@ -186,7 +186,7 @@ def main():
     parser.add_argument("--frames", type=int, default=129)
     parser.add_argument("--max-clips", type=int, default=512)
     parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--min-samples", type=int, default=50, help="block types with fewer held-out samples are left out of the table")
+    parser.add_argument("--min-samples", type=int, default=20, help="block types with fewer held-out samples are left out of the table")
     args = parser.parse_args()
 
     from cpu_threads import limit_threads
