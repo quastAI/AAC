@@ -80,7 +80,7 @@ final_probing_decoding_eval:
   output_subdir: final_probing_decoding_eval
 health:  # collapse and failure monitor, see health.py and training_monitor.py
   enabled: true
-  live_every: 500  # steps between live metrics from the training batch; at 50 each check cost seconds: 3.5 it/s instead of 11.9 on an A100
+  live_every: 2000  # steps between live metrics from the training batch; each check costs seconds (every 50 steps: 3.5 it/s, every 500: 11.9, the timing says 15.6 without)
   warmup_steps: 200  # no findings before this step (the predictor starts as a copy)
   epoch_batches: 8  # validation batches per epoch evaluation
   final_batches: 32  # ... at the end of training
