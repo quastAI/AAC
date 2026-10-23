@@ -146,6 +146,7 @@ python eval_tasks.py --dataset craftax_expert_val --mode offset --offsets 25 50 
 python eval.py --config-name craftax_plan policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
 python eval.py --config-name craftax_plan policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...
 python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan                   # step and solve timing
+python ../../analysis/plot_training.py --run <run dir>                                           # loss curves and health metrics of a run (health/loss_curves.png)
 python ../../experiments/run.py plan F1                                                          # print the commands of one job group
 ```
 
@@ -177,6 +178,8 @@ Findings are `critical` (collapse or a failure that makes the model unusable), `
 ## Compute
 
 About 15 A100-hours per month (~180 in total). One seed per variant; three seeds only for headline results. A training run and a planning evaluation are timed first (`time_run.py`), and the runs are sized from those numbers.
+
+Measured on an A100 (RunPod, 2026-10-23): the flat model trains at 0.064 s per step (batch 128, clips of 4 frames, 11.2 M parameters, 4.7 GB), 15,551 steps and 16.6 min per epoch, so 10 epochs take 2.8 GPU-hours; the loader gives 3,500 clips/s for the 2,000 the step uses. A planning solve of 8 environments takes 0.71 s at about 1% GPU use (the solver processes 5 environments at a time, `solver.solvers.level1.batch_size`): an upper bound of 18 s per task at a budget of 400 steps and 133 s at 3000, that is about 1 h for 200 tasks of set A and 3.7 h for 100 tasks of set B or C, per model, with the simulator not counted. Planning costs more than training until the batch size and the task sets are set (F2).
 
 ## Open decisions
 
