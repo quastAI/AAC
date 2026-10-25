@@ -24,7 +24,7 @@ The work goes step by step. The dataset is collected and described (dataset sect
 The first deliverable is a strong flat model (level 1 alone, `num_levels=1`): the baseline for the hierarchy, and the place to learn what carries over to it. Every variant goes through the same cycle:
 
 1. **Train.** Loss curves and the training diagnostics.
-2. **Probes** (before planning). Ridge probes to the ground-truth state, from encoded latents and from open-loop predicted latents at 1 to 64 steps. The probes are fitted on encoded latents and applied unchanged to the predictions; copying the last latent and an untrained encoder are the references. Successful crafts and placements are reported apart from failed presses (each about 0.1% of the steps), and the IDM per action class.
+2. **Probe suite** (after training, before planning; `probe_suite.py`). Every entity of the game along one chain: the pixels (ceiling), the ViT's patch tokens (untrained ViT as control), the CLS token, the latent (linear and MLP; untrained latent as control), a pasted sprite, one step (collect, place, make, mob motion), the rollout (scored only where the entity changed, against copying the last latent). The verdict is the first link that fails; rarity, look-alike sprites, the latent's variance spectrum and loss attribution say why. Probes are fitted on the training worlds, scored on the held-out worlds, intervals from an episode bootstrap.
 3. **Planning settings** (default model only). Goal offset, planning horizon and CEM settings, chosen on the validation worlds, then frozen for every variant. Designed when the default model exists.
 4. **Planning**, each against a random policy on the same tasks, with example videos:
    - **P1** fixed-offset goals (protocol A);
@@ -38,8 +38,9 @@ The first deliverable is a strong flat model (level 1 alone, `num_levels=1`): th
 - context and rollout loss (`level1.wm.history_size`, `level1.wm.rollout_n`);
 - SIGReg and IDM coefficients: no sweep, changed from the loss curves, probes and planning of the runs before;
 - delta prediction (predicted latent = last latent + predictor output, same loss): only if the default model barely beats copying the last latent, or static entities drift in the rollout probes;
-- CLS vs patch tokens in the predictor: last, and only if the rollout probes show the CLS latent losing fast entities (position, mobs). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step;
-- encoder without projector (`level1.encoder.projector.type=identity`: the latent is the CLS token, both 192-d): candidate after F1, whose projector drops most of what the CLS token holds about rare tiles (below). The projector is part of the recipe, so this may train worse.
+- CLS vs patch tokens in the predictor: last, and only if the probe suite shows the CLS latent losing what planning needs (mobs, rare tiles). About 81 times the tokens per frame in every planning step, and the levels above take one vector per step;
+- encoder without projector (`level1.encoder.projector.type=identity`: the latent is the CLS token, both 192-d): candidate after F1, whose projector drops most of what the CLS token holds about rare tiles (below). The projector is part of the recipe, so this may train worse;
+- auxiliary map decoder on the latent: a diagnostic run, the last step and only when needed. It says whether capacity or the objective drops an entity, which no probe can.
 
 Everything in the cycle is built except the search for the planning settings.
 
@@ -49,8 +50,8 @@ Everything in the cycle is built except the search for the planning settings.
 
 - **Health.** No collapse: effective rank 101 of 192 (57 after epoch 1), no dead dimensions, no loss spikes. One-step prediction error 0.20 of copying the last latent (0.29 after epoch 1); open-loop error at the planning horizon (10 steps) 0.41 of copy (0.60); action lift 0.86; IDM accuracy 0.93 (chance 0.20). Validation loss still falling at the end. The `OVERFIT` warning (validation loss 1.9x training) compares total losses: after epoch 1 the gap was all SIGReg (1.74 vs 1.0, prediction and IDM terms equal); not checked for the last epoch.
 - **Probes** (512 clips). Fast / medium / slow 0.33 / 0.90 / 0.91 (untrained 0.40 / 0.66 / 0.77); inventory 0.82, vitals 0.79, block faced 0.53. Mobs in view (0.08) and blocks in view (0.32) stay below the untrained encoder (0.39, 0.60) at every epoch. Predictions beat copying the last latent up to 32 steps (fast, medium) and 16 (slow); at 8 steps fast 0.23 vs 0.09, medium 0.86 vs 0.75, slow 0.90 vs 0.89. Crafts are predicted almost fully (0.97 of the real change), placements 0.78, `place_stone` worst (0.42: a failed press looks like half a success). The probe scores settled by epoch 2 to 3; later epochs improved the rollouts.
-- **Where the tile is lost** (`tile_probe.py`, block faced, MLP probe): the ViT's patch token at the faced tile reads it at 1.00, the CLS token before the projector 0.89, the latent 0.78 (linear: 0.85 vs 0.70). Rare tiles lose most at the projector (CLS → latent): coal 0.68 → 0.27, iron 0.67 → 0.20, diamond 0.76 → 0.26, crafting table 0.71 → 0.43. A class-balanced probe does not recover them (balanced accuracy: latent 0.51, CLS 0.69).
-- **Next.** Planning settings (F2) and P1-P3 on this model: do the lost tiles matter for planning? Then the projector variant.
+- **Where the tile is lost** (the earlier `tile_probe.py`, block faced, MLP probe): the ViT's patch token at the faced tile reads it at 1.00, the CLS token before the projector 0.89, the latent 0.78 (linear: 0.85 vs 0.70). Rare tiles lose most at the projector (CLS → latent): coal 0.68 → 0.27, iron 0.67 → 0.20, diamond 0.76 → 0.26, crafting table 0.71 → 0.43. A class-balanced probe does not recover them (balanced accuracy: latent 0.51, CLS 0.69).
+- **Next.** The probe suite on F1 (the numbers above come from the earlier probe scripts; notebook cell), then the planning settings (F2) and P1-P3: do the lost tiles matter for planning? Then the projector variant.
 
 ## Method
 
@@ -151,12 +152,11 @@ Run from `analysis/`: `python -m dataset_section compute --data expert_train.h5 
 ```bash
 cd H-JEPA/h_jepa
 python main_hjepa.py --config-name craftax_hjepa num_levels=1                                    # the flat model (2 to 4 add levels)
-python probe_eval.py --run <run dir> --train-dataset X --val-dataset Y                           # probes
+python probe_suite.py --run <run dir> [--checkpoint <ckpt>] [--out <dir>]                        # the probe suite (also run by the training at its end)
 python eval_tasks.py --dataset craftax_expert_val --mode offset --offsets 25 50 100 --num-tasks 200 --eval-budget 400 --out tasks.pt
 python eval.py --config-name craftax_plan policy=random load_eval_trajs_path=tasks.pt eval.num_eval=200 eval.eval_budget=400 eval.goal_offset_steps=400 output.dir=<abs dir>   # baseline
 python eval.py --config-name craftax_plan policy=ckpts/craftax/<run>/seed42 load_eval_trajs_path=tasks.pt ...
 python time_run.py --config-name craftax_hjepa --eval-config-name craftax_plan                   # step and solve timing
-python tile_probe.py --run <run dir> --checkpoint <ckpt> --out <dir>                            # where the faced tile is lost: latent, CLS, patch tokens
 python ../../analysis/plot_training.py --run <run dir>                                           # loss curves and health metrics of a run (health/loss_curves.png)
 python ../../experiments/run.py plan F1                                                          # print the commands of one job group
 ```
@@ -176,9 +176,9 @@ Training, planning and probing each write a report that names collapses and othe
 |---|---|---|---|
 | Training | live every 2000 steps | effective rank, dead dimensions, latent scale (SIGReg holds it near std 1), latent change per step, predictor vs copy-last-latent and vs shuffled actions, IDM accuracy, raw gradient norms, loss spikes (per level) | `health/*` in the logger, findings printed when they first appear |
 | Training | every epoch, long validation clips | adds open-loop drift (planning history 1 and training history), cost geometry (latent distance vs time gap), IDM on held-out worlds; two epochs in a row with a critical finding stop the training (`health.stop_after_critical_epochs`) | `health_val/*`, `health/epoch_*.json` |
-| Training | at the end | all of it, findings, optional probing | `health/report.md`, `summary.json`, `probe_report.md` |
+| Training | at the end | all of it, findings, the probe suite | `health/report.md`, `summary.json`, `probe_report.md` |
 | Planning | per task and replanning | progress, latent distance to the goal, CEM improvement and entropy, FLOPs, executed-action diversity; plan diagnostics replay the chosen plan in a cloned simulator (prediction error vs random plans, optimism, cost ranking, distance to the data) | `planning_report.md`, `planning_health.json`, `planning_records.json`, `videos/task_*.gif` (the first `eval.videos` tasks: agent next to goal, step, progress, unlocks) |
-| Probing | at the end, or `probe_eval.py` (`--checkpoint` an epoch checkpoint with `--out` its own directory, e.g. after epoch 1 while training goes on) | ridge probes to fast (position, facing, mobs, blocks in view, block faced), medium (vitals, sleeping) and slow (inventory, achievements, daylight) state on held-out worlds, with an untrained encoder as control; level 1 also on open-loop rollouts (k = 1 to 64, against copy and encoded), after place and make actions (successful vs failed presses), and the IDM per action | `probe_report.md` |
+| Probing | at the end of training, or `probe_suite.py` | per entity (block types, mobs, inventory, vitals, facing, sleeping, daylight, achievements) the chain pixels -> ViT tokens (layers 3, 6, 9, last) -> CLS -> latent -> sprite swap -> one step -> rollout, with untrained controls and a verdict; the 7x9 tile map from every stage (per class, per distance from the player); why (rarity vs look-alike sprites, spectrum, loss attribution); the change test at k = 1 to 64 (history 1 and 3); events incl. collecting; mob motion; what the latent distance sees; the distance to a goal along the expert path; IDM per action | `probe_report.md`, `probe_summary.json` |
 
 Findings are `critical` (collapse or a failure that makes the model unusable), `warn`, or `info`, each with a hint. Failure signals beyond collapse include: predictor not better than copying the last latent, actions ignored, rollout drift beyond copy, latent distance that saturates after a few steps, IDM at chance, plans predicted worse than random plans (exploitation), predicted progress that reality does not deliver, and probes no better than an untrained encoder. `analysis/compare_runs.py` compares planning against the random baseline, compute scaling, training and probing across runs.
 

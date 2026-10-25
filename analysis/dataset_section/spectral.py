@@ -1,4 +1,5 @@
-"""The entity frequency gap of the paper (H-JEPA, appendix F) on the 7 probe entities of `probe_eval.py`.
+"""The entity frequency gap of the paper (H-JEPA, appendix F) on 7 entities of the game (the probe targets of the first
+probe script; the probe suite, H-JEPA/h_jepa/probing, replaced it on 2026-10-25).
 
 Every dimension of an entity is standardised per episode (the centroid does not depend on the amplitude), cut into
 segments of `window` frames (hop window / 2, Hann taper, segment mean removed), and the power per frequency bin is averaged
@@ -21,7 +22,7 @@ from .data import Split
 EPS = 1e-6
 LOW_BINS = 2  # the lowest non-DC bins that decide whether an estimate is limited by the window
 LIMITED_SHARE = 0.5  # more than this share of the power in the lowest bins: limited by the window
-ENTITIES = {  # the probe targets of probe_eval.py with their probe group
+ENTITIES = {  # the targets of the first probe script with their probe group
     "position": "fast", "facing": "fast", "mobs_in_view": "fast", "vitals": "medium",
     "inventory": "slow", "achievements": "slow", "daylight": "slow",
 }  # fmt: skip

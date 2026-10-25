@@ -210,7 +210,7 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
     probes = []
     for model in exp.get("probe", []):
         for seed in seeds:
-            cmd = [python, "probe_eval.py", "--run", _run_dir(home, model, seed), "--train-dataset", train_ds,
+            cmd = [python, "probe_suite.py", "--run", _run_dir(home, model, seed), "--train-dataset", train_ds,
                    "--val-dataset", val_ds, "--max-clips", "512"]  # fmt: skip
             train = f"train_{model}_s{seed}"  # a model trained in the same experiment is probed after its training
             after = [train] if any(j.name == train for j in jobs) else []

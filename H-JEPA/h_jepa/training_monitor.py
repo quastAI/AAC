@@ -40,11 +40,13 @@ def _average(dicts: list[dict]) -> dict:
 
 
 def build_health_loader(
-    cfg, cache_dir, transform, *, frames, batch_size, max_clips, seed=0, name=None, columns=("pixels", "action")
+    cfg, cache_dir, transform, *, frames, batch_size, max_clips, seed=0, name=None, columns=("pixels", "action"), disjoint=False
 ):
     """Long clips (level-1 frames only; the model builds the upper levels).
 
     `name` is the dataset (default: the validation set), `columns` what to load.
+    `disjoint`: only clips that start at a multiple of their length, so that no
+    two clips share a frame (the probe suite; otherwise every start position).
 
     Falls back to shorter clips when the validation episodes are too short, and
     returns None when there are no clips at all.
@@ -64,9 +66,12 @@ def build_health_loader(
     while frames >= 4:
         base["level1"] = {"frameskip": frameskip, "num_steps": frames}
         dataset = build_hdf5_dataset(dict(base), cache_dir=cache_dir)
-        if len(dataset) >= 2:
+        candidates = torch.arange(len(dataset))
+        if disjoint:
+            candidates = torch.tensor([i for i, (_, start) in enumerate(dataset.clip_indices) if start % frames == 0], dtype=torch.long)
+        if len(candidates) >= 2:
             dataset.transform = transform
-            order = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(seed))
+            order = candidates[torch.randperm(len(candidates), generator=torch.Generator().manual_seed(seed))]
             subset = Subset(dataset, order[:max_clips].tolist())
             return DataLoader(subset, batch_size=batch_size, shuffle=False, num_workers=0), frames
         frames //= 2
@@ -394,33 +399,26 @@ class TrainingHealthCallback(Callback):
             self._probe(pl_module)
 
     def _probe(self, pl_module):
-        """Probe every level on held-out worlds; skipped when the data lacks the target columns."""
-        import h5py
+        """The probe suite (probe_suite.py) on held-out worlds; skipped when the data lacks the columns it reads."""
+        from probe_suite import has_columns, run_suite, write
+        from probing.targets import COLUMNS
 
-        from probe_eval import COLUMNS, run_probing
-
-        path = Path(self.cache_dir or ".") / f"{self.cfg.data.dataset.val_name}.h5"
-        try:
-            with h5py.File(path, "r") as f:
-                missing = [c for c in COLUMNS if c not in f]
-        except OSError:
-            missing = ["(dataset not readable)"]
+        missing = sorted({c for name in (self.cfg.data.dataset.name, self.cfg.data.dataset.val_name)
+                          for c in has_columns(self.cache_dir, name, COLUMNS)})  # fmt: skip
         if missing:
-            logging.warning(f"[health] probing skipped, the validation data lacks columns {missing}; collect it with the current collector")
+            logging.warning(f"[health] probing skipped, the data lacks columns {missing}; collect it with the current collector")
             return
         try:
             device = next(pl_module.model.parameters()).device
-            summary, findings = run_probing(
+            summary, findings = run_suite(
                 pl_module.model, self.cfg, self.cache_dir, transform=self.transform, normalize=self.normalize,
-                device=device, frames=int(self.hcfg.long_clip_frames), max_clips=int(self.hcfg.get("probe_clips", 256)),
+                device=device, frames=int(self.hcfg.long_clip_frames), max_clips=int(self.hcfg.get("probe_clips", 512)),
+                log=lambda msg: logging.info(f"[probe suite] {msg}"),
             )  # fmt: skip
         except Exception as error:  # a failed probe must not lose a finished training run
             logging.warning(f"[health] probing failed: {error!r}")
             return
-        (self.run_dir / "probe_report.md").write_text(health.render_probing_report(summary, findings))
-        (self.run_dir / "probe_summary.json").write_text(
-            json.dumps({"summary": health.to_jsonable(summary), "findings": health.findings_to_json(findings)}, indent=1)
-        )
+        write(self.run_dir, summary, findings)
         logging.info("[health] probing findings:\n" + health.findings_block(findings))
 
 
