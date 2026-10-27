@@ -157,3 +157,126 @@ def test_the_monitor_counts_frames_per_source(tmp_path):
     assert result.returncode == 0, result.stderr
     assert '3 episodes' in result.stdout and 'expert 30' in result.stdout
     assert 'early 5' in result.stdout
+
+
+def probe_cell_fetch_part():
+    """The part of the flat notebook's probe-suite cell that gets the run."""
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_flat.ipynb').read_text())
+    for cell in nb['cells']:
+        source = ''.join(cell['source'])
+        if source.startswith("# --- 2. The probe suite on F1's final model"):
+            return source.split('health_dir = ')[0]
+    raise AssertionError('no probe suite cell in the flat notebook')
+
+
+def run_fetch(tmp_path, hub_files, existing=()):
+    """Runs the fetch part against a fake Hub (namespace, downloads, run)."""
+    import shutil
+
+    run = tmp_path / 'ckpts' / 'craftax' / 'flat' / 'seed42'
+    run.mkdir(parents=True)
+    for name in existing:
+        (run / name).write_text('local')
+    downloaded = []
+
+    class FakeApi:
+        token = 'x'
+
+        def list_repo_files(self, repo_id, repo_type):
+            assert repo_type == 'dataset'
+            return hub_files
+
+    def fake_download(repo_id, filename, repo_type, token):
+        downloaded.append(filename)
+        source = tmp_path / ('hub_' + filename.replace('/', '_'))
+        source.write_text('hub')
+        return str(source)
+
+    ns = {
+        'run_dir': lambda model: run,
+        'SEEDS': '42,43',
+        'HF_REPO_ID': 'org/repo',
+        'api': FakeApi(),
+        'hf_hub_download': fake_download,
+        'shutil': shutil,
+    }
+    exec(probe_cell_fetch_part(), ns)
+    return ns, downloaded, run
+
+
+def test_the_probe_cell_fetches_the_run_from_the_hub(tmp_path):
+    hub = [
+        'data/craftax_expert_train.h5',
+        'runs/flat/seed42/config.yaml',
+        'runs/flat/seed42/flat_object.ckpt',
+        'runs/flat/seed43/config.yaml',  # another seed
+        'runs/flat_h1/seed42/config.yaml',  # another model
+    ]
+    _, downloaded, run = run_fetch(tmp_path, hub)
+    assert downloaded == [
+        'runs/flat/seed42/config.yaml',
+        'runs/flat/seed42/flat_object.ckpt',
+    ]
+    assert (run / 'config.yaml').read_text() == 'hub'
+    assert (run / 'flat_object.ckpt').read_text() == 'hub'
+
+
+def test_the_probe_cell_keeps_what_the_volume_has_and_finds_other_layouts(
+    tmp_path,
+):
+    hub = ['runs/craftax/flat/seed42/flat_object.ckpt']  # one folder deeper
+    _, downloaded, run = run_fetch(tmp_path, hub, existing=['config.yaml'])
+    assert downloaded == ['runs/craftax/flat/seed42/flat_object.ckpt']
+    assert (run / 'config.yaml').read_text() == 'local'  # not replaced
+    # nothing missing: the Hub is not asked
+    _, downloaded, _ = run_fetch(
+        tmp_path / 'again', [], existing=['config.yaml', 'flat_object.ckpt']
+    )
+    assert downloaded == []
+
+
+def test_the_probe_cell_stops_when_the_hub_has_no_single_match(tmp_path):
+    with pytest.raises(AssertionError, match='config.yaml: 0 matches'):
+        run_fetch(tmp_path, ['runs/flat/seed42/flat_object.ckpt'])
+    twice = [
+        'runs/a/flat/seed42/config.yaml',
+        'runs/b/flat/seed42/config.yaml',
+        'runs/flat/seed42/flat_object.ckpt',
+    ]
+    with pytest.raises(AssertionError, match='config.yaml: 2 matches'):
+        run_fetch(tmp_path / 'two', twice)
+
+
+def flat_cells():
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_flat.ipynb').read_text())
+    return [''.join(c['source']) for c in nb['cells']]
+
+
+def test_the_probe_suite_runs_detached_and_has_a_monitor_cell():
+    cells = flat_cells()
+    start = next(
+        i
+        for i, c in enumerate(cells)
+        if c.startswith("# --- 2. The probe suite on F1's final model")
+    )
+    # detached with a live log: `sh` would show nothing until it exits
+    assert 'launch("probe_suite"' in cells[start]
+    assert 'sh([PYTHON, "probe_suite.py"' not in cells[start]
+    assert 'quiet=True' not in cells[start]
+    monitor = cells[start + 1]
+    assert monitor.startswith('# --- 2. Monitor the probe suite')
+    for needle in (
+        'running("probe_suite")',
+        'progress("probe_suite", "[probe suite]"',
+        'nvidia-smi',
+        'probe_report.md',
+        'probe_suite.log',  # the end of the log when no report came
+    ):
+        assert needle in monitor, needle
+
+
+def test_the_suite_prints_the_progress_lines_the_monitor_looks_for():
+    suite = (
+        Path(__file__).parents[2] / 'H-JEPA' / 'h_jepa' / 'probe_suite.py'
+    ).read_text()
+    assert 'print(f"[probe suite] {msg}", flush=True)' in suite
