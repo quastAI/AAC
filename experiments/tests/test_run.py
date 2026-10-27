@@ -474,4 +474,6 @@ def test_the_cheap_planning_set_is_small_and_checked_against_the_budget(spec):
     a = spec['tasks']['A']
     assert a['mode'] == 'offset' and a['offsets'] == [8]
     assert a['eval_budget'] >= 2 * max(a['offsets'])  # room to reach the goal
-    assert a['num_tasks'] >= 300  # the 95% interval of a success rate: +-6 points
+    # one task per episode: the 128 validation episodes that reach the
+    # diamond are all there are (the 95% interval of a success rate: +-9)
+    assert a['num_tasks'] == 128

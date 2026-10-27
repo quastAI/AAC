@@ -42,11 +42,12 @@ collection:
 # the number of tasks and the budgets follow from the goal-test decision and the timing run.
 # A is the cheap set for the flat variants (decided 2026-10-27): offset 8 only (the probe-readable horizon of
 # level 1 is about 8 steps; the planner's horizon is 8 as well, so the goal is the last predicted frame; offset 16
-# was dropped, the F1 distance to the goal has no signal there), 300 tasks (the 95% interval of a success rate is
-# about +-6 points; 100 tasks give +-10), budget 2x the offset. By the README's bound (18 s per task at 400 steps) that is minutes
+# was dropped, the F1 distance to the goal has no signal there), 128 tasks (a task needs its own episode and the
+# validation split has 128 that reach the diamond; the 95% interval of a success rate is about +-9 points, 300 tasks
+# would have given +-6 but do not exist), budget 2x the offset. By the README's bound (18 s per task at 400 steps) that is minutes
 # per model, to be timed with time_run.py. B and C are for the final flat-against-hierarchy comparison.
 tasks:
-  A: {mode: offset, offsets: [8], num_tasks: 300, eval_budget: 16}
+  A: {mode: offset, offsets: [8], num_tasks: 128, eval_budget: 16}
   B: {mode: episode, num_tasks: 100, eval_budget: 3000}
   # the oracle chain (P2): the tasks of B, the planner's goal switches through the expert's frames every
   # offset, each held subgoal_budget steps (placeholder 2x the offset)

@@ -235,6 +235,16 @@ def describe(tasks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def require_tasks(tasks: list, wanted: int) -> None:
+    """Stop when fewer tasks were found than asked for: the evaluation asks for `eval.num_eval` of them and fails late,
+    after the pod has started, when the file is short (one task per episode, so the data sets the limit)."""
+    if len(tasks) < wanted:
+        raise ValueError(
+            f"only {len(tasks)} of {wanted} tasks found (one per episode, with progress): "
+            f"set num_tasks to at most {len(tasks)} for this dataset (experiments.yaml, tasks)"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True, help="dataset name (HDF5 under the cache dir)")
@@ -266,8 +276,7 @@ def main():
     late = sum(t["switch_steps"][-1] >= args.eval_budget for t in tasks if "switch_steps" in t)
     if late:
         print(f"warning: in {late} tasks the final goal starts after the budget of {args.eval_budget} steps")
-    if len(tasks) < args.num_tasks:
-        print(f"warning: only {len(tasks)} of {args.num_tasks} tasks found (one per episode, with progress)")
+    require_tasks(tasks, args.num_tasks)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     torch.save(build_payload(dataset, tasks, args.eval_budget, args.seed), args.out)
     print(f"wrote {args.out}")

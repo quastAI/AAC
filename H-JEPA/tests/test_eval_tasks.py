@@ -246,3 +246,11 @@ def test_a_dataset_without_sources_is_refused_unless_asked(dataset):
     assert eval_tasks.make_tasks(
         plain, mode='offset', num_tasks=3, sources=None
     )
+
+
+def test_too_few_tasks_stop_the_generator():
+    # the evaluation asks for eval.num_eval tasks and fails late otherwise
+    eval_tasks.require_tasks([{}] * 5, 5)
+    eval_tasks.require_tasks([{}] * 6, 5)
+    with pytest.raises(ValueError, match='only 5 of 300 tasks found'):
+        eval_tasks.require_tasks([{}] * 5, 300)
