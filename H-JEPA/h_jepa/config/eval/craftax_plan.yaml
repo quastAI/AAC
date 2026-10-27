@@ -3,7 +3,7 @@
 # VQ codes above. Sample counts and horizons are placeholders.
 # Horizons: the top level plans `horizon` steps of its own. A level below follows the plan of the one
 # above and plans exactly one upper step, so its horizon is the stride of the level above (the value
-# under `horizon` is ignored for it). Level 1 alone (the flat model) plans its own horizon 10.
+# under `horizon` is ignored for it). Level 1 alone (the flat model) plans its own horizon 8, the goal offset of task set A.
 # Tasks: see eval_tasks.py (protocols A and B).
 cache_dir: ${oc.env:HJEPA_HOME}
 world:
@@ -64,7 +64,7 @@ solver:
 hierarchical_plan_config:
   receding_horizon: 2
   level1:
-    horizon: 10  # only used when level 1 is the top level (the flat model)
+    horizon: 8  # only used when level 1 is the top level (the flat model): the goal offset of task set A (the cost reads the last predicted frame)
     horizon_schedule: fixed
     action_block: 1
     cost_last_n: 1

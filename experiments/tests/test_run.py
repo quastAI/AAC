@@ -472,6 +472,6 @@ def test_the_slurm_script_of_a_collection_run_writes_the_marker(spec, tmp_path):
 
 def test_the_cheap_planning_set_is_small_and_checked_against_the_budget(spec):
     a = spec['tasks']['A']
-    assert a['mode'] == 'offset' and a['offsets'] == [8, 16]
+    assert a['mode'] == 'offset' and a['offsets'] == [8]
     assert a['eval_budget'] >= 2 * max(a['offsets'])  # room to reach the goal
     assert a['num_tasks'] >= 300  # the 95% interval of a success rate: +-6 points
