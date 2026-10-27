@@ -124,10 +124,6 @@ def _flat(e: torch.Tensor) -> torch.Tensor:
     return e.detach().float().reshape(-1, e.shape[-1])
 
 
-def _num(x) -> float | None:
-    return None if x is None else float(x)
-
-
 # --------------------------------------------------------------------------
 # representation metrics (embeddings of shape (B, T, D))
 
@@ -824,8 +820,12 @@ def rollout_reach(by_k: dict, target: str, floor: float = 0.5) -> int:
 def _diagnose_suite(f: list[Finding], summary: dict, thr: Thresholds):
     """Level-1 findings of the probe suite: the rollout's change test, the events, the ridge grid, the verdicts."""
     change = (summary.get("change_plan") or {}).get("by_k") or {}
+    # the state targets only (the view concepts have their own section in the report)
+    groups = {t: e.get("group") for t, e in (((summary.get("state") or {}).get("ridge") or {}).get("latent") or {})
+              .get("targets", {}).items()}  # fmt: skip
+    state = lambda t: groups.get(t, "fast") in ("fast", "medium", "slow")  # noqa: E731
     if change:
-        reach = {t: rollout_reach(change, t) for t in change[min(change, key=int)]}
+        reach = {t: rollout_reach(change, t) for t in change[min(change, key=int)] if state(t)}
         _f(f, "info", "PROBE_ROLLOUT_HORIZON", 1, "where the entity changed, predictions recover half of the encoded latent's "
            "advantage over copying up to k = " + ", ".join(f"{v} ({t})" for t, v in reach.items()),
            "the probe-readable rollout horizon per entity (planning history): an input to the planning horizon")
@@ -833,8 +833,8 @@ def _diagnose_suite(f: list[Finding], summary: dict, thr: Thresholds):
             _f(f, "warn", "PROBE_ROLLOUT_NO_GAIN", 1, "one step ahead, the predictions recover less than half of every change",
                "the predictor does not move the state: check the action conditioning")
         first = change[min(change, key=int)]
-        invented = [t for t, e in first.items() if e.get("pred_same") is not None and e.get("copy_same") is not None
-                    and e["copy_same"] - e["pred_same"] > thr.probe_invented_change_warn]  # fmt: skip
+        invented = [t for t, e in first.items() if state(t) and e.get("pred_same") is not None
+                    and e.get("copy_same") is not None and e["copy_same"] - e["pred_same"] > thr.probe_invented_change_warn]  # fmt: skip
         if invented:
             _f(f, "warn", "PROBE_INVENTS_CHANGES", 1, f"one step ahead, the readout of {', '.join(invented)} is wrong more "
                "often than copying where nothing changed", "the predictor changes what did not change")

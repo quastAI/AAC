@@ -40,8 +40,12 @@ collection:
 
 # Task sets (eval_tasks.py). The budget is in environment steps. Placeholders: the offsets,
 # the number of tasks and the budgets follow from the goal-test decision and the timing run.
+# A is the cheap set for the flat variants (decided 2026-10-27): offsets 8 and 16 (the probe-readable horizon of
+# level 1 is about 8 steps, 16 its edge), 300 tasks (the 95% interval of a success rate is about +-6 points; 100
+# tasks give +-10), budget 2x the larger offset. By the README's bound (18 s per task at 400 steps) that is minutes
+# per model, to be timed with time_run.py. B and C are for the final flat-against-hierarchy comparison.
 tasks:
-  A: {mode: offset, offsets: [25, 50, 100, 200], num_tasks: 200, eval_budget: 400}
+  A: {mode: offset, offsets: [8, 16], num_tasks: 300, eval_budget: 32}
   B: {mode: episode, num_tasks: 100, eval_budget: 3000}
   # the oracle chain (P2): the tasks of B, the planner's goal switches through the expert's frames every
   # offset, each held subgoal_budget steps (placeholder 2x the offset)
@@ -92,10 +96,14 @@ experiments:
       - {name: flat, train: false, model: flat, eval: craftax_plan}
 
   V1:
-    title: Context and rollout loss, each against F1 (placeholders for the values)
-    protocols: [A, B, C]
-    baseline: true  # the same jobs as in F3 and F5: skipped when done
+    title: First variants against F1, full runs (the rollout model with history 1, SIGReg weight 0.03); cheap planning (set A)
+    protocols: [A]
+    baseline: true  # the same jobs as in F3: skipped when done
     runs:
-      - {name: flat_h1, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.history_size=1]}
-      - {name: flat_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.rollout_n=4]}
-    probe: [flat_h1, flat_rollout4]
+      # F1, the reference: planned on set A (the same jobs as in F3, skipped when done) and in both comparisons
+      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      # the rollout model: history 1 and a 4-step open-loop loss (the planner rolls out with history 1); F1 settings otherwise
+      - {name: flat_h1_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.history_size=1, level1.wm.rollout_n=4]}
+      # SIGReg weight 3x lower (0.09 in F1); the health monitor stops a run whose effective rank collapses
+      - {name: flat_sigreg003, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.loss.embed.sigreg.weight=0.03]}
+    probe: [flat, flat_h1_rollout4, flat_sigreg003]  # F1's probe job only runs when its report is missing

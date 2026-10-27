@@ -142,6 +142,8 @@ def test_the_suite_runs_every_section(suite):
         'monotonicity',
         'idm',
         'verdicts',
+        'cross',
+        'displacement',
     ):
         assert summary.get(key), key
     # disjoint clips: 2 per episode of 70 frames, 8 kept
@@ -156,6 +158,15 @@ def test_the_suite_runs_every_section(suite):
     assert 'null' in summary['swaps']['targets']
     assert any(k.startswith('block:') for k in summary['swaps']['targets'])
     assert summary['verdicts']['blocks'] and summary['verdicts']['items']
+    # the view concepts are probed with the state, outside the group means
+    targets = summary['state']['ridge']['latent']['targets']
+    assert {'in_view', 'nearest', 'can_move', 'near'} <= set(targets)
+    assert targets['near']['group'] == 'view'
+    assert 'detail' in targets['inventory']  # exact, MAE, variance
+    assert set(summary['cross']) == {'cls', 'latent', 'control'}
+    assert summary['faced']['by_cause']['all']['transitions'] > 0
+    settings = summary['settings']
+    assert settings['commit'] and settings['run time (s)'] >= 0
     assert isinstance(findings, list)
 
 
@@ -174,6 +185,10 @@ def test_the_report_and_the_json(suite):
         '### Change test, history 1',
         '### Change test, history 3',
         '### Which transitions carry the prediction loss',
+        '### View concepts',
+        "### The tiles around the player, in the player's frame",
+        '### How far the agent moved between two latents',
+        '### The faced tile one step ahead, by what changed it',
     ):
         assert heading in text, heading
     probe_suite.write(tmp / 'out', summary, findings)

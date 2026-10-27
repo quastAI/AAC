@@ -86,10 +86,65 @@ def test_seeds_multiply_the_runs_and_overrides_reach_training_only(spec):
 
 def test_variants_set_their_overrides(spec):
     v1 = by_name(jobs_of(spec, 'V1'))
-    assert 'level1.wm.history_size=1' in v1['train_flat_h1_s42'].command
-    assert 'level1.wm.rollout_n=4' in v1['train_flat_rollout4_s42'].command
-    assert v1['probe_flat_h1_s42'].after == ['train_flat_h1_s42']
-    assert v1['eval_flat_rollout4_s42_B'].after == ['tasks_B', 'train_flat_rollout4_s42']
+    rollout = v1['train_flat_h1_rollout4_s42'].command
+    assert 'level1.wm.history_size=1' in rollout
+    assert 'level1.wm.rollout_n=4' in rollout
+    sigreg = v1['train_flat_sigreg003_s42'].command
+    assert 'level1.loss.embed.sigreg.weight=0.03' in sigreg
+    assert 'level1.wm.rollout_n=4' not in sigreg  # one change against F1
+    assert v1['probe_flat_h1_rollout4_s42'].after == [
+        'train_flat_h1_rollout4_s42'
+    ]
+    # the cheap planning set A only: no episode or chain tasks for a variant
+    assert not any(n.startswith('tasks_') and n != 'tasks_A' for n in v1)
+    assert v1['eval_flat_sigreg003_s42_A'].after == [
+        'tasks_A',
+        'train_flat_sigreg003_s42',
+    ]
+
+
+def test_variants_are_compared_against_f1(spec):
+    v1 = by_name(jobs_of(spec, 'V1'))
+    # F1 is planned on set A in the same directory as in F3: done once
+    f3 = by_name(jobs_of(spec, 'F3'))
+    assert v1['eval_flat_s42_A'].output == f3['eval_flat_s42_A'].output
+    assert 'train_flat_s42' not in v1
+    assert v1['probe_flat_s42'].after == []  # trained before: its report
+    plan = v1['compare_V1_A'].command
+    assert any(c.startswith('flat_s42=') for c in plan)
+    models = v1['compare_V1_models'].command
+    training = models[models.index('--training') + 1 : models.index('--probing')]
+    assert 'flat_s42=/data/ckpts/craftax/flat/seed42' in training
+    assert len(training) == 3
+
+
+def test_one_variant_per_pod(spec):
+    tag = run.select_runs(spec, 'V1', ['flat_sigreg003'])
+    assert tag == 'flat_sigreg003'
+    jobs = by_name(jobs_of(spec, 'V1'))
+    assert not any('rollout4' in name for name in jobs)
+    # the reference, the tasks and the random baseline stay (skipped when done)
+    for name in ('tasks_A', 'eval_flat_s42_A', 'eval_random_A',
+                 'probe_flat_s42', 'train_flat_sigreg003_s42',
+                 'probe_flat_sigreg003_s42', 'eval_flat_sigreg003_s42_A'):
+        assert name in jobs, name
+    # two pods upload their reports to the same Hub folder
+    tagged = by_name(run.build_jobs(spec, 'V1', [42], home='/data', tag=tag))
+    assert tagged['compare_V1_A'].output == (
+        '/data/reports/V1_flat_sigreg003_A_val.md'
+    )
+    assert tagged['compare_V1_models'].output == (
+        '/data/reports/V1_flat_sigreg003_models.md'
+    )
+    with pytest.raises(SystemExit, match='no trained run'):
+        run.select_runs(run.load_spec(), 'V1', ['flat'])  # the reference
+
+
+def test_cli_runs_one_variant(capsys):
+    run.main(['plan', 'V1', '--run', 'flat_h1_rollout4'])
+    plan = capsys.readouterr().out
+    assert 'train_flat_h1_rollout4_s42' in plan and 'sigreg' not in plan
+    assert 'V1_flat_h1_rollout4_A_val.md' in plan
 
 
 def test_a_probe_of_an_existing_run_has_no_training(spec):
@@ -192,13 +247,16 @@ def test_cli_list_and_plan(spec, capsys, tmp_path):
     run.main(['plan', 'F1', '--final'])
     plan = capsys.readouterr().out
     assert 'seed=43' in plan and 'seed=44' in plan
-    spec['experiments']['V1']['runs'][1]['optional'] = True
+    sigreg = next(
+        r for r in spec['experiments']['V1']['runs'] if 'sigreg' in r['name']
+    )
+    sigreg['optional'] = True
     path = tmp_path / 'spec.yaml'
     path.write_text(yaml.safe_dump(spec))
     run.main(['plan', 'V1', '--spec', str(path)])
-    assert 'flat_rollout4' not in capsys.readouterr().out  # optional runs only with --include-optional
+    assert 'flat_sigreg003' not in capsys.readouterr().out  # optional runs only with --include-optional
     run.main(['plan', 'V1', '--spec', str(path), '--include-optional'])
-    assert 'flat_rollout4' in capsys.readouterr().out
+    assert 'flat_sigreg003' in capsys.readouterr().out
     with pytest.raises(SystemExit, match='blocked'):
         run.main(['plan', 'F2'])
 
@@ -207,10 +265,11 @@ def test_final_runs_take_their_tasks_from_the_test_split(spec):
     jobs = by_name(run.build_jobs(spec, 'V1', [42], home='/data', final=True))
     assert 'craftax_expert_test' in jobs['tasks_A'].command
     assert jobs['tasks_A'].output == '/data/eval_tasks/A_test.pt'
-    ev = jobs['eval_flat_h1_s42_A']
+    ev = jobs['eval_flat_h1_rollout4_s42_A']
     assert 'eval.dataset_name=craftax_expert_test' in ev.command
     # training still validates on the validation worlds
-    assert 'data.dataset.val_name=craftax_expert_val' in jobs['train_flat_h1_s42'].command
+    train = jobs['train_flat_h1_rollout4_s42'].command
+    assert 'data.dataset.val_name=craftax_expert_val' in train
 
 
 def test_final_and_exploration_results_never_share_a_directory(spec):
@@ -226,7 +285,7 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
         if name.endswith('_models'):
             continue  # probes and training reports do not depend on the task split
         assert out_e[name] != out_f[name], name
-    ev = {j.name: j for j in final}['eval_flat_h1_s42_A']
+    ev = {j.name: j for j in final}['eval_flat_h1_rollout4_s42_A']
     assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 
@@ -391,3 +450,10 @@ def test_the_slurm_script_of_a_collection_run_writes_the_marker(spec, tmp_path):
     )
     script = run.render_sbatch(job, slurm, '/data', [])
     assert 'echo done > /data/collect_done/collect_train_expert' in script
+
+
+def test_the_cheap_planning_set_is_small_and_checked_against_the_budget(spec):
+    a = spec['tasks']['A']
+    assert a['mode'] == 'offset' and a['offsets'] == [8, 16]
+    assert a['eval_budget'] >= 2 * max(a['offsets'])  # room to reach the goal
+    assert a['num_tasks'] >= 300  # the 95% interval of a success rate: +-6 points

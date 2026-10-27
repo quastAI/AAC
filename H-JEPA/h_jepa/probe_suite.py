@@ -44,6 +44,29 @@ def has_columns(cache_dir, name, columns) -> list[str]:
         return ["(dataset not readable)"]
 
 
+def git_commit() -> str:
+    """The commit of the code that ran the suite (with a mark for uncommitted changes), or 'unknown'."""
+    import subprocess
+
+    here = Path(__file__).parent
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=here, capture_output=True, text=True, timeout=10
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=here,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if commit.returncode:
+        return "unknown"
+    return commit.stdout.strip() + (" (uncommitted changes)" if dirty.stdout.strip() else "")
+
+
 def facts(train: dict, val: dict) -> dict:
     """Base rates of the probe clips: block types per view tile, mobs per frame and tile, events per 1000 awake
     steps."""
@@ -113,16 +136,17 @@ def run_suite(
     layers=(3, 6, 9),
     token_cap=4000,
     strip_every=4,
-    swap_frames=256,
+    swap_frames=512,
     boot=200,
     horizons=pr.HORIZONS,
     every=8,
     offsets=(8, 16, 32, 64),
     spectrum_ks=(4, 8, 16, 32, 64, 128),
     min_n=20,
+    checkpoint=None,
     log=None,
 ):
-    """The whole suite on a trained model. Returns (summary, findings)."""
+    """The whole suite on a trained model. Returns (summary, findings). `checkpoint` is only recorded in the report."""
     from hjepa_utils import create_world_model
     from training_monitor import build_health_loader
 
@@ -185,6 +209,9 @@ def run_suite(
             "bootstrap": boot,
             "history (training / planning)": f"{train_history} / {plan_history}",
             "min_samples": min_n,
+            "commit": git_commit(),
+            "checkpoint": str(checkpoint) if checkpoint else "the model in memory (end of training)",
+            "device": str(device),
         }
     }
     summary["facts"] = facts(train, val)
@@ -212,6 +239,9 @@ def run_suite(
     )
     summary["distance"] = enc.distance_sensitivity(val, enc.step_scale(val, "latent"))
     log(f"swaps, distance ({time.time() - start:.0f} s)")
+    summary["cross"] = enc.cross_probes(train, val, steps=steps, device=device, boot=boot, min_n=min_n, seed=seed)
+    summary["displacement"] = enc.displacement(train, val, steps=steps, device=device, seed=seed)
+    log(f"facing-relative tiles, displacement ({time.time() - start:.0f} s)")
 
     summary["loss"] = pr.loss_attribution(val, jepa, history=train_history, device=device)
     summary["change"] = {
@@ -229,12 +259,17 @@ def run_suite(
         val, jepa, history=plan_history, offsets=offsets, every=every, device=device
     )
     summary["idm"] = pr.idm_per_action(val, jepa, device)
+    summary["faced"] = {
+        "by_cause": pr.faced_by_cause(fitted, val, jepa, history=train_history, device=device),
+        "swap": pr.faced_swap(model, val, sprites, fitted, normalize=normalize, device=device, seed=seed),
+    }
     log(f"predictor ({time.time() - start:.0f} s)")
 
     summary["verdicts"] = entity_verdicts(summary, min_n)
     summary["n_train"] = {1: len(train["frames"]["latent"])}
     summary["n_val"] = {1: len(val["frames"]["latent"])}
     summary["dim"] = {1: int(train["frames"]["latent"].shape[1])}
+    summary["settings"]["run time (s)"] = round(time.time() - start)
     return summary, health.diagnose_probing(summary)
 
 
@@ -262,7 +297,7 @@ def main():
         "--layers", type=int, nargs="*", default=[3, 6, 9], help="ViT layers whose patch tokens are probed"
     )
     parser.add_argument("--token-cap", type=int, default=4000, help="sampled tiles per block or mob type and split")
-    parser.add_argument("--swap-frames", type=int, default=256, help="bright held-out frames for the sprite swaps")
+    parser.add_argument("--swap-frames", type=int, default=512, help="bright held-out frames for the sprite swaps")
     parser.add_argument("--boot", type=int, default=200, help="episode bootstrap resamples (0 = no intervals)")
     parser.add_argument(
         "--horizons", type=int, nargs="+", default=list(pr.HORIZONS), help="rollout steps of the change test"
@@ -310,6 +345,7 @@ def main():
         swap_frames=args.swap_frames,
         boot=args.boot,
         horizons=tuple(args.horizons),
+        checkpoint=ckpt,
     )
     out = Path(args.out) if args.out else run / "health"
     write(out, summary, findings)

@@ -4,6 +4,7 @@
     python run.py plan F1                     # print every command, with dependencies
     python run.py plan F1 --final             # three seeds instead of one
     python run.py run F1 --mode local         # run them here, in order
+    python run.py run V1 --run flat_sigreg003 # one variant of V1 (with its reference), e.g. one pod per variant
     python run.py run F1 --mode slurm         # write sbatch scripts (and submit with --submit)
 
 `HJEPA_HOME` must point at the directory with the datasets and checkpoints. Jobs whose
@@ -132,9 +133,24 @@ def collection_jobs(spec: dict, home: str, checkpoint: str | None, python: str =
     return jobs
 
 
+def select_runs(spec: dict, exp_id: str, names: list[str]) -> str:
+    """Keep only the named trained runs of an experiment (one pod per variant), with its reference runs (`train:
+    false`, trained before) and their probes. Returns the tag of the reports, so that pods do not overwrite them."""
+    exp = spec["experiments"][exp_id]
+    trained = [r["name"] for r in exp.get("runs", []) if r.get("train", True)]
+    unknown = sorted(set(names) - set(trained))
+    if unknown:
+        raise SystemExit(f"{exp_id} has no trained run {unknown}; its trained runs: {trained}")
+    exp["runs"] = [r for r in exp.get("runs", []) if r["name"] in names or not r.get("train", True)]
+    if "probe" in exp:
+        exp["probe"] = [m for m in exp["probe"] if m in names or m not in trained]
+    return "_".join(names)
+
+
 def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: str = HOME_VAR, python: str = "python",
-               final: bool = False, checkpoint: str | None = None, early_checkpoints: list[str] | None = None) -> list[Job]:  # fmt: skip
-    """All jobs of one experiment, in an order that respects their dependencies."""
+               final: bool = False, checkpoint: str | None = None, early_checkpoints: list[str] | None = None,
+               tag: str = "") -> list[Job]:  # fmt: skip
+    """All jobs of one experiment, in an order that respects their dependencies; `tag` names its reports (select_runs)."""
     exp = spec["experiments"][exp_id]
     if exp.get("blocked"):
         raise SystemExit(f"{exp_id} is blocked: {exp['blocked']}")
@@ -219,8 +235,9 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
             probes.append(f"{model}_s{seed}={_run_dir(home, model, seed)}")
 
     flag = "--scaling" if exp.get("compare") == "scaling" else "--planning"
+    report = f"{exp_id}_{tag}" if tag else exp_id
     for p, dirs in eval_dirs.items():  # one comparison per protocol: the baseline differs between task sets
-        out = f"{home}/reports/{exp_id}_{p}_{split}.md"
+        out = f"{home}/reports/{report}_{p}_{split}.md"
         cmd = [python, str(ROOT / "analysis" / "compare_runs.py"), "--out", out, flag, *dirs]
         if any(d.startswith("random=") for d in dirs):
             cmd += ["--baseline", "random"]
@@ -228,10 +245,11 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
         jobs.append(Job(f"compare_{exp_id}_{p}", "compare", cmd, after=after, output=out, cwd=ROOT))
     trained = [r for r in exp.get("runs", []) if r.get("train", True)]
     if trained or probes:
-        out = f"{home}/reports/{exp_id}_models.md"
+        out = f"{home}/reports/{report}_models.md"
         cmd = [python, str(ROOT / "analysis" / "compare_runs.py"), "--out", out]
-        if trained:
-            cmd += ["--training", *[f"{r['name']}_s{s}={_run_dir(home, r['name'], s)}" for r in trained for s in seeds]]
+        if trained:  # with the reference runs (trained before), which the trained ones are compared against
+            cmd += ["--training", *[f"{r['name']}_s{s}={_run_dir(home, r.get('model', r['name']), s)}"
+                                    for r in exp.get("runs", []) for s in seeds]]  # fmt: skip
         probed = probes or [f"{r['name']}_s{s}={_run_dir(home, r['name'], s)}" for r in trained for s in seeds]
         cmd += ["--probing", *probed]
         after = [j.name for j in jobs if j.kind in ("train", "probe")]
@@ -337,6 +355,9 @@ def main(argv=None):
     parser.add_argument("--mode", choices=["local", "slurm"], default="local")
     parser.add_argument("--submit", action="store_true", help="slurm: submit instead of only writing the scripts")
     parser.add_argument("--slurm-config", default=None)
+    parser.add_argument("--run", action="append", default=[], metavar="NAME",
+                        help="only this trained run of the experiment (repeatable), with its reference runs and "
+                             "probes; the reports are named after it")  # fmt: skip
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--include-optional", action="store_true")
     parser.add_argument("--expert-checkpoint", help="the expert's .safetensors, for D1 (data collection)")
@@ -360,9 +381,11 @@ def main(argv=None):
             if "probe" in e:
                 e["probe"] = [m for m in e["probe"] if m not in dropped]
 
+    tag = select_runs(spec, args.experiment, args.run) if args.run else ""
+
     home = os.environ.get("HJEPA_HOME")
     jobs = build_jobs(spec, args.experiment, seeds, args.override, home or HOME_VAR, final=args.final,
-                      checkpoint=args.expert_checkpoint, early_checkpoints=args.early_checkpoint)  # fmt: skip
+                      checkpoint=args.expert_checkpoint, early_checkpoints=args.early_checkpoint, tag=tag)  # fmt: skip
     if args.command == "run" and args.experiment == "D1":
         if not args.expert_checkpoint:
             raise SystemExit("D1 needs --expert-checkpoint")

@@ -55,10 +55,6 @@ def spearman(x, y) -> float | None:
     return float(np.corrcoef(rx, ry)[0, 1])
 
 
-def _nan_to_none(x):
-    return None if x is None or (isinstance(x, float) and not math.isfinite(x)) else x
-
-
 def _mean(values):
     values = [v for v in values if v is not None and math.isfinite(v)]
     return float(np.mean(values)) if values else None

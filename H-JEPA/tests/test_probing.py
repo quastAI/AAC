@@ -810,3 +810,252 @@ def test_findings_of_the_change_test_events_and_verdicts():
     none = {'change_plan': {'by_k': {1: {'facing': {'recovered': 0.1}}}}}
     codes = {f.code for f in health.diagnose_probing(none)}
     assert 'PROBE_ROLLOUT_NO_GAIN' in codes
+
+
+# --- additions: view concepts, the player's frame, value details, the faced
+# tile by cause, the context swap, displacement -----------------------------
+
+
+def test_view_concepts_answer_the_games_questions():
+    grass, tree = GRASS, tg.BLOCK_NAMES.index('tree')
+    blocks = torch.full((2, 63), grass)
+    blocks[:, 30] = tree  # left of the player
+    blocks[0, 33] = tg.BLOCK_NAMES.index('water')  # two to the right
+    blocks[1, 22] = tg.BLOCK_NAMES.index('crafting_table')  # above
+    mobs = torch.zeros(2, 63, 4, dtype=torch.bool)
+    mobs[1, 40, tg.MOB_NAMES.index('zombie')] = True  # below
+    mobs[0, 0, tg.MOB_NAMES.index('arrow')] = True  # a corner: not in line
+    v = tg.view_concepts(blocks, mobs)
+    assert v['can_move'][0].tolist() == [0, 1, 1, 1]  # left right up down
+    assert v['can_move'][1].tolist() == [0, 1, 0, 0]  # table up, zombie down
+    near = dict(zip(tg.NEAR_NAMES, v['near'][1].tolist()))
+    assert near['near_table'] == 1 and near['zombie_within_2'] == 1
+    assert v['near'][0, tg.NEAR_NAMES.index('arrow_in_line')] == 0
+    nearest = dict(zip(tg.NEAREST_BLOCKS, v['nearest'][0].tolist()))
+    assert nearest['water'] == 2 and nearest['tree'] == 1
+    assert nearest['iron'] == tg.NOT_IN_VIEW
+    in_view = dict(zip(tg.IN_VIEW_BLOCKS, v['in_view'][0].tolist()))
+    assert in_view['water'] == 1 and in_view['crafting_table'] == 0
+
+
+def test_the_cross_follows_the_players_facing():
+    blocks = torch.full((1, 63), GRASS)
+    tree, table = tg.BLOCK_NAMES.index('tree'), 11
+    blocks[0, 30] = tree  # left of the player
+    blocks[0, 22] = table  # above
+    left = tg.facing_cross(blocks, torch.tensor([1]))[0].tolist()
+    # facing left: ahead is the tree, the right hand points up (the table)
+    assert left[0] == tree and left[4] == table
+    up = tg.facing_cross(blocks, torch.tensor([3]))[0].tolist()
+    assert up[0] == table and up[3] == tree  # facing up: left is the tree
+    assert up[1] == GRASS and up[2] == GRASS  # rows 1 and 0 exist
+    # 4 ahead only exists left or right; 3 ahead exists in every direction
+    assert tg.facing_cross(blocks, torch.tensor([4]))[0, 2] == GRASS
+
+
+def test_column_details_show_what_r2_hides():
+    spec = {'kind': 'reg', 'names': ['count', 'light'], 'group': 'slow'}
+    y = torch.tensor([[0.0, 0.5], [0.0, 0.5], [0.0, 0.5], [1.0, 1.0]])
+    pred = torch.tensor([[0.2, 0.52], [0.1, 0.5], [0.4, 0.6], [0.9, 1.0]])
+    d = ro.score_prediction(spec, pred, y, detail=True)['detail']
+    assert d['count']['exact'] == 1 and d['count']['majority'] == 0.75
+    assert d['count']['mae'] == pytest.approx(0.2)
+    assert d['count']['variance'] == pytest.approx(0.1875)
+    assert d['light']['exact'] == 0.75 and 'majority' not in d['light']
+    flags = {'kind': 'bin', 'names': ['f'], 'group': 'fast'}
+    y = torch.tensor([[1.0], [0.0], [0.0], [0.0], [1.0]] * 2)
+    out = ro.score_prediction(flags, y.clone(), y, detail=True)
+    assert out['detail']['f']['prevalence'] == pytest.approx(0.4)
+    assert 'detail' not in ro.score_prediction(flags, y.clone(), y)
+
+
+def world_clip():
+    """One clip of 6 frames on a 20x20 grass world: a move right, a turn
+    up (a tree blocks), a blocked move, `do` on the tree (it becomes
+    grass), a noop. Latents: the clip, the frame and the faced block."""
+    world = torch.full((20, 20), GRASS)
+    world[10, 12] = tg.BLOCK_NAMES.index('stone')
+    world[9, 11] = tg.BLOCK_NAMES.index('tree')
+    pos = torch.tensor([[10, 10]] + [[10, 11]] * 5)
+    facing = torch.tensor([2, 2, 3, 3, 3, 3])  # right, then up
+    action = torch.tensor([2, 3, 3, 5, 0, -1])
+    r, c = (x.flatten() for x in torch.meshgrid(
+        torch.arange(7) - 3, torch.arange(9) - 4, indexing='ij'))  # fmt: skip
+    views = []
+    for t in range(6):
+        w = world.clone()
+        if t >= 4:
+            w[9, 11] = GRASS  # the tree was collected at t = 3
+        views.append(w[pos[t, 0] + r, pos[t, 1] + c])
+    blocks = torch.stack(views)[None]
+    faced = blocks[0, torch.arange(6), tg.faced_index(facing)]
+    emb = index_latents(1, 6, F.one_hot(faced, 17).float()[None])
+    y = {'blocks': blocks, 'position': pos[None], 'facing_raw': facing[None]}
+    return emb, flat_split(emb, y, action[None])
+
+
+def test_faced_causes_and_the_oracle():
+    _, split = world_clip()
+    cause, nxt, oracle = pr.faced_causes(
+        split, torch.zeros(5, dtype=torch.long), torch.arange(5)
+    )
+    assert cause == [
+        'move', 'turn', 'blocked move', 'faced tile changed', 'unchanged'
+    ]  # fmt: skip
+    stone, tree = (tg.BLOCK_NAMES.index(n) for n in ('stone', 'tree'))
+    assert nxt.tolist() == [stone, tree, tree, GRASS, GRASS]
+    # the previous view shows every next faced tile, except the one an
+    # event changed
+    assert oracle.tolist() == [True, True, True, False, True]
+
+
+def test_faced_by_cause_tells_a_predictor_from_a_copy():
+    emb, split = world_clip()
+    fitted = {'facing_block': {'predict': lambda z: z[:, 2:]}}
+    exact = pr.faced_by_cause(fitted, split, LookupJepa(emb), history=1)
+    assert exact['all']['transitions'] == 5 and exact['all']['pred'] == 1
+    assert exact['move']['copy'] == 0 and exact['blocked move']['copy'] == 1
+    assert exact['faced tile changed']['oracle'] == 0
+    lazy = pr.faced_by_cause(
+        fitted, split, LookupJepa(emb, exact=False), history=1
+    )
+    assert lazy['turn']['pred'] == 0 and lazy['unchanged']['pred'] == 1
+
+
+class PredictingPixelModel(PixelModel):
+    """The tile-mean encoder with a predictor that doubles the latent."""
+
+    def __init__(self):
+        super().__init__()
+        self.jepa.predictor = nn.Identity()
+        self.jepa.action_embed = nn.Identity()
+        self.jepa.predict = lambda z, act: z * 2
+
+
+def test_the_context_swap_shows_whether_the_faced_tile_is_used():
+    n, faced_tile = 12, 32  # facing right: the tile right of the player
+    iron = tg.BLOCK_NAMES.index('iron')
+    stone = tg.BLOCK_NAMES.index('stone')
+    inventory = torch.zeros(n, 12)
+    inventory[:, tg.INVENTORY_NAMES.index('stone_pickaxe')] = 1
+    split = {
+        'swap': {
+            'pixels': torch.zeros(n, 3, 63, 63, dtype=torch.uint8),
+            'frame': torch.arange(n),
+        },
+        'y': {
+            'inventory': inventory,
+            'facing_raw': torch.full((n,), 2),
+            'mobs': torch.zeros(n, 63, 4, dtype=torch.bool),
+        },
+    }
+    sprites = {'blocks': {
+        stone: [torch.zeros(3, 7, 7, dtype=torch.uint8)],
+        iron: [torch.full((3, 7, 7), 255, dtype=torch.uint8)]}}  # fmt: skip
+
+    def inventory_probe(z):  # iron = the faced tile's brightness
+        out = torch.zeros(len(z), 12)
+        out[:, 3] = z[:, faced_tile]
+        return out
+
+    def faced_probe(z):
+        logits = torch.zeros(len(z), 17)
+        logits[:, iron] = (z[:, faced_tile] > 0.5).float()
+        logits[:, stone] = (z[:, faced_tile] <= 0.5).float()
+        return logits
+
+    fitted = {
+        'inventory': {'predict': inventory_probe},
+        'facing_block': {'predict': faced_probe},
+    }
+
+    def to_unit(batch):
+        batch['pixels'] = batch['pixels'].float() / 255
+
+    out = pr.faced_swap(
+        PredictingPixelModel(), split, sprites, fitted, normalize=to_unit
+    )
+    assert out['frames'] == n
+    blocks = out['blocks']
+    assert set(blocks) == {'unedited', 'stone', 'iron'}  # sprites exist
+    assert blocks['iron']['iron'] == pytest.approx(1)  # 2 * 1 - 1
+    assert blocks['stone']['iron'] == 0 and blocks['unedited']['iron'] == 0
+    assert blocks['iron']['reads_pasted'] == 1
+    assert blocks['stone']['reads_pasted'] == 1
+    split['y']['inventory'][:] = 0  # without a pickaxe: no test frames
+    assert (
+        pr.faced_swap(
+            PredictingPixelModel(), split, sprites, fitted, normalize=to_unit
+        )['blocks']
+        == {}
+    )
+
+
+def walk_split(seed, clips=6, T=24):
+    """Random walks whose latents hold the position (and noise)."""
+    g = torch.Generator().manual_seed(seed)
+    step = torch.randint(-1, 2, (clips, T, 2), generator=g)
+    pos = step.cumsum(1) + 50
+    noise = torch.randn(clips, T, 6, generator=g) * 0.01
+    z = torch.cat([pos.float(), noise], -1).flatten(0, 1)
+    return {
+        'clips': clips,
+        'T': T,
+        'frames': {'latent': z, 'cls': z, 'control': torch.randn_like(z)},
+        'clip': torch.arange(clips).repeat_interleave(T),
+        'y': {'position': pos.flatten(0, 1)},
+    }
+
+
+def test_displacement_is_read_from_a_pair_of_latents():
+    out = enc.displacement(
+        walk_split(0),
+        walk_split(1),
+        ks=(1, 4, 64),
+        steps=20,
+        device='cpu',
+        every=1,
+    )
+    assert set(out) == {1, 4}  # k = 64 does not fit into the clips
+    ridge = out[4]['latent']['ridge']
+    assert ridge['r2_row'] > 0.99 and ridge['exact'] > 0.99
+    assert out[4]['control']['ridge']['exact'] < 0.5  # no position in it
+    assert 0 <= out[1]['no_shift'] <= 1 and out[4]['pairs'] == 6 * 20
+
+
+def test_the_cross_reader_scores_each_slot_on_its_tiles():
+    g = torch.Generator().manual_seed(0)
+    n = 1200
+    cross = torch.randint(2, 6, (n, 6), generator=g)
+    cross[:, 2] = -1  # a slot without labels (the -1 path)
+    z = F.one_hot(cross[:, 0], 17).float() + 0.01 * torch.randn(n, 17)
+
+    def split(a, b):
+        return {
+            'frames': {f: z[a:b] for f in ('latent', 'cls', 'control')},
+            'y': {'cross': cross[a:b]},
+            'episode': torch.arange(b - a) // 10,
+        }
+
+    out = enc.cross_probes(
+        split(0, 800), split(800, n), steps=300, device='cpu', boot=0,
+        min_n=5,
+    )  # fmt: skip
+    slots = out['latent']['linear']
+    assert 'ahead3' not in slots  # no tile with a label
+    # a linear probe converges slowly: 300 steps reach about 0.95
+    assert slots['ahead1']['accuracy'] > 0.9
+    assert slots['ahead1']['tiles'] == 400
+    assert slots['left1']['accuracy'] < 0.5  # nothing about it in z
+    assert 0 < slots['left1']['majority'] < 0.5
+
+
+def test_view_concepts_stay_out_of_the_rollout_findings():
+    view = {'recovered': 0.9, 'pred_same': 0.1, 'copy_same': 0.9}
+    change = {'by_k': {1: {'facing': {'recovered': 0.9}, 'in_view': view}}}
+    groups = {'facing': {'group': 'fast'}, 'in_view': {'group': 'view'}}
+    state = {'ridge': {'latent': {'targets': groups}}}
+    summary = {'change_plan': change, 'state': state}
+    found = {f.code: f for f in health.diagnose_probing(summary)}
+    assert 'in_view' not in found['PROBE_ROLLOUT_HORIZON'].message
+    assert 'PROBE_INVENTS_CHANGES' not in found

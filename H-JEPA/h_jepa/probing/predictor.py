@@ -298,6 +298,138 @@ def event_probes(fitted: dict, val: dict, jepa, decoder, *, history: int, device
 
 
 # --------------------------------------------------------------------------
+# the faced tile
+
+
+FACED_CAUSES = ("move", "turn", "blocked move", "faced tile changed", "unchanged")
+
+
+def faced_causes(val: dict, b: torch.Tensor, t: torch.Tensor) -> tuple[list, torch.Tensor, torch.Tensor]:
+    """For the transitions t -> t + 1 of clips b: what changed the faced tile (FACED_CAUSES), the true faced block at
+    t + 1, and the oracle: the next faced block read from the true map at t (the tile it will be, if the previous view
+    shows it), right or wrong. The oracle is what a latent holding the whole previous view could know; it fails where an
+    event changes the tile (mined stone turns into path) or the tile enters from outside the view."""
+    pos, facing = view(val, val["y"]["position"]), view(val, val["y"]["facing_raw"])
+    blocks, action = view(val, val["y"]["blocks"]), view(val, val["action"])
+    now = blocks[b, t, tg.faced_index(facing[b, t])]
+    nxt = blocks[b, t + 1, tg.faced_index(facing[b, t + 1])]
+    moved = (pos[b, t + 1] != pos[b, t]).any(-1)
+    turned = facing[b, t + 1] != facing[b, t]
+    a = action[b, t]
+    is_move = (a >= tg.ACTION_NAMES.index("left")) & (a <= tg.ACTION_NAMES.index("down"))
+    cause = [
+        "move" if m else "turn" if tr else "blocked move" if mv else "faced tile changed" if n != o else "unchanged"
+        for m, tr, mv, n, o in zip(moved.tolist(), turned.tolist(), is_move.tolist(), nxt.tolist(), now.tolist())
+    ]
+    step = torch.tensor([tg.FACING_STEP[k] for k in (1, 2, 3, 4)])[facing[b, t + 1].clamp(1, 4) - 1]
+    world = pos[b, t + 1] + step  # the next faced tile in world coordinates (view row = position[0])
+    row = world[:, 0] - pos[b, t, 0] + tg.PLAYER_TILE[0]
+    col = world[:, 1] - pos[b, t, 1] + tg.PLAYER_TILE[1]
+    inside = (row >= 0) & (row < tg.VIEW_ROWS) & (col >= 0) & (col < tg.VIEW_COLS)
+    index = row.clamp(0, tg.VIEW_ROWS - 1) * tg.VIEW_COLS + col.clamp(0, tg.VIEW_COLS - 1)
+    oracle = inside & (blocks[b, t, index] == nxt)
+    return cause, nxt, oracle
+
+
+def faced_by_cause(fitted: dict, val: dict, jepa, *, history: int, device="cpu") -> dict:
+    """One step ahead, the faced block read by the latent's ridge probe from the predicted latent, the real next latent
+    and the copied last latent, split by what changed it (faced_causes), next to the oracle that reads it from the true
+    previous view. Where the real next latent is right and the prediction is not, the predictor misses what the view
+    showed; where the oracle fails too, the tile could not be known from the view."""
+    if "facing_block" not in fitted:
+        return {}
+    emb, act = view(val, val["frames"]["latent"]), view(val, val["act"])
+    action = view(val, val["action"])
+    b, t = torch.meshgrid(torch.arange(val["clips"]), torch.arange(history - 1, val["T"] - 1), indexing="ij")
+    b, t = b.flatten(), t.flatten()
+    keep = action[b, t] >= 0
+    b, t = b[keep], t[keep]
+    if not len(b):
+        return {}
+    cause, nxt, oracle = faced_causes(val, b, t)
+    probe = fitted["facing_block"]["predict"]
+    pred = one_step(jepa, emb, act, b, t, history, device)
+    right = {src: probe(z).argmax(1) == nxt for src, z in (("pred", pred), ("enc", emb[b, t + 1]), ("copy", emb[b, t]))}
+    cause = np.array(cause)
+    out = {"transitions": len(b)}
+    for name in ("all",) + FACED_CAUSES:
+        mask = torch.ones(len(b), dtype=torch.bool) if name == "all" else torch.from_numpy(cause == name)
+        if not mask.any():
+            continue
+        out[name] = {
+            "transitions": int(mask.sum()),
+            "share": float(mask.float().mean()),
+            "oracle": float(oracle[mask].float().mean()),
+            **{src: float(r[mask].float().mean()) for src, r in right.items()},
+        }
+    return out
+
+
+SWAP_FACED = ("stone", "iron", "coal", "tree", "path", "grass", "water", "crafting_table")
+SWAP_COLUMNS = ("wood", "stone", "coal", "iron")
+
+
+@torch.no_grad()
+def faced_swap(
+    model, val: dict, sprites: dict, fitted: dict, *, normalize, device="cpu", seed: int = 0, min_frames: int = 10
+) -> dict:
+    """Does the predictor use the faced tile? Bright held-out frames whose player holds a stone pickaxe (stone, coal and
+    iron can be mined): paste each block type at the faced tile, encode the edited frame, predict one step with `do`
+    (history 1, as the planner rolls out) and read the change of the latent's inventory probe from the edited frame to
+    the prediction. If the change does not depend on the pasted block, the predictor ignores the faced tile. Also
+    the share of edited frames whose latent reads the pasted block at the faced tile (does the encoder see the
+    paste?)."""
+    from .collect import paste
+    from .encoder import encode_pixels
+
+    swap = val.get("swap") or {}
+    if not swap or not len(swap.get("frame", [])) or not {"inventory", "facing_block"} <= set(fitted):
+        return {}
+    frames, pixels = swap["frame"], swap["pixels"]
+    tile = tg.faced_index(val["y"]["facing_raw"][frames])
+    rows = torch.arange(len(frames))
+    holds = val["y"]["inventory"][frames, tg.INVENTORY_NAMES.index("stone_pickaxe")] >= 1
+    keep = holds & ~val["y"]["mobs"][frames][rows, tile].any(-1)
+    out = {"frames": int(keep.sum()), "blocks": {}}
+    if keep.sum() < min_frames:
+        return out
+    pixels, tile = pixels[keep], tile[keep]
+    jepa = model.get_level(1)
+    do = torch.nn.functional.one_hot(torch.tensor(tg.DO), len(tg.ACTION_NAMES)).float().to(device)
+    inventory, faced = fitted["inventory"]["predict"], fitted["facing_block"]["predict"]
+    columns = {n: tg.INVENTORY_NAMES.index(n) for n in SWAP_COLUMNS}
+    g = torch.Generator().manual_seed(seed)
+    libs = sprites.get("blocks", {})
+    for name in ("unedited",) + SWAP_FACED:
+        c = None if name == "unedited" else tg.BLOCK_NAMES.index(name)
+        if c is not None and not libs.get(c):
+            continue
+        edited = (
+            pixels
+            if c is None
+            else torch.stack(
+                [
+                    paste(pixels[j], tile[j], libs[c][int(torch.randint(len(libs[c]), (1,), generator=g))])
+                    for j in range(len(pixels))
+                ]
+            )
+        )
+        lat, _ = encode_pixels(model, edited, normalize, device)
+        preds = []
+        with health.eval_mode(jepa.predictor):
+            for a in range(0, len(lat), 512):
+                z = lat[a : a + 512].to(device)[:, None]
+                act = jepa.action_embed(do[None, None].expand(len(z), 1, -1))
+                preds.append(jepa.predict(z, act)[:, -1].float().cpu())
+        delta = inventory(torch.cat(preds)) - inventory(lat)
+        entry = {n: float(delta[:, j].mean()) for n, j in columns.items()}
+        if c is not None:
+            entry["reads_pasted"] = float((faced(lat).argmax(1) == c).float().mean())
+        out["blocks"][name] = entry
+    return out
+
+
+# --------------------------------------------------------------------------
 # mobs
 
 

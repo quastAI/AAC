@@ -51,16 +51,20 @@ def render(summary: dict, findings) -> str:
     out += _facts(summary)
     out += ["## A. Encoder", ""]
     out += _state(summary)
+    out += _view_concepts(summary)
     out += _tiles(summary)
+    out += _cross(summary)
     out += _mobs(summary)
     out += _strip(summary)
     out += _causes(summary)
     out += _swaps(summary)
     out += _distance(summary)
+    out += _displacement(summary)
     out += ["## B. Predictor", ""]
     out += _loss(summary)
     out += _change(summary)
     out += _events(summary)
+    out += _faced(summary)
     out += _mob_dynamics(summary)
     out += _monotonicity(summary)
     out += _idm(summary)
@@ -175,8 +179,10 @@ def _state(summary: dict) -> list[str]:
             ]
         )
     out += _table(["group", "latent", "CLS", "untrained latent", "latent MLP", "untrained MLP"], rows) + [""]
+    state = [n for n, t in ridge["latent"]["targets"].items() if t["group"] in tg.GROUPS]
     rows = []
-    for n, t in ridge["latent"]["targets"].items():
+    for n in state:
+        t = ridge["latent"]["targets"][n]
         rows.append(
             [
                 n,
@@ -196,25 +202,193 @@ def _state(summary: dict) -> list[str]:
     ) + [""]
     if st.get("lambda_at_edge"):
         out += [f"Ridge strength at the edge of the grid for: {', '.join(st['lambda_at_edge'])}.", ""]
-    rows = []
-    for n, t in ridge["latent"]["targets"].items():
-        for col, s in t["columns"].items():
-            rows.append(
-                [
-                    f"{n} {col}",
-                    s,
-                    ridge["cls"]["targets"][n]["columns"].get(col),
-                    ridge["control"]["targets"][n]["columns"].get(col),
-                    (mlp.get("latent") or {}).get("targets", {}).get(n, {}).get("columns", {}).get(col),
-                ]
-            )
-    out += ["Per column:", ""] + _table(["column", "latent", "CLS", "untrained", "latent MLP"], rows) + [""]
+    out += [
+        "Per column. Next to the score, what it hides: for counts and levels the exact accuracy (the rounded readout "
+        "is right; within 0.05 for daylight) of the latent and the CLS token, the latent's mean absolute error, the "
+        "target's variance (R^2 divides by it: a target that rarely changes gets a low R^2 for a small error) and "
+        "the majority baseline (the exact accuracy of always guessing the most frequent value); for flags the "
+        "share of positives.",
+        "",
+    ]
+    out += _columns_table(ridge, mlp, state) + [""]
     levels = summary.get("upper_levels") or {}
     if levels:
         rows = [
             [n, *[e["groups"].get(g) for g in tg.GROUPS]] for n, e in sorted(levels.items(), key=lambda kv: int(kv[0]))
         ]
         out += ["Every level on the frames the levels share (ridge):", ""] + _table(["level", *tg.GROUPS], rows) + [""]
+    return out
+
+
+def _columns_table(ridge: dict, mlp: dict, names: list[str]) -> list[str]:
+    rows = []
+    for n in names:
+        t = ridge["latent"]["targets"][n]
+        for col, score in t["columns"].items():
+            d, dc = (t.get("detail") or {}).get(col, {}), (ridge["cls"]["targets"][n].get("detail") or {}).get(col, {})
+            rows.append(
+                [
+                    f"{n} {col}",
+                    score,
+                    ridge["cls"]["targets"][n]["columns"].get(col),
+                    ridge["control"]["targets"][n]["columns"].get(col),
+                    (mlp.get("latent") or {}).get("targets", {}).get(n, {}).get("columns", {}).get(col),
+                    d.get("exact"),
+                    dc.get("exact"),
+                    d.get("mae"),
+                    d.get("variance"),
+                    d.get("majority", d.get("prevalence")),
+                ]
+            )
+    return _table(
+        [
+            "column",
+            "latent",
+            "CLS",
+            "untrained",
+            "latent MLP",
+            "exact latent",
+            "exact CLS",
+            "MAE latent",
+            "variance",
+            "majority / positives",
+        ],
+        rows,
+    )
+
+
+def _view_concepts(summary: dict) -> list[str]:
+    st = summary.get("state") or {}
+    ridge, mlp = st.get("ridge") or {}, st.get("mlp") or {}
+    names = [n for n, t in (ridge.get("latent") or {}).get("targets", {}).items() if t["group"] == "view"]
+    if not names:
+        return []
+    out = [
+        "### View concepts",
+        "",
+        "What the game asks of the 7x9 view, from the block and mob maps (the player's own tile left out). in_view: a "
+        "block type somewhere in view; nearest: the distance in tiles (Chebyshev, 1 to 4; 5 = not in view) of the "
+        "nearest tile of a type; can_move: a move would succeed (grass, sand, path or lava, no mob); near: a table or "
+        "furnace among the 8 surrounding tiles (what crafting needs), lava among them, a zombie within 2 tiles, an "
+        "arrow in the player's row or column. Flags: 2*AUROC-1; distances: R^2.",
+        "",
+    ]
+    return out + _columns_table(ridge, mlp, names) + [""]
+
+
+def _cross(summary: dict) -> list[str]:
+    cr = summary.get("cross") or {}
+    if not cr:
+        return []
+    out = [
+        "### The tiles around the player, in the player's frame",
+        "",
+        "A dedicated reader for 6 tiles: 1, 2 and 3 ahead (ahead1 is the faced tile), the left, right and behind "
+        "neighbour, read from the CLS token, the latent and the untrained latent. Accuracy (majority baseline in "
+        "brackets) and balanced accuracy (mean recall over the block types with enough samples).",
+        "",
+    ]
+    slots = list((cr.get("latent", {}).get("mlp") or {}).keys())
+    rows = []
+    for feature, results in cr.items():
+        for probe in ("linear", "mlp", "mlp balanced"):
+            r = results.get(probe) or {}
+            rows.append(
+                [
+                    feature,
+                    probe,
+                    *[
+                        f"{_f(r[s]['accuracy'])} ({_f(r[s]['majority'])}) / {_f(r[s]['balanced'])}" if s in r else "-"
+                        for s in slots
+                    ],
+                ]
+            )
+    out += _table(["feature", "probe", *slots], rows) + [""]
+    min_n = (summary.get("settings") or {}).get("min_samples", 20)
+    for slot in [s for s in ("ahead1", "ahead2", "ahead3") if s in slots]:
+        rows = []
+        for c, name in enumerate(tg.BLOCK_NAMES):
+            cells, seen = [], False
+            for feature in cr:
+                r = (cr[feature].get("mlp balanced") or {}).get(slot)
+                ok = r is not None and r["n"][c] >= min_n
+                seen |= ok
+                cells.append(r["recall"][c] if ok else None)
+            if seen:
+                n = cr["latent"]["mlp balanced"][slot]["n"][c]
+                iv = cr["latent"]["mlp balanced"][slot].get("recall_interval")
+                rows.append([name, n, *cells, _interval(iv, c)])
+        out += [f"Recall per block type, {slot} (balanced MLP):", ""]
+        out += _table(["block", "tiles", *[f for f in cr], "latent 95%"], rows) + [""]
+    return out
+
+
+def _displacement(summary: dict) -> list[str]:
+    d = summary.get("displacement") or {}
+    if not d:
+        return []
+    out = [
+        "### How far the agent moved between two latents",
+        "",
+        "The row and column shift between frames k steps apart, read from the pair of latents (ridge and MLP). R^2 per "
+        "component and the exact accuracy of both (rounded); the baseline is the share of pairs without a shift. "
+        "The views overlap for short shifts; once they do not, only a world position would tell, which an "
+        "egocentric frame does not show.",
+        "",
+    ]
+    rows = []
+    for k, e in sorted(d.items(), key=lambda kv: int(kv[0])):
+        for feature in ("latent", "cls", "control"):
+            if feature not in e:
+                continue
+            for probe in ("ridge", "mlp"):
+                r = e[feature][probe]
+                rows.append(
+                    [k, feature, probe, r["r2_row"], r["r2_col"], r["exact"], e["no_shift"], e["mean_abs_shift"]]
+                )
+    return (
+        out
+        + _table(
+            ["k", "feature", "probe", "R^2 row", "R^2 column", "exact", "no shift (baseline)", "mean |shift|"], rows
+        )
+        + [""]
+    )
+
+
+def _faced(summary: dict) -> list[str]:
+    fa = summary.get("faced") or {}
+    out = []
+    by = fa.get("by_cause") or {}
+    if by:
+        out += [
+            "### The faced tile one step ahead, by what changed it",
+            "",
+            "The faced block read by the latent's probe from the predicted latent, the real next latent and the copied "
+            "last latent (accuracy), by cause: a move, a turn, a blocked move, the faced tile changed in place "
+            "(collecting, placing), nothing changed. Oracle: the next faced block read from the true previous view "
+            "(fails where an event changes the tile or it enters from outside the view).",
+            "",
+        ]
+        rows = [
+            [n, e["transitions"], e["share"], e["pred"], e["enc"], e["copy"], e["oracle"]]
+            for n, e in by.items()
+            if isinstance(e, dict)
+        ]
+        out += _table(["cause", "transitions", "share", "predicted", "real next", "copy", "oracle"], rows) + [""]
+    sw = fa.get("swap") or {}
+    if sw.get("blocks"):
+        out += [
+            "### Does the predictor use the faced tile?",
+            "",
+            f"{sw['frames']} bright held-out frames whose player holds a stone pickaxe: a block pasted at the faced "
+            "tile, then one predicted step with `do` (history 1). Cells: the predicted change of the latent's "
+            "inventory probe. If a row does not depend on the pasted block, the predictor ignores the faced tile. "
+            "Reads: the share of edited frames whose latent reads the pasted block at the faced tile.",
+            "",
+        ]
+        cols = ["wood", "stone", "coal", "iron"]
+        rows = [[n, *[e.get(c) for c in cols], e.get("reads_pasted")] for n, e in sw["blocks"].items()]
+        out += _table(["pasted", *cols, "reads"], rows) + [""]
     return out
 
 

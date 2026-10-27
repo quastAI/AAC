@@ -112,8 +112,34 @@ def auroc(y, score, weight=None, min_n: int = 5) -> float | None:
     return None if total <= 0 else float((pos * (below + 0.5 * neg)).sum() / total)
 
 
-def score_prediction(spec: dict, pred: torch.Tensor, y: torch.Tensor) -> dict:
-    """Column scores and the target score of a prediction (values, flag scores, or class scores) against y."""
+TOLERANCE = {"light": 0.05}  # a level counts as exact within this; counts within 0.5 (the rounded value is right)
+
+
+def column_details(spec: dict, pred: torch.Tensor, y: torch.Tensor) -> dict:
+    """What an R^2 or AUROC alone hides, per column: for counts and levels the exact accuracy (within TOLERANCE), the
+    mean absolute error, the variance of the target (R^2 divides by it) and the majority baseline (the share of the
+    most frequent value: the exact accuracy of always guessing it); for flags the share of positives."""
+    out = {}
+    for j, name in enumerate(spec["names"]):
+        t, p = y[:, j].float(), pred[:, j].float()
+        if spec["kind"] == "bin":
+            out[name] = {"prevalence": float((t > 0.5).float().mean())}
+            continue
+        tol = TOLERANCE.get(name, 0.5)
+        entry = {
+            "exact": float(((p - t).abs() < tol).float().mean()),
+            "mae": float((p - t).abs().mean()),
+            "variance": float(t.var(unbiased=False)),
+        }
+        if name not in TOLERANCE:
+            entry["majority"] = float(torch.unique(t.round(), return_counts=True)[1].max() / max(len(t), 1))
+        out[name] = entry
+    return out
+
+
+def score_prediction(spec: dict, pred: torch.Tensor, y: torch.Tensor, detail: bool = False) -> dict:
+    """Column scores and the target score of a prediction (values, flag scores, or class scores) against y; `detail`
+    adds column_details (not for classes, which carry their accuracy and majority already)."""
     kind = spec["kind"]
     if kind == "cls":
         k = spec["classes"]
@@ -136,11 +162,14 @@ def score_prediction(spec: dict, pred: torch.Tensor, y: torch.Tensor) -> dict:
             a = auroc(y[:, j].numpy(), pred[:, j].numpy())
             columns.append(None if a is None else 2 * a - 1)
     valid = [c for c in columns if c is not None]
-    return {
+    out = {
         "columns": dict(zip(spec["names"], columns)),
         "score": float(np.mean(valid)) if valid else None,
         "group": spec["group"],
     }
+    if detail:
+        out["detail"] = column_details(spec, pred, y)
+    return out
 
 
 def group_means(scored: dict, targets: dict) -> dict:
@@ -152,14 +181,14 @@ def group_means(scored: dict, targets: dict) -> dict:
     return out
 
 
-def score_predictions(preds: dict, y: dict, targets: dict) -> dict:
+def score_predictions(preds: dict, y: dict, targets: dict, detail: bool = False) -> dict:
     """Per target and group: {"targets": {name: result}, "groups": {group: mean score}}."""
-    scored = {name: score_prediction(targets[name], p, y[name]) for name, p in preds.items()}
+    scored = {name: score_prediction(targets[name], p, y[name], detail) for name, p in preds.items()}
     return {"targets": scored, "groups": group_means(scored, targets)}
 
 
-def score_targets(fitted: dict, z, y: dict, targets: dict) -> dict:
-    return score_predictions({name: f["predict"](z) for name, f in fitted.items()}, y, targets)
+def score_targets(fitted: dict, z, y: dict, targets: dict, detail: bool = False) -> dict:
+    return score_predictions({name: f["predict"](z) for name, f in fitted.items()}, y, targets, detail)
 
 
 def class_recalls(y: torch.Tensor, pred: torch.Tensor, classes: int, weight=None) -> tuple[np.ndarray, np.ndarray]:

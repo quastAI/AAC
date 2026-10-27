@@ -53,7 +53,7 @@ def state_probes(train: dict, val: dict, *, steps: int, device: str, boot: int, 
     for feature in ("latent", "cls", "control"):
         fitted = ro.fit_targets(train["frames"][feature], ytr, targets, seed=seed, groups=train["clip"])
         preds = {n: f["predict"](val["frames"][feature]) for n, f in fitted.items()}
-        scored = ro.score_predictions(preds, yva, targets)
+        scored = ro.score_predictions(preds, yva, targets, detail=True)
         for n, f in fitted.items():
             scored["targets"][n].update(**{"lambda": f["lambda"], "at_edge": f["at_edge"]})
         ridge[feature] = scored
@@ -71,7 +71,7 @@ def state_probes(train: dict, val: dict, *, steps: int, device: str, boot: int, 
         )
         out = predict(val["frames"][feature])
         preds = {n: (out[n][:, 0] if s["kind"] == "cls" else out[n]) for n, s in targets.items()}
-        mlp[feature] = ro.score_predictions(preds, yva, targets)
+        mlp[feature] = ro.score_predictions(preds, yva, targets, detail=True)
     intervals = {}
     for n, spec in targets.items():
 
@@ -193,6 +193,118 @@ def _recall_interval(pred: torch.Tensor, split: dict, boot: int, seed: int):
 
     interval = ro.episode_bootstrap(stat, split["episode"], boot, seed)
     return None if interval is None else [interval[0].tolist(), interval[1].tolist()]
+
+
+# --------------------------------------------------------------------------
+# the tiles around the player, in the player's frame
+
+
+CROSS_HEADS = [ro.Head("cross", "cls", len(tg.CROSS_NAMES), tg.NUM_BLOCKS)]
+CROSS_FEATURES = {"cls": "CLS before the projector", "latent": "latent", "control": "untrained latent"}
+
+
+def cross_probes(train: dict, val: dict, *, steps: int, device: str, boot: int, min_n: int, seed: int = 0) -> dict:
+    """The block type of the tiles around the player in the player's frame (tg.CROSS_NAMES: up to 3 ahead, left, right,
+    behind; ahead1 is the faced tile), read from the CLS token, the latent and the untrained latent by every probe. A
+    dedicated reader: 6 tile slots instead of the whole 7x9 map, which one decoder reads poorly. Per slot: accuracy,
+    the majority baseline, balanced accuracy and per-block recall (with intervals for the balanced MLP)."""
+    ytr, yva = train["y"]["cross"].long(), val["y"]["cross"].long()
+    out = {}
+    for feature in CROSS_FEATURES:
+        out[feature] = {}
+        for kind, balanced in PROBES:
+            predict = ro.train_heads(
+                kind,
+                train["frames"][feature],
+                {"cross": ytr},
+                CROSS_HEADS,
+                steps=steps,
+                balanced=balanced,
+                device=device,
+                seed=seed,
+            )
+            pred = predict(val["frames"][feature])["cross"].argmax(-1)
+            slots = {}
+            for j, name in enumerate(tg.CROSS_NAMES):
+                ok = yva[:, j] >= 0
+                y, p = yva[ok, j], pred[ok, j]
+                if not len(y):
+                    continue
+                n, recall = ro.class_recalls(y, p, tg.NUM_BLOCKS)
+                entry = {
+                    "tiles": len(y),
+                    "accuracy": float((y == p).float().mean()),
+                    "majority": float(torch.bincount(y, minlength=tg.NUM_BLOCKS).max() / len(y)),
+                    "balanced": ro.balanced_accuracy(n, recall, min_n),
+                    "n": n.tolist(),
+                    "recall": recall.tolist(),
+                }
+                if kind == "mlp" and balanced:
+
+                    def stat(idx, y=y, p=p):
+                        return ro.class_recalls(y[idx], p[idx], tg.NUM_BLOCKS)[1]
+
+                    interval = ro.episode_bootstrap(stat, val["episode"][ok].numpy(), boot, seed)
+                    entry["recall_interval"] = (
+                        None if interval is None else [interval[0].tolist(), interval[1].tolist()]
+                    )
+                slots[name] = entry
+            out[feature][probe_name(kind, balanced)] = slots
+    return out
+
+
+# --------------------------------------------------------------------------
+# how far the agent moved between two latents
+
+
+DISPLACEMENT_KS = (1, 2, 4, 8, 16)
+
+
+def frame_pairs(split: dict, k: int, every: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Flat frame indices of the pairs (t, t + k) of every clip, t every `every` frames, and the clip of each pair."""
+    T, clips = split["T"], split["clips"]
+    t = torch.arange(0, T - k, every)
+    clip = torch.arange(clips).repeat_interleave(len(t))
+    first = clip * T + t.repeat(clips)
+    return first, first + k, clip
+
+
+def _shift_scores(true: torch.Tensor, pred: torch.Tensor) -> dict:
+    r2 = ro.r2_columns(true, pred)
+    return {"r2_row": r2[0], "r2_col": r2[1], "exact": float((pred.round() == true).all(-1).float().mean())}
+
+
+def displacement(
+    train: dict, val: dict, *, ks=DISPLACEMENT_KS, steps: int, device: str, every: int = 4, seed: int = 0
+) -> dict:
+    """How far the agent moved between two frames k steps apart (the row and column shift of the position column), read
+    from the pair (z_t, z_t+k) of the latent, the CLS token and the untrained latent, by ridge and MLP: R^2 per
+    component and the exact accuracy of both (rounded). The baseline is the share of pairs without a shift. Short
+    shifts can be read from the content the two views share; once the views stop overlapping, only a world position
+    would do, which an egocentric frame does not show."""
+    out = {}
+    for k in ks:
+        if k >= min(train["T"], val["T"]):
+            continue
+        a_tr, b_tr, c_tr = frame_pairs(train, k, every)
+        a_va, b_va, _ = frame_pairs(val, k, every)
+        dtr = (train["y"]["position"][b_tr] - train["y"]["position"][a_tr]).float()
+        dva = (val["y"]["position"][b_va] - val["y"]["position"][a_va]).float()
+        entry = {
+            "pairs": len(a_va),
+            "no_shift": float((dva == 0).all(-1).float().mean()),
+            "mean_abs_shift": float(dva.abs().sum(-1).mean()),
+        }
+        for feature in CROSS_FEATURES:
+            ftr = torch.cat([train["frames"][feature][a_tr], train["frames"][feature][b_tr]], 1)
+            fva = torch.cat([val["frames"][feature][a_va], val["frames"][feature][b_va]], 1)
+            predict, _, _ = ro.fit_with_validation(ftr, dtr, seed, c_tr)
+            mlp = ro.train_heads(
+                "mlp", ftr, {"shift": dtr}, [ro.Head("shift", "reg", 2)], steps=steps, device=device, seed=seed
+            )
+            entry[feature] = {"ridge": _shift_scores(dva, predict(fva)), "mlp": _shift_scores(dva, mlp(fva)["shift"])}
+        out[k] = entry
+    return out
 
 
 # --------------------------------------------------------------------------

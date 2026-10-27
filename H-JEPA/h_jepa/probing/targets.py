@@ -98,6 +98,44 @@ TARGETS = {
     "achievements": dict(group="slow", kind="bin", names=ACHIEVEMENT_NAMES),
 }
 GROUPS = ("fast", "medium", "slow")
+
+# View concepts (group "view", not part of the fast/medium/slow means): the questions the game asks of the 7x9 view,
+# computed from the block and mob maps. Rings are Chebyshev distances from the player (1 to 4), 5 = not in view.
+# Walkable as in the game: a move succeeds into grass, sand, path and lava (lava kills), not into the solid blocks
+# (water, stone, tree, the ores, table, furnace, plants), a mob or the edge; crafting needs a table or furnace among
+# the 8 surrounding tiles (CLOSE_BLOCKS of Craftax).
+IN_VIEW_BLOCKS = [
+    "water",
+    "tree",
+    "stone",
+    "path",
+    "sand",
+    "coal",
+    "iron",
+    "diamond",
+    "crafting_table",
+    "furnace",
+    "lava",
+    "plant",
+    "ripe_plant",
+]
+NEAREST_BLOCKS = ["water", "tree", "stone", "coal", "iron", "diamond", "crafting_table", "furnace", "lava"]
+WALKABLE_BLOCKS = ["grass", "sand", "path", "lava"]
+MOVE_NAMES = ["left", "right", "up", "down"]
+MOVE_STEPS = [(0, -1), (0, 1), (-1, 0), (1, 0)]  # (row, column) of the neighbour a move would enter
+NEAR_NAMES = ["near_table", "near_furnace", "lava_adjacent", "zombie_within_2", "arrow_in_line"]
+NOT_IN_VIEW = 5.0
+TARGETS.update(
+    {
+        "in_view": dict(group="view", kind="bin", names=IN_VIEW_BLOCKS),
+        "nearest": dict(group="view", kind="reg", names=NEAREST_BLOCKS),
+        "can_move": dict(group="view", kind="bin", names=MOVE_NAMES),
+        "near": dict(group="view", kind="bin", names=NEAR_NAMES),
+    }
+)
+# The tiles around the player in the player's frame (facing-relative): up to 3 ahead, and the left, right and behind
+# neighbour. The faced tile is ahead1. A tile outside the view has no label (-1).
+CROSS_NAMES = ["ahead1", "ahead2", "ahead3", "left1", "right1", "behind1"]
 COLUMNS = ("pixels", "action", "achievements", "inventory", "vitals", "facing", "daylight", "position", "state")
 OPTIONAL_COLUMNS = ("source",)  # 0 = the final expert: tasks come from it
 
@@ -162,9 +200,73 @@ def tile_strata(blocks: torch.Tensor, mobs: torch.Tensor) -> torch.Tensor:
     return stratum
 
 
+def _tile_grid() -> tuple[torch.Tensor, torch.Tensor]:
+    """Row and column offsets from the player of the 63 view tiles."""
+    r = torch.arange(VIEW_ROWS)[:, None].expand(VIEW_ROWS, VIEW_COLS).flatten() - PLAYER_TILE[0]
+    c = torch.arange(VIEW_COLS)[None, :].expand(VIEW_ROWS, VIEW_COLS).flatten() - PLAYER_TILE[1]
+    return r, c
+
+
+def view_concepts(blocks: torch.Tensor, mobs: torch.Tensor) -> dict:
+    """The view-concept targets of block maps (..., 63) and mob maps (..., 63, 4): `in_view` (13 flags), `nearest`
+    (ring of the nearest tile of 9 types, 5 if none), `can_move` (4 flags), `near` (5 flags). The player's own tile is
+    left out."""
+    ring = tile_rings().to(blocks.device)
+    r, c = (t.to(blocks.device) for t in _tile_grid())
+    around = ring >= 1
+    ids = {n: BLOCK_NAMES.index(n) for n in BLOCK_NAMES}
+    in_view = torch.stack([((blocks == ids[n]) & around).any(-1) for n in IN_VIEW_BLOCKS], -1).float()
+    nearest = torch.stack(
+        [
+            torch.where((blocks == ids[n]) & around, ring, torch.full_like(ring, int(NOT_IN_VIEW))).amin(-1)
+            for n in NEAREST_BLOCKS
+        ],
+        -1,
+    ).float()
+    any_mob = mobs.any(-1)
+    walkable = torch.zeros_like(blocks, dtype=torch.bool)
+    for n in WALKABLE_BLOCKS:
+        walkable |= blocks == ids[n]
+    free = walkable & ~any_mob
+    moves = []
+    for dr, dc in MOVE_STEPS:
+        at = ((r == dr) & (c == dc)).nonzero()[0, 0]
+        moves.append(free[..., at])
+    can_move = torch.stack(moves, -1).float()
+    close = ring == 1
+    near = torch.stack(
+        [
+            ((blocks == ids["crafting_table"]) & close).any(-1),
+            ((blocks == ids["furnace"]) & close).any(-1),
+            ((blocks == ids["lava"]) & close).any(-1),
+            (mobs[..., MOB_NAMES.index("zombie")] & (ring <= 2) & around).any(-1),
+            (mobs[..., MOB_NAMES.index("arrow")] & ((r == 0) | (c == 0)) & around).any(-1),
+        ],
+        -1,
+    ).float()
+    return {"in_view": in_view, "nearest": nearest, "can_move": can_move, "near": near}
+
+
+def facing_cross(blocks: torch.Tensor, facing: torch.Tensor) -> torch.Tensor:
+    """Block ids (..., 6) of the CROSS_NAMES tiles in the player's frame, from block maps (..., 63) and `facing` (...;
+    1 to 4); -1 where a tile lies outside the 7x9 view (none of the 6 does: 3 rows and 4 columns lie on each side)."""
+    d = facing.long().clamp(1, 4) - 1
+    step = torch.tensor([FACING_STEP[k] for k in (1, 2, 3, 4)], device=blocks.device)[d]  # (..., 2) = (dr, dc)
+    dr, dc = step[..., 0], step[..., 1]
+    offsets = [(k * dr, k * dc) for k in (1, 2, 3)] + [(-dc, dr), (dc, -dr), (-dr, -dc)]  # left, right, behind
+    out = []
+    for orow, ocol in offsets:
+        row, col = PLAYER_TILE[0] + orow, PLAYER_TILE[1] + ocol
+        ok = (row >= 0) & (row < VIEW_ROWS) & (col >= 0) & (col < VIEW_COLS)
+        index = (row.clamp(0, VIEW_ROWS - 1) * VIEW_COLS + col.clamp(0, VIEW_COLS - 1))[..., None]
+        out.append(torch.where(ok, blocks.gather(-1, index)[..., 0], torch.full_like(row, -1)))
+    return torch.stack(out, -1)
+
+
 def frame_targets(batch: dict) -> dict:
     """Per frame of the batch's level-1 clips, on the CPU: the probe targets (B, T, k) of TARGETS, and the tile maps
-    `blocks` (B, T, 63), `mobs` (B, T, 63, 4), the raw `facing` (B, T; 1 to 4) and `position` (B, T, 2)."""
+    `blocks` (B, T, 63), `mobs` (B, T, 63, 4), the `cross` tiles (B, T, 6), the raw `facing` (B, T; 1 to 4) and
+    `position` (B, T, 2)."""
     col = {
         c: batch[f"{c}_level1"].cpu()
         for c in ("achievements", "inventory", "vitals", "facing", "daylight", "position", "state")
@@ -183,6 +285,8 @@ def frame_targets(batch: dict) -> dict:
         "inventory": col["inventory"].float(),
         "daylight": col["daylight"].float(),
         "achievements": col["achievements"].float(),
+        **view_concepts(blocks, mobs),
+        "cross": facing_cross(blocks, facing),
         "blocks": blocks,
         "mobs": mobs,
         "facing_raw": facing,
