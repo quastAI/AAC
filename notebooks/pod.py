@@ -263,7 +263,7 @@ def current_probe_report(run) -> bool:
 UPLOAD_IGNORE = ["**/lightning_resume/**", "*_epoch_*_object.ckpt", "*_smoke/**", "**/hydra/**", "**/spt/**", "**/spt_volume*/**"]
 
 
-def upload(api, repo_id, folders=None, reports=("F*.md", "V*.md")):
+def upload(api, repo_id, folders=None, reports=("F*.md", "V*.md", "A*.md")):
     """Runs (`folders` of ckpts/craftax, all by default) to runs/ and the comparison reports to reports/ of the Hub repo.
     Left out: the resumable training state, the per-epoch models and the smoke runs."""
     allow = [f"{f.strip('/')}/**" for f in folders] if folders else None

@@ -10,7 +10,7 @@ import pytest
 
 NOTEBOOK_DIR = Path(__file__).parents[2] / 'notebooks'
 NOTEBOOKS = sorted(NOTEBOOK_DIR.glob('*.ipynb'))
-VARIANTS = sorted(NOTEBOOK_DIR.glob('runpod_V*_*.ipynb'))
+VARIANTS = sorted(NOTEBOOK_DIR.glob('runpod_[VA][0-9]*_*.ipynb'))
 POD = (NOTEBOOK_DIR / 'pod.py').read_text()
 sys.path.insert(0, str(NOTEBOOK_DIR))
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -123,7 +123,7 @@ def test_every_variant_has_its_own_notebook():
     variants = {
         (exp_id, r['name'])
         for exp_id, e in spec['experiments'].items()
-        if exp_id.startswith('V') and not e.get('blocked')
+        if exp_id[0] in 'VA' and not e.get('blocked')  # variants, ablations
         for r in e.get('runs', [])
         if r.get('train', True)
     }

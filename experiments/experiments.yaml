@@ -107,3 +107,13 @@ experiments:
       # SIGReg weight 3x lower (0.09 in F1); the health monitor stops a run whose effective rank collapses
       - {name: flat_sigreg003, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.loss.embed.sigreg.weight=0.03]}
     probe: [flat, flat_h1_rollout4, flat_sigreg003]  # F1's probe job only runs when its report is missing
+
+  A1:
+    title: Ablation (not a model candidate), F1 with balanced clip sampling (the rare faced blocks and events drawn more often); cheap planning (set A)
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      # F1 settings (SIGReg 0.09) and one change: the weights of balance.py, from simulator labels a real agent would not have
+      - {name: flat_balanced, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, data.balance.enabled=true]}
+    probe: [flat, flat_balanced]

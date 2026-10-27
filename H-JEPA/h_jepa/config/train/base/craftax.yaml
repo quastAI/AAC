@@ -18,6 +18,14 @@ data:
     level1:
       frameskip: 1  # open decision: 1 env step per level-1 step
       num_steps: ${eval:'${level1.wm.history_size} + ${level1.wm.rollout_n}'}
+  # Ablation A1 only (balance.py): draw the clips that hold rare faced blocks and rare events more often. The labels come from the
+  # simulator's state, a real agent would not have them, so this is no model candidate. A clip is lifted toward `share` of the draws,
+  # at most `max_weight` times (a cap against memorising the few transitions there are), only for items from >= `min_scenes` scenes.
+  balance:
+    enabled: false
+    share: 0.05
+    max_weight: 8.0
+    min_scenes: 500
 quick_debug: false
 # Episode sources whose clips train level 1 only (the levels above skip them): uniform random
 # episodes (an optional fallback in the data plan) are noise as chunks of actions. Early-checkpoint and noised-expert

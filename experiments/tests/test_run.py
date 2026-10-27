@@ -147,6 +147,24 @@ def test_cli_runs_one_variant(capsys):
     assert 'V1_flat_h1_rollout4_A_val.md' in plan
 
 
+def test_the_balanced_ablation_is_one_change_against_f1(spec):
+    a1 = by_name(jobs_of(spec, 'A1'))
+    train = a1['train_flat_balanced_s42'].command
+    assert 'data.balance.enabled=true' in train
+    assert 'num_levels=1' in train
+    # F1's settings otherwise: SIGReg stays 0.09, no rollout or history change
+    assert not any('sigreg' in c or 'rollout' in c or 'history' in c for c in train)
+    # F1 is the reference, planned and probed as for the variants
+    assert 'train_flat_s42' not in a1
+    assert a1['probe_flat_balanced_s42'].after == ['train_flat_balanced_s42']
+    assert a1['eval_flat_s42_A'].output == (
+        by_name(jobs_of(spec, 'F3'))['eval_flat_s42_A'].output
+    )
+    tag = run.select_runs(spec, 'A1', ['flat_balanced'])
+    tagged = by_name(run.build_jobs(spec, 'A1', [42], home='/data', tag=tag))
+    assert tagged['compare_A1_A'].output.endswith('A1_flat_balanced_A_val.md')
+
+
 def test_a_probe_of_an_existing_run_has_no_training(spec):
     spec['experiments']['P'] = {'title': 'probes only', 'probe': ['flat']}
     jobs = jobs_of(spec, 'P')

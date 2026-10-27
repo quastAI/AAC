@@ -2,6 +2,7 @@ import os
 
 os.environ['MUJOCO_GL'] = 'egl'
 
+import json
 from functools import partial
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from utils import (
     PlanningEvalCallback,
     ResumeCheckpoint,
 )
+from balance import build_sampler as build_balanced_sampler
 from final_probing_decoding_eval import FinalProbingDecodingEvalCallback
 from training_monitor import TrainingHealthCallback, build_health_loader
 from data import (
@@ -183,9 +185,14 @@ def run(cfg):
     val_dataset.transform = transform
 
     rnd_gen = torch.Generator().manual_seed(cfg.seed)
+    train_loader_cfg = OmegaConf.to_container(cfg.loader, resolve=True)
+    balance_summary = None
+    if cfg.data.get("balance", {}).get("enabled", False):  # ablation A1: see balance.py
+        sampler, balance_summary = build_balanced_sampler(train_dataset, cfg.data.balance, cache_dir, rnd_gen)
+        train_loader_cfg.update(sampler=sampler, shuffle=False)
     train = DataLoader(
         train_dataset,
-        **cfg.loader,
+        **train_loader_cfg,
         generator=rnd_gen,
     )
     val_cfg = OmegaConf.to_container(cfg.loader, resolve=True)
@@ -270,6 +277,8 @@ def run(cfg):
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / "config.yaml", "w") as f:
         OmegaConf.save(cfg, f)
+    if balance_summary is not None:  # what the balancing did, for the run's record (balance.py)
+        (run_dir / "balance.json").write_text(json.dumps(balance_summary, indent=1))
     normalizer_path = save_normalizer_artifact(normalizer_artifact, run_dir)
     logging.info(f"Saved training normalizer artifact to {normalizer_path}")
 
