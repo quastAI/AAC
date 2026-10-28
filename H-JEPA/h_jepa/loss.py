@@ -115,3 +115,94 @@ class DiscreteInverseDynamicsLoss(nn.Module):
         with torch.no_grad():
             self.last_accuracy = (logits[valid].argmax(-1) == target[valid]).float().mean()
         return loss
+
+
+class ViewMapLoss(nn.Module):
+    """Auxiliary decoder of the view map from the latent (the ablation A2).
+
+    A small MLP reads each frame's latent and predicts the block type of every view tile (cross-entropy)
+    and which mobs stand on it (binary cross-entropy). The gradient reaches the latent, the projector and
+    the encoder: this is no probe (a probe would not change the latent), the latent has to hold the map for
+    the loss to fall. The head is used in training only and takes no part in planning.
+
+    The tiles are very unequal (grass 41%, coal 1%, diamond 0.05%): a plain loss would let the rare ones go.
+    Each class gets the weight count^-power of the batch (the weights of the classes in the batch,
+    normalised: the loss keeps the scale of a plain cross-entropy), at most `max_ratio` times the weight of
+    the most common class. `class_power` 0 is the plain loss. `tile_mask` leaves tiles out (the player's own
+    tile is covered by its sprite). The metrics of the last call are kept in `last_metrics`.
+    """
+
+    def __init__(
+        self,
+        state_dim: int,
+        hidden_dim: int,
+        num_tiles: int,
+        num_blocks: int,
+        num_mobs: int,
+        class_power: float = 0.5,
+        max_ratio: float = 32.0,
+        tile_mask: torch.Tensor | None = None,
+    ):
+        super().__init__()
+        self.num_tiles, self.num_blocks, self.num_mobs = int(num_tiles), int(num_blocks), int(num_mobs)
+        self.class_power, self.max_ratio = float(class_power), float(max_ratio)
+        self.decoder = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, self.num_tiles * (self.num_blocks + self.num_mobs)),
+        )
+        self.apply(init_module_weights)
+        if tile_mask is None:
+            tile_mask = torch.ones(self.num_tiles, dtype=torch.bool)
+        self.register_buffer("tile_mask", tile_mask.bool(), persistent=False)
+        self.last_metrics = {}
+
+    def _weights(self, counts: torch.Tensor) -> torch.Tensor:
+        """Weight per class from its count in the batch (classes without tiles: 1, they are never used)."""
+        if self.class_power == 0:
+            return torch.ones_like(counts, dtype=torch.float32)
+        weight = counts.clamp(min=1).float().pow(-self.class_power)
+        present = counts > 0
+        floor = weight[present].min()  # the most common class
+        return torch.where(present, weight.clamp(max=floor * self.max_ratio), torch.ones_like(weight))
+
+    def forward(self, emb: torch.Tensor, blocks: torch.Tensor, mobs: torch.Tensor) -> torch.Tensor:
+        """emb: (B, T, D); blocks: (B, T, tiles) long class indices; mobs: (B, T, tiles, num_mobs) 0/1."""
+        logits = self.decoder(emb.flatten(0, 1)).reshape(-1, self.num_tiles, self.num_blocks + self.num_mobs)
+        keep = self.tile_mask
+        block_logits = logits[:, keep, : self.num_blocks].reshape(-1, self.num_blocks)
+        mob_logits = logits[:, keep, self.num_blocks :].reshape(-1, self.num_mobs)
+        block_target = blocks.flatten(0, 1)[:, keep].reshape(-1).long()
+        mob_target = mobs.flatten(0, 1)[:, keep].reshape(-1, self.num_mobs).float()
+
+        with torch.no_grad():
+            counts = torch.bincount(block_target, minlength=self.num_blocks)
+            class_weight = self._weights(counts)
+            positives = mob_target.sum(0)
+            negatives = mob_target.size(0) - positives
+            if self.class_power == 0:
+                pos_weight = torch.ones_like(positives)
+            else:
+                pos_weight = ((negatives + 1) / (positives + 1)).pow(self.class_power).clamp(max=self.max_ratio)
+        tile_weight = class_weight[block_target]
+        block_loss = (F.cross_entropy(block_logits, block_target, reduction="none") * tile_weight).sum() / tile_weight.sum()
+        element_weight = torch.where(mob_target > 0, pos_weight.expand_as(mob_target), torch.ones_like(mob_target))
+        mob_loss = (
+            F.binary_cross_entropy_with_logits(mob_logits, mob_target, reduction="none") * element_weight
+        ).sum() / element_weight.sum()
+
+        with torch.no_grad():
+            hit = block_logits.argmax(-1) == block_target
+            per_class = torch.zeros(self.num_blocks, device=hit.device).index_add_(0, block_target, hit.float())
+            present = counts > 0
+            found = mob_logits > 0
+            self.last_metrics = {
+                "block": block_loss.detach(),
+                "mob": mob_loss.detach(),
+                "accuracy": hit.float().mean(),
+                "balanced_accuracy": (per_class[present] / counts[present]).mean(),
+                "mob_recall": (found & (mob_target > 0)).sum() / positives.sum().clamp(min=1),
+            }
+        return block_loss + mob_loss

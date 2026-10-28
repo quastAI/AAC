@@ -64,7 +64,7 @@ def discrete_num_actions(cfg) -> int | None:
     return None if num_actions is None else int(num_actions)
 
 
-RAW_COLUMNS = ("source",)  # integer labels of the episode (0 expert, 1 noised, 2 random): never z-scored
+RAW_COLUMNS = ("source", "state")  # integer labels (source: 0 expert, 1 noised, 2 random) and the simulator state (uint8): never z-scored
 
 
 def dataset_kwargs(cfg) -> dict:
@@ -80,6 +80,10 @@ def dataset_kwargs(cfg) -> dict:
         if key == "val_name" or (match and int(match.group(1)) > num_levels):
             continue
         out[key] = value
+    if float((cfg.get("level1") or {}).get("map_coeff", 0.0) or 0.0) > 0:  # ablation A2: the labels of the view map decoder
+        keys = list(out.get("keys_to_load") or [])
+        if "state" not in keys:
+            out["keys_to_load"] = [*keys, "state"]
     if out.get("terminal_pad") == "auto":
         # one step of the top level, minus one frame: every level has a step on a padded frame
         step = 1

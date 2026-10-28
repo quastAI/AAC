@@ -103,6 +103,34 @@ def test_variants_set_their_overrides(spec):
     ]
 
 
+def test_the_map_decoder_ablation_is_one_change_against_f1(spec):
+    a2 = by_name(jobs_of(spec, 'A2'))
+    command = a2['train_flat_map_decoder_s42'].command
+    assert 'level1.map_coeff=0.1' in command and 'num_levels=1' in command
+    # the state column is loaded by the data config itself, not by an override
+    assert not any('keys_to_load' in c for c in command)
+    # F1's settings otherwise: SIGReg stays 0.09, no rollout or history change
+    assert not any('sigreg' in c or 'rollout' in c or 'history' in c for c in command)
+    assert 'train_flat_s42' not in a2  # F1 is the reference
+    assert a2['probe_flat_map_decoder_s42'].after == [
+        'train_flat_map_decoder_s42'
+    ]
+    assert a2['eval_flat_map_decoder_s42_A'].after == [
+        'tasks_A',
+        'train_flat_map_decoder_s42',
+    ]
+    assert a2['eval_flat_s42_A'].output == (
+        by_name(jobs_of(spec, 'F3'))['eval_flat_s42_A'].output
+    )
+    tag = run.select_runs(spec, 'A2', ['flat_map_decoder'])
+    tagged = by_name(run.build_jobs(spec, 'A2', [42], home='/data', tag=tag))
+    assert tagged['compare_A2_A'].output.endswith(
+        'A2_flat_map_decoder_A_val.md'
+    )
+    # not a variant of V1: that experiment keeps its two runs
+    assert 'train_flat_map_decoder_s42' not in by_name(jobs_of(spec, 'V1'))
+
+
 def test_variants_are_compared_against_f1(spec):
     v1 = by_name(jobs_of(spec, 'V1'))
     # F1 is planned on set A in the same directory as in F3: done once

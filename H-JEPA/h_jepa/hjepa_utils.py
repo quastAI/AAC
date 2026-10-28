@@ -70,6 +70,25 @@ def _discrete_idm_target(output, level, level_cfg):
     return output.get(f"action_index_{level}")
 
 
+def view_map_targets(batch, level, emb):
+    """Block class (B, T, tiles) and mob flags (B, T, tiles, mobs) of the view tiles from the `state` column.
+
+    The auxiliary map decoder (`level1.map_coeff`, ablation A2) is a level-1 setting: the frames of the state
+    column must be the frames of the latent.
+    """
+    if level != 1:
+        raise ValueError("map_coeff is a level-1 setting (the view map is the level-1 frame)")
+    state = batch.get("state_level1")
+    if state is None:
+        raise KeyError("level1.map_coeff needs the `state` column in the batch (data.dataset keys_to_load, see data.dataset_kwargs)")
+    if state.shape[1] != emb.shape[1]:
+        raise ValueError(f"state has {state.shape[1]} frames, the latent {emb.shape[1]}: the map labels would not match the frames")
+    from probing import targets as tg
+
+    blocks, mobs = tg.tile_maps(state.float())
+    return blocks, mobs.float()
+
+
 def upper_clip_mask(batch, cfg) -> torch.Tensor | None:
     """(B,) bool: which clips train the levels above level 1; None if all of them do.
 
@@ -227,6 +246,15 @@ def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
                 output[f"idm_accuracy_loss{level_suffix}"] = jepa.idm_loss_fn.last_accuracy
             output[f"idm_loss{level_suffix}"] = idm_loss
             level_loss = level_loss + idm_coeff * idm_loss
+
+        map_coeff = float(level_cfg.get("map_coeff", 0.0) or 0.0)
+        if map_coeff > 0:
+            blocks, mobs = view_map_targets(batch, level, emb)
+            map_loss = jepa.map_loss_fn(emb, blocks, mobs)
+            output[f"map_loss{level_suffix}"] = map_loss
+            for name, value in jepa.map_loss_fn.last_metrics.items():
+                output[f"map_{name}_loss{level_suffix}"] = value  # *_loss: the names that get logged
+            level_loss = level_loss + map_coeff * map_loss
 
         pop_vq_aux = getattr(jepa.action_encoder, "pop_aux", None)
         vq_aux = pop_vq_aux() if callable(pop_vq_aux) else None
@@ -445,6 +473,23 @@ def create_world_model(cfg):
                     num_classes=classes,
                     num_durations=num_durations,
                 )
+
+        if level == 1 and float(level_cfg.get("map_coeff", 0.0) or 0.0) > 0:
+            from loss import ViewMapLoss
+            from probing import targets as tg
+
+            player = torch.ones(tg.VIEW_TILES, dtype=torch.bool)
+            player[tg.PLAYER_INDEX] = False  # the player's own tile is covered by its sprite
+            jepa.map_loss_fn = ViewMapLoss(
+                state_dim=embed_dim,
+                hidden_dim=int(level_cfg.map.hidden_dim),
+                num_tiles=tg.VIEW_TILES,
+                num_blocks=tg.NUM_BLOCKS,
+                num_mobs=tg.NUM_MOBS,
+                class_power=float(level_cfg.map.class_power),
+                max_ratio=float(level_cfg.map.max_ratio),
+                tile_mask=player,
+            )
 
         jepas.append(jepa)
 

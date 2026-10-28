@@ -119,3 +119,16 @@ experiments:
       # F1 settings (SIGReg 0.09) and one change: the weights of balance.py, from simulator labels a real agent would not have
       - {name: flat_balanced, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, data.balance.enabled=true]}
     probe: [flat, flat_balanced]
+
+  A2:
+    title: Ablation (not a model candidate), F1 with an auxiliary decoder of the view map from the latent (can the latent hold the scene when the loss demands it); cheap planning (set A)
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      # F1 settings (SIGReg 0.09) and one change: an auxiliary decoder of the 7x9 view map (block type and mobs per tile) from the latent, trained
+      # with the model so that its gradient reaches the latent (loss.ViewMapLoss). The labels are the simulator's `state` column (loaded
+      # automatically), which a real agent would not have. If the latent can hold the scene, the objective had dropped it; if it cannot, or the
+      # decoder fights SIGReg, capacity or SIGReg is the limit
+      - {name: flat_map_decoder, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.map_coeff=0.1]}
+    probe: [flat, flat_map_decoder]
