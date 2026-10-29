@@ -19,7 +19,7 @@ from probing import targets as tg  # noqa: E402
 LENGTHS = (100,) * 20
 
 
-def write_file(path, seed, lengths=LENGTHS, sources=None):
+def write_file(path, seed, lengths=LENGTHS, sources=None, clock=False):
     """Episodes with random observations; the action is the facing (1 to 4,
     the one-hot of the state), NaN in the last frame of an episode."""
     rng = np.random.default_rng(seed)
@@ -32,6 +32,10 @@ def write_file(path, seed, lengths=LENGTHS, sources=None):
         rng.random((n, bc.TILES, bc.NUM_MOBS)) < 0.05
     )
     state[:, bc.INVENTORY : bc.FACING] = rng.integers(0, 10, (n, 16)) / 10
+    if clock:  # the wood count is the step of the episode
+        state[:, bc.INVENTORY] = np.concatenate(
+            [np.arange(m) for m in lengths]
+        )
     facing = rng.integers(0, 4, n)
     state[np.arange(n), bc.FACING + facing] = 1
     state[:, bc.DAYLIGHT] = rng.random(n)
@@ -233,3 +237,61 @@ def test_the_command_line_writes_a_report_per_chunk_length(
         assert 'group:view' in result['retrain']
         assert len(result['retrain']) == 6 + 1  # the groups and the top one
         assert (tmp_path / 'out' / f'bc_entities_chunk{chunk}.md').exists()
+
+
+def test_the_distance_task_pairs_a_frame_with_the_one_k_later(tmp_path):
+    write_file(tmp_path / 'f.h5', 0, (30, 100))
+    table = bc.load_table(tmp_path / 'f.h5')
+    task = bc.Distance()
+    rows = task.starts(table)
+    k = torch.tensor(task.KS)[task.index(rows)]
+    assert len(rows) > 50 and (rows + k).max() < len(table.action)
+    assert (table.episode[rows + k] == table.episode[rows]).all()
+    assert task.targets(table, rows).shape == (len(rows), 1)
+    x = task.features(table, rows[:5])
+    assert x.shape == (5, 2 * tg.STATE_DIM)
+    clock = [bc.DAYLIGHT, tg.STATE_DIM + bc.DAYLIGHT]
+    assert x[:, clock].abs().sum() == 0  # the light is a clock
+    later = table.features(rows[:5] + k[:5])
+    assert torch.equal(x[:, tg.STATE_DIM : tg.STATE_DIM + bc.DAYLIGHT],
+                       later[:, : bc.DAYLIGHT])  # fmt: skip
+    columns = task.columns()
+    assert not [n for n in columns if 'daylight' in n]
+    assert columns['inventory:wood'].tolist() == [
+        bc.INVENTORY,
+        tg.STATE_DIM + bc.INVENTORY,
+    ]  # the entity in both frames
+
+
+def test_the_distance_the_model_reads_off_a_clock_needs_the_clock(tmp_path):
+    write_file(tmp_path / 'train.h5', 0, (100,) * 40, clock=True)
+    write_file(tmp_path / 'val.h5', 1, (100,) * 8, clock=True)
+    train = bc.load_table(tmp_path / 'train.h5')
+    val = bc.load_table(tmp_path / 'val.h5')
+    task = bc.Distance()
+    model = bc.fit(
+        train,
+        val,
+        task,
+        epochs=60,
+        batch_size=64,
+        hidden=128,
+        depth=2,
+        dropout=0.3,
+        weight_decay=0.1,
+    )
+    rows = task.starts(val)
+    ce, acc = bc.evaluate(model, val, rows, task)
+    assert acc[0] > 0.3 and ce[0] < 2.0  # 12 classes: chance 0.08, ln 12 = 2.5
+    marginal = bc.marginal_log_probs(train, task.starts(train), task)
+    result = bc.entity_importance(
+        model, val, rows, task, task.columns(), marginal, repeats=2, boot=20
+    )
+    ent = result['entities']
+    ranked = sorted(ent, key=lambda n: -ent[n]['skill_lost'])
+    assert set(ranked[:2]) == {'inventory:wood', 'group:inventory'}
+    assert ent['inventory:wood']['skill_lost'] > 0.3
+    assert abs(ent['group:view']['skill_lost']) < 0.1
+    text = bc.report(result, task)
+    assert text.startswith('# Temporal distance entities')
+    assert 'Δ ce, step' not in text  # one step only

@@ -211,6 +211,8 @@ def test_the_bc_notebook_runs_the_entity_analysis():
         'pod.install',  # the PyTorch environment and the dataset
         'CHUNKS = (4, 8, 16)',
         'launch("bc"',  # detached like the training jobs
+        'launch("bc_distance"',  # the temporal-distance task
+        'DISTANCE = True',
         'bc_entities_chunk',
         'allow_patterns=["bc_entities_*", "bc_entities.png"]',
     ):
@@ -220,7 +222,7 @@ def test_the_bc_notebook_runs_the_entity_analysis():
         Path(__file__).parents[2] / 'H-JEPA' / 'h_jepa' / 'bc.py'
     ).read_text()
     options = set(re.findall(r'"(--[a-z-]+)"', text))
-    assert {'--chunk', '--retrain-top', '--max-episodes'} <= options
+    assert {'--chunk', '--distance', '--retrain-top'} <= options
     for option in options:
         assert f'"{option}"' in source, option
     # the runs of the other notebooks are not uploaded with it

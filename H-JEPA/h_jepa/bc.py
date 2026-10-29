@@ -13,7 +13,12 @@ gains over the marginal action distribution of the training set. Permuting measu
 that another one duplicates shows little. `--retrain` therefore trains the model again without the coarse groups and the
 most important entities (their columns zero in training and in evaluation).
 
-    python bc.py --chunk 4 8 16 --out $HJEPA_HOME/reports
+    python bc.py --chunk 4 8 16 --distance --out $HJEPA_HOME/reports
+
+`--distance` adds a second task on the same pipeline, temporal distance: the states of frame t and of the frame k later
+(k from 1 to 64 steps, one value per frame) in, which k out. What it needs of the state, next to what the actions need,
+is what a temporal-distance term would ask of a latent beyond a behaviour-cloning term. Daylight is left out of it: the
+light level is a clock and would give k away.
 
 Needs `craftax_expert_train.h5` and `craftax_expert_val.h5` (columns `state`, `action`, `ep_len`, `source`); tasks and
 training of the world models use the final expert's episodes (`source` 0), so does this.
@@ -122,6 +127,82 @@ def chunk_targets(table: StateTable, rows: torch.Tensor, chunk: int) -> torch.Te
     return table.action[rows[:, None] + torch.arange(chunk, device=rows.device)].long()
 
 
+# --- tasks: what the model reads and predicts ---------------------------------------------------------------------
+
+
+class ActionChunk:
+    """The expert's next `chunk` actions from the state of frame t."""
+
+    classes, dim = NUM_ACTIONS, tg.STATE_DIM
+
+    def __init__(self, chunk: int):
+        self.chunk = self.steps = chunk
+        self.label, self.file, self.title = f"chunk {chunk}", f"bc_entities_chunk{chunk}", f"BC entities, chunk {chunk}"
+        self.what = f"A model reads the state of one frame and predicts the expert's next {chunk} actions."
+
+    def starts(self, table):
+        return chunk_starts(table, self.chunk)
+
+    def targets(self, table, rows):
+        return chunk_targets(table, rows, self.chunk)
+
+    def features(self, table, rows, keep=None):
+        return table.features(rows, keep)
+
+    def columns(self):
+        return entities()
+
+
+class Distance:
+    """Temporal distance: the state of frame t and of the frame k later in, which k out (classes of `KS`, one k per frame,
+    fixed by a hash of the frame, so that a frame always gets the same pair). The daylight of both frames is zero."""
+
+    KS = (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
+    steps, classes, dim = 1, len(KS), 2 * tg.STATE_DIM
+    label, file, title = "distance", "bc_entities_distance", "Temporal distance entities"
+    what = (
+        "A model reads the state of frame t and of the frame k later (k from 1 to 64 steps, 12 classes, one k per frame) "
+        "and predicts k; an entity comes from another random pair, in both frames. Daylight is left out: the light level "
+        "is a clock."
+    )
+
+    def __init__(self):
+        self._off = {}
+
+    def index(self, rows):
+        return ((rows * 2654435761) % 2**32) % len(self.KS)
+
+    def starts(self, table):
+        episode = table.episode.cpu().numpy()
+        t = np.arange(len(episode))
+        k = np.array(self.KS)[self.index(torch.from_numpy(t)).numpy()]
+        later = np.minimum(t + k, len(t) - 1)
+        return torch.from_numpy(t[(t + k < len(t)) & (episode[later] == episode[t])])
+
+    def targets(self, table, rows):
+        return self.index(rows)[:, None]
+
+    def features(self, table, rows, keep=None):
+        device = rows.device
+        if device not in self._off:
+            off = torch.ones(self.dim, device=device)
+            off[[DAYLIGHT, tg.STATE_DIM + DAYLIGHT]] = 0.0
+            self._off[device] = off
+        k = torch.as_tensor(self.KS, device=device)[self.index(rows)]
+        x = torch.cat([table.features(rows), table.features(rows + k)], 1) * self._off[device]
+        return x if keep is None else x * keep
+
+    def columns(self):
+        return {
+            n: np.concatenate([c, c + tg.STATE_DIM]) for n, c in entities().items() if "daylight" not in n
+        }  # the entity in both frames
+
+
+def as_task(task):
+    """A task, or an int: the chunk length of the action task."""
+    return ActionChunk(task) if isinstance(task, int) else task
+
+
 # --- entities ------------------------------------------------------------------------------------------------------
 
 
@@ -155,9 +236,9 @@ def entities() -> dict[str, np.ndarray]:
     return out
 
 
-def column_mask(names, entity_columns: dict[str, np.ndarray]) -> torch.Tensor:
-    """(1345,) float, 0 on the columns of the named entities."""
-    keep = torch.ones(tg.STATE_DIM)
+def column_mask(names, entity_columns: dict[str, np.ndarray], dim: int = tg.STATE_DIM) -> torch.Tensor:
+    """(dim,) float, 0 on the columns of the named entities."""
+    keep = torch.ones(dim)
     for n in names:
         keep[torch.from_numpy(entity_columns[n])] = 0.0
     return keep
@@ -167,19 +248,20 @@ def column_mask(names, entity_columns: dict[str, np.ndarray]) -> torch.Tensor:
 
 
 class ChunkBC(nn.Module):
-    """MLP from the observation of a frame to the logits of its next `chunk` actions, (batch, chunk, actions)."""
+    """MLP from the observation of a frame to the logits of `chunk` steps of classes, (batch, chunk, classes): the
+    next actions, or one step of temporal distances."""
 
-    def __init__(self, chunk: int, hidden: int = 512, depth: int = 3, dropout: float = 0.1):
+    def __init__(self, chunk, hidden=512, depth=3, dropout=0.1, classes=NUM_ACTIONS, dim=tg.STATE_DIM):
         super().__init__()
-        dims = [tg.STATE_DIM] + [hidden] * depth
+        dims = [dim] + [hidden] * depth
         layers = []
         for a, b in zip(dims[:-1], dims[1:]):
             layers += [nn.Linear(a, b), nn.GELU(), nn.Dropout(dropout)]
-        self.net = nn.Sequential(*layers, nn.Linear(hidden, chunk * NUM_ACTIONS))
-        self.chunk = chunk
+        self.net = nn.Sequential(*layers, nn.Linear(hidden, chunk * classes))
+        self.chunk, self.classes = chunk, classes
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x).view(len(x), self.chunk, NUM_ACTIONS)
+        return self.net(x).view(len(x), self.chunk, self.classes)
 
 
 def step_losses(logits: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -192,20 +274,22 @@ def step_losses(logits: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, to
 def evaluate(model, table, rows, chunk, keep=None, batch_size=8192) -> tuple[np.ndarray, np.ndarray]:
     """Mean cross-entropy and accuracy per step over the windows `rows`."""
     model.eval()
-    ce = torch.zeros(chunk, device=rows.device)
-    ok = torch.zeros(chunk, device=rows.device)
+    task = as_task(chunk)
+    ce = torch.zeros(task.steps, device=rows.device)
+    ok = torch.zeros(task.steps, device=rows.device)
     for a in range(0, len(rows), batch_size):
         r = rows[a : a + batch_size]
-        c, o = step_losses(model(table.features(r, keep)), chunk_targets(table, r, chunk))
+        c, o = step_losses(model(task.features(table, r, keep)), task.targets(table, r))
         ce += c.sum(0)
         ok += o.sum(0)
     return (ce / len(rows)).cpu().numpy(), (ok / len(rows)).cpu().numpy()
 
 
-def marginal_log_probs(table: StateTable, rows: torch.Tensor, chunk: int) -> torch.Tensor:
-    """(chunk, actions) log of the action frequencies per step: the model that sees nothing (a little smoothed)."""
-    y = chunk_targets(table, rows, chunk)
-    counts = torch.stack([torch.bincount(y[:, k], minlength=NUM_ACTIONS) for k in range(chunk)]).float() + 1.0
+def marginal_log_probs(table: StateTable, rows: torch.Tensor, chunk) -> torch.Tensor:
+    """(steps, classes) log of the class frequencies per step: the model that sees nothing (a little smoothed)."""
+    task = as_task(chunk)
+    y = task.targets(table, rows)
+    counts = torch.stack([torch.bincount(y[:, k], minlength=task.classes) for k in range(task.steps)]).float() + 1.0
     return (counts / counts.sum(1, keepdim=True)).log()
 
 
@@ -226,9 +310,10 @@ def fit(
 ):
     """Train a ChunkBC on the windows of `train`, keep the epoch with the lowest validation cross-entropy."""
     device = train.block.device
+    task = as_task(chunk)
     torch.manual_seed(seed)
-    model = ChunkBC(chunk, hidden, depth, dropout).to(device)
-    starts, val_starts = chunk_starts(train, chunk).to(device), chunk_starts(val, chunk).to(device)
+    model = ChunkBC(task.steps, hidden, depth, dropout, task.classes, task.dim).to(device)
+    starts, val_starts = task.starts(train).to(device), task.starts(val).to(device)
     batch_size = min(batch_size, len(starts))
     per_epoch = len(starts) // batch_size
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -241,16 +326,16 @@ def fit(
         for i in range(per_epoch):
             rows = starts[order[i * batch_size : (i + 1) * batch_size]]
             loss = F.cross_entropy(
-                model(train.features(rows, keep)).flatten(0, 1), chunk_targets(train, rows, chunk).flatten()
+                model(task.features(train, rows, keep)).flatten(0, 1), task.targets(train, rows).flatten()
             )
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             sched.step()
             total += loss.item() if i % 20 == 0 else 0.0
-        ce, acc = evaluate(model, val, val_starts, chunk, keep)
+        ce, acc = evaluate(model, val, val_starts, task, keep)
         log(
-            f"{tag}chunk {chunk} epoch {epoch + 1}/{epochs}: train ce {total / len(range(0, per_epoch, 20)):.4f}, "
+            f"{tag}{task.label} epoch {epoch + 1}/{epochs}: train ce {total / len(range(0, per_epoch, 20)):.4f}, "
             f"val ce {ce.mean():.4f}, val accuracy {acc.mean():.4f} (step 1: {acc[0]:.4f})"
         )
         if ce.mean() < best:
@@ -271,17 +356,18 @@ def entity_importance(
     the share of the model's skill that is lost with an episode bootstrap. Columns of an entity that do not vary in `rows`
     give exactly 0 and are listed as constant."""
     model.eval()
+    task = as_task(chunk)
     device = rows.device
     _, ep = torch.unique(table.episode.to(device)[rows], return_inverse=True)
     episodes, names = int(ep.max()) + 1, list(columns)
-    masks = torch.zeros(len(names), tg.STATE_DIM, dtype=torch.bool, device=device)
+    masks = torch.zeros(len(names), task.dim, dtype=torch.bool, device=device)
     for m, n in enumerate(names):
         masks[m, torch.from_numpy(columns[n]).to(device)] = True
-    shape = (episodes, chunk)
+    shape = (episodes, task.steps)
     base_ce, base_ok, marg_ce = (torch.zeros(shape, device=device) for _ in range(3))
     d_ce, d_ok = (torch.zeros(len(names), *shape, device=device) for _ in range(2))
     count = torch.zeros(episodes, device=device)
-    low = torch.full((tg.STATE_DIM,), float("inf"), device=device)
+    low = torch.full((task.dim,), float("inf"), device=device)
     high = -low
     gen = torch.Generator(device=device).manual_seed(seed)
     order = torch.randperm(
@@ -290,8 +376,8 @@ def entity_importance(
     for a in range(0, len(rows), batch_size):
         sel = order[a : a + batch_size]
         r, e = rows[sel], ep[sel]
-        y = chunk_targets(table, r, chunk)
-        x = table.features(r, keep)
+        y = task.targets(table, r)
+        x = task.features(table, r, keep)
         ce0, ok0 = step_losses(model(x), y)
         count.index_add_(0, e, torch.ones(len(e), device=device))
         base_ce.index_add_(0, e, ce0)
@@ -342,12 +428,13 @@ def entity_importance(
 def retrain_without(train, val, chunk, columns, names, result, **fit_kw) -> dict:
     """Train the model again without each of `names` (its columns zero in training and evaluation); the skill lost is the
     rise of the validation cross-entropy over the model with everything, in shares of its skill (one seed, no interval)."""
-    rows = chunk_starts(val, chunk).to(val.block.device)
+    task = as_task(chunk)
+    rows = task.starts(val).to(val.block.device)
     out = {}
     for n in names:
-        keep = column_mask([n], columns).to(val.block.device)
-        model = fit(train, val, chunk, keep=keep, tag=f"without {n}: ", **fit_kw)
-        ce, acc = evaluate(model, val, rows, chunk, keep)
+        keep = column_mask([n], columns, task.dim).to(val.block.device)
+        model = fit(train, val, task, keep=keep, tag=f"without {n}: ", **fit_kw)
+        ce, acc = evaluate(model, val, rows, task, keep)
         out[n] = {
             "ce": float(ce.mean()),
             "accuracy": float(acc.mean()),
@@ -363,19 +450,24 @@ def _ci(v) -> str:
     return "" if v is None else f"{v[0]:.2f} to {v[1]:.2f}"
 
 
-def report(result: dict, chunk: int) -> str:
-    """The markdown report of one chunk length: the model, then every family of entities by the share of skill lost."""
-    ent = result["entities"]
+def report(result: dict, chunk) -> str:
+    """The markdown report of one task: the model, then every family of entities by the share of skill lost."""
+    task = as_task(chunk)
+    ent, steps = result["entities"], task.steps
+    head = "| entity | skill lost | 95% interval | Δ ce | Δ accuracy |"
+    rule = "|---|---|---|---|---|"
+    if steps > 1:
+        head += f" Δ ce, step 1 | Δ ce, step {steps} |"
+        rule += "---|---|"
     lines = [
-        f"# BC entities, chunk {chunk}",
+        f"# {task.title}",
         "",
-        f"{result['frames']} validation windows of {result['episodes']} episodes (the final expert's, held-out worlds). "
-        f"Cross-entropy {result['ce']:.3f} nats against {result['marginal_ce']:.3f} for the marginal action distribution: "
-        f"the model gains {result['skill']:.3f} nats ('skill'). Accuracy per step: "
+        f"{task.what} {result['frames']} validation samples of {result['episodes']} episodes (the final expert's, "
+        f"held-out worlds). Cross-entropy {result['ce']:.3f} nats against {result['marginal_ce']:.3f} for the marginal "
+        f"distribution of the target: the model gains {result['skill']:.3f} nats ('skill'). Accuracy per step: "
         + ", ".join(f"{a:.2f}" for a in result["accuracy_steps"])
-        + ". "
-        "Skill lost: the rise of the cross-entropy when the entity's columns come from another frame, in shares of the "
-        "skill (permutation: reliance, not necessity); interval: episode bootstrap. Constant: the columns never vary.",
+        + ". Skill lost: the rise of the cross-entropy when the entity's columns come from another frame, in shares of "
+        "the skill (permutation: reliance, not necessity); interval: episode bootstrap. Constant: the columns never vary.",
         "",
     ]
     for family, title in (
@@ -388,19 +480,16 @@ def report(result: dict, chunk: int) -> str:
         ("state", "Facing, daylight, sleeping"),
     ):
         rows = sorted(((n, v) for n, v in ent.items() if n.split(":")[0] == family), key=lambda p: -p[1]["skill_lost"])
-        lines += [
-            f"## {title}",
-            "",
-            f"| entity | skill lost | 95% interval | Δ ce | Δ accuracy | Δ ce, step 1 | Δ ce, step {chunk} |",
-            "|---|---|---|---|---|---|---|",
-        ]
+        lines += [f"## {title}", "", head, rule]
         for n, v in rows:
-            s = v["delta_ce_steps"]
             tag = " (constant)" if v["constant"] else ""
-            lines.append(
+            line = (
                 f"| {n.split(':', 1)[1]}{tag} | {v['skill_lost']:.3f} | {_ci(v['skill_lost_ci'])} | {v['delta_ce']:.4f} | "
-                f"{v['delta_accuracy']:+.4f} | {s[0]:.4f} | {s[-1]:.4f} |"
+                f"{v['delta_accuracy']:+.4f} |"
             )
+            if steps > 1:
+                line += f" {v['delta_ce_steps'][0]:.4f} | {v['delta_ce_steps'][-1]:.4f} |"
+            lines.append(line)
         lines.append("")
     lines += [
         "## Skill lost by place (the player stands at the centre, up is up)",
@@ -442,8 +531,11 @@ def main():
     parser.add_argument(
         "--val-file", default=f"{home}/craftax_expert_val.h5", help="held out: early stopping and importance"
     )
-    parser.add_argument("--out", default=f"{home}/reports", help="bc_entities_chunk<N>.md and .json are written here")
-    parser.add_argument("--chunk", type=int, nargs="+", default=[4, 8, 16], help="actions predicted per frame")
+    parser.add_argument("--out", default=f"{home}/reports", help="bc_entities_<task>.md and .json are written here")
+    parser.add_argument(
+        "--chunk", type=int, nargs="*", default=[4, 8, 16], help="actions predicted per frame (none: --chunk alone)"
+    )
+    parser.add_argument("--distance", action="store_true", help="also the temporal-distance task (see above)")
     parser.add_argument(
         "--sources", type=int, nargs="+", default=[0], help="`source` of the episodes (0: the final expert)"
     )
@@ -467,6 +559,9 @@ def main():
     parser.add_argument("--max-episodes", type=int, help="episodes per file (a smoke run)")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    tasks = [ActionChunk(c) for c in args.chunk] + ([Distance()] if args.distance else [])
+    if not tasks:
+        parser.error("no task: give --chunk lengths and/or --distance")
 
     from cpu_threads import limit_threads
 
@@ -484,37 +579,37 @@ def main():
     log(
         f"loaded {len(train.action)} train and {len(val.action)} validation frames in {time.time() - t0:.0f} s ({device})"
     )
-    columns = entities()
     fit_kw = dict(
         epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, hidden=args.hidden, depth=args.depth, seed=args.seed
     )
-    for chunk in args.chunk:
+    for task in tasks:
         t0 = time.time()
-        model = fit(train, val, chunk, **fit_kw)
-        rows = chunk_starts(val, chunk).to(device)
-        marginal = marginal_log_probs(train, chunk_starts(train, chunk).to(device), chunk)
+        columns = task.columns()
+        model = fit(train, val, task, **fit_kw)
+        rows = task.starts(val).to(device)
+        marginal = marginal_log_probs(train, task.starts(train).to(device), task)
         result = entity_importance(
-            model, val, rows, chunk, columns, marginal, repeats=args.repeats, boot=args.boot, seed=args.seed
+            model, val, rows, task, columns, marginal, repeats=args.repeats, boot=args.boot, seed=args.seed
         )
-        log(f"chunk {chunk}: the importance of {len(columns)} entities in {time.time() - t0:.0f} s")
+        log(f"{task.label}: the importance of {len(columns)} entities in {time.time() - t0:.0f} s")
         if not args.no_retrain:
+            # not the entities that repeat a group (state:) or that a one-hot leaves recoverable (block:, a single
+            # channel: the tile without it is the tile of that type), not the cuts of the view (ring:, tile:)
+            skip = ("group:", "tile:", "ring:", "block:", "state:")
+            candidates = [(n, v["skill_lost"]) for n, v in result["entities"].items()]
             top = [
                 n
                 for n, _ in sorted(
-                    (
-                        (n, v["skill_lost"])
-                        for n, v in result["entities"].items()
-                        if not n.startswith(("group:", "tile:", "ring:")) and not v["constant"]
-                    ),
+                    (c for c in candidates if not c[0].startswith(skip) and not result["entities"][c[0]]["constant"]),
                     key=lambda p: -p[1],
                 )[: args.retrain_top]
             ]
             groups = [n for n in columns if n.startswith("group:")]
-            result["retrain"] = retrain_without(train, val, chunk, columns, groups + top, result, **fit_kw)
-        result["args"] = vars(args) | {"chunk": chunk}
-        (out / f"bc_entities_chunk{chunk}.json").write_text(json.dumps(result, indent=1))
-        (out / f"bc_entities_chunk{chunk}.md").write_text(report(result, chunk))
-        log(f"chunk {chunk} done in {time.time() - t0:.0f} s: {out / f'bc_entities_chunk{chunk}.md'}")
+            result["retrain"] = retrain_without(train, val, task, columns, groups + top, result, **fit_kw)
+        result["args"] = vars(args) | {"task": task.label}
+        (out / f"{task.file}.json").write_text(json.dumps(result, indent=1))
+        (out / f"{task.file}.md").write_text(report(result, task))
+        log(f"{task.label} done in {time.time() - t0:.0f} s: {out / f'{task.file}.md'}")
 
 
 if __name__ == "__main__":
