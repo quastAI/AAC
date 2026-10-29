@@ -20,6 +20,11 @@ most important entities (their columns zero in training and in evaluation).
 is what a temporal-distance term would ask of a latent beyond a behaviour-cloning term. Daylight is left out of it: the
 light level is a clock and would give k away.
 
+`--inverse 4 8` adds multi-step inverse dynamics, the counterpart of the IDM and of the behaviour-cloning task: the states
+of frame t and of frame t+k in, the k actions between them out, each step its own distribution (many action sequences
+lead to the same state, so the target is not deterministic and the cross-entropy has a floor above zero; the skill is
+read against the marginal action distribution, as for the other tasks).
+
 Needs `craftax_expert_train.h5` and `craftax_expert_val.h5` (columns `state`, `action`, `ep_len`, `source`); tasks and
 training of the world models use the final expert's episodes (`source` 0), so does this.
 """
@@ -196,6 +201,44 @@ class Distance:
         return {
             n: np.concatenate([c, c + tg.STATE_DIM]) for n, c in entities().items() if "daylight" not in n
         }  # the entity in both frames
+
+
+class InverseChunk:
+    """Multi-step inverse dynamics: the states of frame t and of frame t+k in, the k actions between them out, each step
+    its own categorical (no sequence is the one answer: the target is not deterministic). An entity is replaced in both
+    frames."""
+
+    classes, dim = NUM_ACTIONS, 2 * tg.STATE_DIM
+
+    def __init__(self, k: int):
+        self.k = self.steps = k
+        self.label, self.file, self.title = (
+            f"inverse {k}",
+            f"bc_entities_inverse{k}",
+            f"Multi-step inverse dynamics, {k} steps",
+        )
+        self.what = (
+            f"A model reads the state of frame t and of frame t+{k} and predicts the {k} actions between them, each step "
+            "as its own distribution (many action sequences lead to the same state: the target is not deterministic); "
+            "an entity comes from another random pair, in both frames."
+        )
+
+    def starts(self, table):
+        episode, action = table.episode.cpu().numpy(), table.action.cpu().numpy()
+        t = np.arange(max(len(action) - self.k, 0))
+        bad = np.concatenate([[0], np.cumsum(action < 0)])  # the last frame of an episode has no action, and needs none
+        ok = (episode[t + self.k] == episode[t]) & (bad[t + self.k] - bad[t] == 0)
+        return torch.from_numpy(t[ok])
+
+    def targets(self, table, rows):
+        return chunk_targets(table, rows, self.k)
+
+    def features(self, table, rows, keep=None):
+        x = torch.cat([table.features(rows), table.features(rows + self.k)], 1)
+        return x if keep is None else x * keep
+
+    def columns(self):
+        return {n: np.concatenate([c, c + tg.STATE_DIM]) for n, c in entities().items()}
 
 
 def as_task(task):
@@ -537,6 +580,9 @@ def main():
     )
     parser.add_argument("--distance", action="store_true", help="also the temporal-distance task (see above)")
     parser.add_argument(
+        "--inverse", type=int, nargs="*", default=[], help="also multi-step inverse dynamics over this many steps"
+    )
+    parser.add_argument(
         "--sources", type=int, nargs="+", default=[0], help="`source` of the episodes (0: the final expert)"
     )
     parser.add_argument(
@@ -560,8 +606,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     tasks = [ActionChunk(c) for c in args.chunk] + ([Distance()] if args.distance else [])
+    tasks += [InverseChunk(k) for k in args.inverse]
     if not tasks:
-        parser.error("no task: give --chunk lengths and/or --distance")
+        parser.error("no task: give --chunk lengths, --distance and/or --inverse lengths")
 
     from cpu_threads import limit_threads
 

@@ -295,3 +295,53 @@ def test_the_distance_the_model_reads_off_a_clock_needs_the_clock(tmp_path):
     text = bc.report(result, task)
     assert text.startswith('# Temporal distance entities')
     assert 'Δ ce, step' not in text  # one step only
+
+
+def test_the_inverse_task_pairs_frame_t_with_the_frame_k_later(tmp_path):
+    write_file(tmp_path / 'f.h5', 0, (10, 6))
+    table = bc.load_table(tmp_path / 'f.h5')
+    task = bc.InverseChunk(4)
+    rows = task.starts(table)
+    # frame t + 4 and the actions t .. t + 3 in the episode; the last frame
+    # of an episode has no action and needs none
+    assert rows.tolist() == [*range(6), 10, 11]
+    x = task.features(table, rows)
+    assert x.shape == (len(rows), 2 * tg.STATE_DIM)
+    assert torch.equal(x[:, tg.STATE_DIM :], table.features(rows + 4))
+    assert torch.equal(
+        task.targets(table, rows), bc.chunk_targets(table, rows, 4)
+    )
+    cols = task.columns()
+    assert len(cols['state:facing']) == 2 * 4  # the entity in both frames
+    assert 'state:daylight' in cols  # k is fixed: the light is no clock here
+
+
+def test_the_inverse_model_reads_the_action_of_the_first_step(files):
+    train = bc.load_table(files / 'train.h5')
+    val = bc.load_table(files / 'val.h5')
+    task = bc.InverseChunk(4)
+    model = bc.fit(
+        train,
+        val,
+        task,
+        epochs=20,
+        batch_size=128,
+        hidden=32,
+        depth=2,
+        lr=3e-3,
+    )
+    rows = task.starts(val)
+    ce, acc = bc.evaluate(model, val, rows, task)
+    assert acc[0] > 0.7  # a_t is the facing of frame t, in the first frame
+    assert acc[1:].max() < 0.5  # the others are random in between
+    marginal = bc.marginal_log_probs(train, task.starts(train), task)
+    result = bc.entity_importance(
+        model, val, rows, task, task.columns(), marginal, repeats=2, boot=20
+    )
+    ent = result['entities']
+    ranked = sorted(ent, key=lambda n: -ent[n]['skill_lost'])
+    assert set(ranked[:2]) == {'state:facing', 'group:facing'}
+    assert result['ce'] > 0.5  # not deterministic: a floor above zero
+    assert bc.report(result, task).startswith(
+        '# Multi-step inverse dynamics, 4 steps'
+    )
