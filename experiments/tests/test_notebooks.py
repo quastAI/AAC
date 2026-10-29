@@ -205,6 +205,28 @@ def test_the_relabel_notebook_checks_before_it_replaces_the_hub_files():
     assert upload.index('all(CHECKS.values())') < upload.index('upload_folder')
 
 
+def test_the_bc_notebook_runs_the_entity_analysis():
+    text = text_of('runpod_bc_entities.ipynb')
+    for needle in (
+        'pod.install',  # the PyTorch environment and the dataset
+        'CHUNKS = (4, 8)',
+        'launch("bc"',  # detached like the training jobs
+        'bc_entities_chunk',
+        'allow_patterns=["bc_entities_*", "bc_entities.png"]',
+    ):
+        assert needle in text, needle
+    # every option the notebook gives bc.py is one that it has
+    source = (
+        Path(__file__).parents[2] / 'H-JEPA' / 'h_jepa' / 'bc.py'
+    ).read_text()
+    options = set(re.findall(r'"(--[a-z-]+)"', text))
+    assert {'--chunk', '--retrain-top', '--max-episodes'} <= options
+    for option in options:
+        assert f'"{option}"' in source, option
+    # the runs of the other notebooks are not uploaded with it
+    assert 'pod.upload' not in text
+
+
 def status_script():
     """The monitor cell's inline script, tested as a subprocess."""
     nb = json.loads((NOTEBOOKS[0].parent / 'runpod_dataset.ipynb').read_text())
