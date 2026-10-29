@@ -13,7 +13,7 @@ gains over the marginal action distribution of the training set. Permuting measu
 that another one duplicates shows little. `--retrain` therefore trains the model again without the coarse groups and the
 most important entities (their columns zero in training and in evaluation).
 
-    python bc.py --chunk 4 8 --out $HJEPA_HOME/reports
+    python bc.py --chunk 4 8 16 --out $HJEPA_HOME/reports
 
 Needs `craftax_expert_train.h5` and `craftax_expert_val.h5` (columns `state`, `action`, `ep_len`, `source`); tasks and
 training of the world models use the final expert's episodes (`source` 0), so does this.
@@ -443,7 +443,7 @@ def main():
         "--val-file", default=f"{home}/craftax_expert_val.h5", help="held out: early stopping and importance"
     )
     parser.add_argument("--out", default=f"{home}/reports", help="bc_entities_chunk<N>.md and .json are written here")
-    parser.add_argument("--chunk", type=int, nargs="+", default=[4, 8], help="actions predicted per frame")
+    parser.add_argument("--chunk", type=int, nargs="+", default=[4, 8, 16], help="actions predicted per frame")
     parser.add_argument(
         "--sources", type=int, nargs="+", default=[0], help="`source` of the episodes (0: the final expert)"
     )

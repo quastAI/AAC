@@ -209,7 +209,7 @@ def test_the_bc_notebook_runs_the_entity_analysis():
     text = text_of('runpod_bc_entities.ipynb')
     for needle in (
         'pod.install',  # the PyTorch environment and the dataset
-        'CHUNKS = (4, 8)',
+        'CHUNKS = (4, 8, 16)',
         'launch("bc"',  # detached like the training jobs
         'bc_entities_chunk',
         'allow_patterns=["bc_entities_*", "bc_entities.png"]',
