@@ -231,6 +231,30 @@ def test_the_bc_notebook_runs_the_entity_analysis():
     assert 'pod.upload' not in text
 
 
+def test_the_bc_tasks_run_on_their_own():
+    cells = cells_of(NOTEBOOK_DIR / 'runpod_bc_entities.ipynb')
+
+    def cell(prefix):
+        return next(c for c in cells if c.startswith(prefix))
+
+    # each task is started and waited for only when it is switched on, so
+    # one can be run without the others (CHUNKS = (), DISTANCE = False,
+    # INVERSE = ())
+    for prefix, switch in (
+        ('# --- 2. Start the models', 'if CHUNKS:'),
+        ('# --- 2. Wait for it', 'if CHUNKS:'),
+        ('# --- 2b. Temporal distance, detached', 'if DISTANCE:'),
+        ('# --- 2b. Wait for it', 'if DISTANCE:'),
+        ('# --- 2c. Multi-step inverse dynamics, detached', 'if INVERSE:'),
+        ('# --- 2c. Wait for it', 'if INVERSE:'),
+    ):
+        assert switch in cell(prefix), prefix
+    # a partial run does not replace the figure of the whole set
+    figures = cell('# --- 3. Figures')
+    assert 'FIGURE = "bc_entities.png" if CHUNKS and DISTANCE and INVERSE' in figures
+    assert 'reports / figure' in figures
+
+
 def status_script():
     """The monitor cell's inline script, tested as a subprocess."""
     nb = json.loads((NOTEBOOKS[0].parent / 'runpod_dataset.ipynb').read_text())
