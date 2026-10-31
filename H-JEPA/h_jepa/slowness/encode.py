@@ -44,15 +44,25 @@ def find_checkpoints(run: Path, epochs) -> dict[str, Path]:
     return found
 
 
-def encode_frames(model, pixels: np.ndarray, normalize, device: str, chunk: int = 256) -> dict[str, np.ndarray]:
-    """CLS token and latent of uint8 frames (N, 63, 63, 3)."""
+def encode_frames(
+    model, pixels: np.ndarray, normalize, device: str, chunk: int = 256, desc: str | None = None
+) -> dict[str, np.ndarray]:
+    """CLS token and latent of uint8 frames (N, 63, 63, 3); `desc` shows a progress bar over the frames."""
     from probing.encoder import encode_pixels
+    from tqdm import tqdm
 
     model = model.to(device)
-    x = torch.from_numpy(np.ascontiguousarray(pixels.transpose(0, 3, 1, 2)))
-    with torch.no_grad():
-        latent, cls = encode_pixels(model, x, normalize, device, chunk=chunk)
-    return {"latent": latent.numpy(), "cls": cls.numpy()}
+    latent, cls = [], []
+    step = chunk * 32
+    with tqdm(total=len(pixels), desc=desc, disable=desc is None, unit="frame", unit_scale=True, leave=False) as bar:
+        for a in range(0, len(pixels), step):
+            x = torch.from_numpy(np.ascontiguousarray(pixels[a : a + step].transpose(0, 3, 1, 2)))
+            with torch.no_grad():
+                lat, c = encode_pixels(model, x, normalize, device, chunk=chunk)
+            latent.append(lat.numpy())
+            cls.append(c.numpy())
+            bar.update(len(x))
+    return {"latent": np.concatenate(latent), "cls": np.concatenate(cls)}
 
 
 def main():
@@ -64,6 +74,7 @@ def main():
     parser.add_argument("--windows", type=int, default=sm.WINDOWS)
     parser.add_argument("--length", type=int, default=sm.LENGTH)
     parser.add_argument("--max-episodes", type=int, help="only the first N eligible episodes (a smoke run)")
+    parser.add_argument("--random-episodes", type=int, help="a random subset of N eligible episodes (a big file is ordered)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--chunk", type=int, default=256)
     args = parser.parse_args()
@@ -83,9 +94,9 @@ def main():
 
     with h5py.File(args.data, "r") as f:
         lengths, offsets = f["ep_len"][:], f["ep_offset"][:]
-    sample = sm.nested_sample(lengths, offsets, windows=args.windows, length=args.length, seed=args.seed, max_episodes=args.max_episodes)
+    sample = sm.nested_sample(lengths, offsets, windows=args.windows, length=args.length, seed=args.seed, max_episodes=args.max_episodes, random_episodes=args.random_episodes)
     t0 = time.time()
-    columns = sm.read_columns(args.data, sample, ("pixels",) + sm.FACTORS)
+    columns = sm.read_columns(args.data, sample, ("pixels",) + sm.FACTORS, progress=True)
     print(f"read {sample['rows'].size} frames of {len(sample['episode'])} episodes in {time.time() - t0:.0f} s", flush=True)
     pixels = columns.pop("pixels")
     shape = sample["rows"].shape
@@ -99,7 +110,7 @@ def main():
             continue
         model = untrained_model(cfg, args.seed) if name == "untrained" else load_model(models[name])
         t0 = time.time()
-        feats = encode_frames(model, pixels.reshape(-1, *pixels.shape[3:]), _normalize_uint8_images_on_device, device, args.chunk)
+        feats = encode_frames(model, pixels.reshape(-1, *pixels.shape[3:]), _normalize_uint8_images_on_device, device, args.chunk, desc=f"encode {name}")
         np.savez(target, **{k: v.reshape(*shape, -1) for k, v in feats.items()})
         print(f"{name}: {len(pixels.reshape(-1, *pixels.shape[3:]))} frames in {time.time() - t0:.0f} s on {device}", flush=True)
 

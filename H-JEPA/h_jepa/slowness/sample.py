@@ -22,7 +22,14 @@ EPISODE_COLUMNS = ("source", "dead")
 
 
 def nested_sample(
-    lengths, offsets, *, windows: int = WINDOWS, length: int = LENGTH, seed: int = 0, max_episodes: int | None = None
+    lengths,
+    offsets,
+    *,
+    windows: int = WINDOWS,
+    length: int = LENGTH,
+    seed: int = 0,
+    max_episodes: int | None = None,
+    random_episodes: int | None = None,
 ) -> dict:
     """The sample of a file with the episode lengths and the row of every episode's first frame.
 
@@ -34,6 +41,8 @@ def nested_sample(
     if not len(episode):
         raise ValueError(f"no episode has {windows * length} frames: lower `windows` or `length`")
     rng = np.random.default_rng(seed)
+    if random_episodes is not None and random_episodes < len(episode):  # a random subset, not the first (the file is ordered)
+        episode = np.sort(rng.choice(episode, random_episodes, replace=False))
     start = np.empty((len(episode), windows), np.int64)
     for i, ep in enumerate(episode):
         edges = np.linspace(0, lengths[ep], windows + 1).astype(np.int64)
@@ -44,9 +53,10 @@ def nested_sample(
     return {"episode": episode, "start": start, "rows": offsets[episode][:, None, None] + t, "t": t}
 
 
-def read_columns(path, sample: dict, columns) -> dict:
+def read_columns(path, sample: dict, columns, progress: bool = False) -> dict:
     """The columns of the file for the sample, each as (E, W, L, ...). Windows are contiguous, so each is one slice."""
     import h5py
+    from tqdm import tqdm
 
     rows = sample["rows"]
     out = {}
@@ -54,7 +64,7 @@ def read_columns(path, sample: dict, columns) -> dict:
         for name in columns:
             data = f[name]
             arr = np.empty(rows.shape + data.shape[1:], data.dtype)
-            for i in range(rows.shape[0]):
+            for i in tqdm(range(rows.shape[0]), desc=f"read {name}", disable=not progress, leave=False):
                 for w in range(rows.shape[1]):
                     a = int(rows[i, w, 0])
                     arr[i, w] = data[a : a + rows.shape[2]]

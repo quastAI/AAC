@@ -36,8 +36,9 @@ NEIGHBOURS = tuple(tg.PLAYER_INDEX + d for d in (-tg.VIEW_COLS, tg.VIEW_COLS, -1
 RIDGE = 1e-3  # penalty per sample on standardised inputs (a heuristic, not tuned)
 
 
-def build_groups(cols: dict) -> dict[str, np.ndarray]:
-    """The groups as float32 (E, W, L, k) from the sample's columns."""
+def build_groups(cols: dict, layout: bool = False) -> dict[str, np.ndarray]:
+    """The groups as float32 (E, W, L, k) from the sample's columns; `layout=True` adds the whole map (63 tiles one-hot,
+    1,323 inputs), which needs many episodes: with 148 it overfits."""
     shape = cols["state"].shape[:3]
     state = torch.from_numpy(cols["state"].reshape(-1, tg.STATE_DIM)).float()
     blocks, mobs = tg.tile_maps(state)
@@ -53,6 +54,8 @@ def build_groups(cols: dict) -> dict[str, np.ndarray]:
         "view": view.numpy(),
         "near": near.numpy(),
     }
+    if layout:
+        groups["layout"] = torch.cat([one_hot.flatten(1).float(), mobs.flatten(1).float()], -1).numpy()
     return {k: v.reshape(*shape, v.shape[-1]) for k, v in groups.items()}
 
 
@@ -140,23 +143,27 @@ def _inputs(groups: dict, names, tr, te):
     return np.concatenate([p[0] for p in parts], -1), np.concatenate([p[1] for p in parts], -1)
 
 
-def attribution(z: np.ndarray, groups: dict, split, method: str = "ridge", seed: int = 0) -> dict:
+def attribution(z: np.ndarray, groups: dict, split, method: str = "ridge", seed: int = 0, progress=None) -> dict:
     """R^2 of z from all groups, from each group alone and without each group (held-out episodes), the unique share of
-    each group and the time-scale shares of the residual of the full fit (`residual`) against its null."""
+    each group and the time-scale shares of the residual of the full fit (`residual`) against its null. `progress` is
+    called after each fit (1 + 2 per group)."""
     tr, te = split
+    names = tuple(groups)
     fit = ridge_cv if method == "ridge" else (lambda a, b, c: mlp(a, b, c, seed=seed))
     y_tr, y_te = z[tr].reshape(-1, z.shape[-1]), z[te].reshape(-1, z.shape[-1])
 
     def run(names):
         x_tr, x_te = _inputs(groups, names, tr, te)
         pred = fit(x_tr, y_tr, x_te)
+        if progress:
+            progress()
         return pred, r2_weighted(y_te, pred)
 
-    pred, full = run(GROUPS)
-    out = {"all": full, "only": {}, "without": {}, "unique": {}}
-    for g in GROUPS:
+    pred, full = run(names)
+    out = {"groups": list(names), "all": full, "only": {}, "without": {}, "unique": {}}
+    for g in names:
         out["only"][g] = run((g,))[1]
-        out["without"][g] = run(tuple(n for n in GROUPS if n != g))[1]
+        out["without"][g] = run(tuple(n for n in names if n != g))[1]
         out["unique"][g] = full - out["without"][g]
     resid = (y_te - pred).reshape(*z[te].shape)
     out["residual"] = {
@@ -165,6 +172,19 @@ def attribution(z: np.ndarray, groups: dict, split, method: str = "ridge", seed:
         "variance_share": float(((y_te - pred) ** 2).sum() / ((y_te - y_te.mean(0)) ** 2).sum()),
     }
     return out
+
+
+def axis_r2(z: np.ndarray, groups: dict, names, split, method: str = "mlp", seed: int = 0):
+    """R^2 of each principal axis of z (largest variance first) from the groups `names`, on held-out episodes.
+    Returns the R^2 (D,), the pooled mean and the axes (D, D) of `variance.pca`."""
+    tr, te = split
+    mean, axes, _ = va.pca(z)
+    p = (np.asarray(z, np.float64) - mean) @ axes
+    x_tr, x_te = _inputs(groups, names, tr, te)
+    y_tr, y_te = p[tr].reshape(-1, p.shape[-1]).astype(np.float32), p[te].reshape(-1, p.shape[-1])
+    pred = ridge_cv(x_tr, y_tr, x_te) if method == "ridge" else mlp(x_tr, y_tr, x_te, seed=seed)
+    sst = ((y_te - y_te.mean(0)) ** 2).sum(0)
+    return 1 - ((y_te - pred) ** 2).sum(0) / np.maximum(sst, 1e-12), mean, axes
 
 
 def decodability(z: np.ndarray, targets: dict, split, method: str = "ridge", seed: int = 0) -> dict[str, float]:

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / 'h_jepa'))
 from probing import targets as tg  # noqa: E402
 from slowness import factors as fa  # noqa: E402
 from slowness import predict as pe  # noqa: E402
+from slowness import pressure as pr  # noqa: E402
 from slowness import report as rp  # noqa: E402
 from slowness import sample as sm  # noqa: E402
 from slowness import variance as va  # noqa: E402
@@ -341,3 +342,81 @@ def test_timescale_summary_on_planted_data():
     assert out['shares']['episode'] > out['null_episode']
     assert 0 < out['within_episode_rank'] <= D
     assert 0.0 < out['lag'][8] < 1.0
+
+
+def test_random_episodes_are_a_seeded_subset_of_the_eligible():
+    lengths = np.concatenate([np.full(50, 500), np.full(50, 10)])
+    offsets = np.arange(100) * 500
+    a = sm.nested_sample(lengths, offsets, seed=2, random_episodes=20)
+    b = sm.nested_sample(lengths, offsets, seed=2, random_episodes=20)
+    assert len(a['episode']) == 20
+    assert (a['episode'] == b['episode']).all()
+    assert (np.diff(a['episode']) > 0).all()  # sorted, no repeats
+    assert a['episode'].max() < 50  # the short episodes are never drawn
+    # not simply the first twenty
+    assert not (a['episode'] == np.arange(20)).all()
+
+
+def test_the_whole_map_is_an_optional_group():
+    cols, blocks = fake_columns()
+    groups = fa.build_groups(cols, layout=True)
+    assert groups['layout'].shape[-1] == tg.VIEW_TILES * (tg.NUM_BLOCKS + 4)
+    assert 'layout' not in fa.build_groups(cols)
+    first = groups['layout'][..., : tg.NUM_BLOCKS]  # tile 0, one-hot
+    assert (first.argmax(-1) == blocks[..., 0]).all()
+
+
+def slow_fast_latent(e=150, w=2, length=16, seed=0):
+    """Three axes that are constant inside a window (std 3 between windows) and
+    three that move inside it (std 0.3), independent: the axes are the
+    coordinates."""
+    rng = np.random.default_rng(seed)
+    slow = rng.normal(0, 3.0, (e, w, 1, 3)).repeat(length, 2)
+    fast = rng.normal(0, 0.3, (e, w, length, 3))
+    return np.concatenate([slow, fast], -1).astype(np.float32)
+
+
+def test_sigreg_gradient_is_the_gradient_of_the_value():
+    rng = np.random.default_rng(0)
+    frames = rng.normal(size=(32, 5)).astype(np.float32)
+    value, grad = pr.sigreg_gradient(frames, seed=3)
+    assert grad.shape == frames.shape and np.isfinite(grad).all()
+    step = 1e-3 * grad / np.linalg.norm(grad)
+    after, _ = pr.sigreg_gradient(frames - step, seed=3)  # same projections
+    assert after < value  # a small step against the gradient lowers it
+    clustered, _ = pr.sigreg_gradient(0.1 * frames, seed=3)
+    assert clustered > 5 * value  # a tight cloud is far from round
+
+
+def test_a_window_batch_asks_for_stretch_on_the_axes_that_move_inside():
+    x = slow_fast_latent()
+    flat = x.reshape(-1, 6)
+    mean = flat.mean(0)
+    axes = np.eye(6)
+    out = pr.axis_pressure(x, 'window', 8, mean, axes, n=30, seed=1)
+    expand = np.maximum(out['expand'], 0)
+    assert expand[3:].sum() / expand.sum() > 0.6  # the fast axes
+    assert out['within'][:3].max() < 1e-6  # nothing moves inside a window
+    assert out['within'][3:].min() > 0.05
+    assert out['batch'][:3].min() > 2.0  # but the windows differ
+    # a window's centre is far from 0: part of the gradient only shifts it
+    assert 0.0 < out['shift_share'] < 1.0
+    iid = pr.axis_pressure(x, 'iid', 8, mean, axes, n=30, seed=1)
+    assert out['value'] > iid['value']  # windows are the harder batch
+
+
+def test_axis_classes_and_class_shares():
+    r2_slow = np.array([0.9, 0.1, 0.1, 0.1])
+    r2_all = np.array([0.9, 0.8, 0.2, 0.1])
+    classes = pr.axis_classes(r2_slow, r2_all)
+    assert classes.tolist() == [0, 1, 2, 2]
+    p = {
+        'within': np.array([1.0, 2.0, 3.0, 4.0]),
+        'energy': np.array([4.0, 3.0, 2.0, 1.0]),
+        'expand': np.array([1.0, -1.0, 2.0, 1.0]),
+    }
+    shares = pr.by_class(p, classes, np.array([4.0, 3.0, 2.0, 1.0]))
+    assert [shares[c]['axes'] for c in pr.CLASSES] == [1, 1, 2]
+    for key in ('variance', 'within', 'energy', 'expand'):
+        assert sum(shares[c][key] for c in pr.CLASSES) == pytest.approx(1.0)
+    assert shares['explained']['expand'] == 0.0  # only positive values count

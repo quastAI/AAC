@@ -63,6 +63,23 @@ def timescale(x: np.ndarray, lags=(8,)) -> dict:
     }
 
 
+class Steps:
+    """A progress bar over the analysis steps with the current step named; `tick` advances it."""
+
+    def __init__(self, total: int):
+        from tqdm import tqdm
+
+        self.bar = tqdm(total=total, unit="step", dynamic_ncols=True)
+
+    def tick(self, message: str | None = None, n: int = 1):
+        if message:
+            self.bar.set_description(message)
+        self.bar.update(n)
+
+    def close(self):
+        self.bar.close()
+
+
 def whitened_reference(sample: dict, dims: int) -> np.ndarray:
     """The ground-truth groups, standardised and whitened to `dims` axes: what a latent that held the whole state would
     look like to SIGReg."""
@@ -78,39 +95,51 @@ def whitened_reference(sample: dict, dims: int) -> np.ndarray:
     return (((z - mean) @ axes[:, :dims]) / np.sqrt(values[:dims] + 1e-9)).astype(np.float32)
 
 
-def compute(sample, feats, *, run: Path | None, mlp: bool, n_batches: int, log=print) -> dict:
+def compute(sample, feats, *, run: Path | None, mlp: bool, n_batches: int, layout: bool = False, log=print) -> dict:
     t0 = time.time()
+    n, groups_n = len(feats), len(fa.GROUPS) + int(layout)
+    steps = Steps(
+        2 * n + (n + 1) + 2 * n * (2 if mlp else 1) + (2 * n * (1 + 2 * groups_n) if mlp else 0)
+        + (n - ("untrained" in feats) if run is not None else 0)
+    )
     out = {"names": list(feats), "windows": [int(v) for v in sample["rows"].shape[:3]], "scales": {}, "batches": {}}
     for name, f in feats.items():
         for feature in ("latent", "cls"):
+            steps.tick(f"time scales {feature}/{name}")
             out["scales"][f"{feature}/{name}"] = timescale(f[feature])
     log(f"time scales {time.time() - t0:.0f}s")
     dims = feats[next(iter(feats))]["latent"].shape[-1]
     reference = whitened_reference(sample, dims)
+    steps.tick("SIGReg of batches: whole state")
     out["batches"]["state"] = ba.compare(reference, BATCH_EPISODES, n=n_batches)
     for name, f in feats.items():
+        steps.tick(f"SIGReg of batches: {name}")
         out["batches"][name] = ba.compare(f["latent"], BATCH_EPISODES, n=n_batches)
     log(f"batches {time.time() - t0:.0f}s")
     split = fa.episode_split(len(sample["episode"]))
-    groups = fa.build_groups(sample)
+    groups = fa.build_groups(sample, layout=layout)
     targets = fa.scalar_targets(sample)
     out["costs"] = fa.costs(targets, sample["action"])
     out["decodability"], out["attribution"] = {}, {}
     for name, f in feats.items():
         for feature in ("latent", "cls"):
             key = f"{feature}/{name}"
+            steps.tick(f"factors, linear read: {key}")
             out["decodability"][key] = {"ridge": fa.decodability(f[feature], targets, split)}
             if mlp:
+                steps.tick(f"factors, MLP read: {key}")
                 out["decodability"][key]["mlp"] = fa.decodability(f[feature], targets, split, "mlp")
-                out["attribution"][key] = fa.attribution(f[feature], groups, split, "mlp")
+                steps.bar.set_description(f"groups -> latent, MLP: {key}")
+                out["attribution"][key] = fa.attribution(f[feature], groups, split, "mlp", progress=steps.tick)
     log(f"factors {time.time() - t0:.0f}s")
     if run is not None:
-        out["predictor"] = predictor(sample, feats, run)
+        out["predictor"] = predictor(sample, feats, run, steps)
         log(f"predictor {time.time() - t0:.0f}s")
+    steps.close()
     return out
 
 
-def predictor(sample, feats, run: Path) -> dict:
+def predictor(sample, feats, run: Path, steps: Steps | None = None) -> dict:
     from omegaconf import OmegaConf
 
     from . import encode as en
@@ -122,6 +151,8 @@ def predictor(sample, feats, run: Path) -> dict:
     for name, f in feats.items():
         if name == "untrained":  # a random predictor says nothing
             continue
+        if steps:
+            steps.tick(f"predictor: {name}")
         model = en.load_model(next(run.glob(f"*_epoch_{name.removeprefix('epoch')}_object.ckpt")))
         pred, target, last = pe.one_step(
             model.get_level(1), f["latent"], sample["action"], num_actions, history=history
@@ -382,10 +413,10 @@ def markdown(numbers: dict, lines: list[str], figs: list[str]) -> str:
         md.append(f"| {'whole state' if key == 'state' else key} | " + " | ".join(f"{r['raw'][0]:.2f} / {r['centered'][0]:.2f}" for r in rows) + " |")
     if numbers["attribution"]:
         md += ["", "## R^2 of the latent from groups of game factors (held-out episodes, MLP)", "",
-               "| | all | " + " | ".join(fa.GROUPS) + " (alone) | residual episode share (null) |", "|---|---|" + "---|" * (len(fa.GROUPS) + 1)]  # fmt: skip
+               "| | all | " + " | ".join(next(iter(numbers["attribution"].values()))["only"]) + " (alone) | residual episode share (null) |", "|---|---|" + "---|" * (len(next(iter(numbers["attribution"].values()))["only"]) + 1)]  # fmt: skip
         for key, a in numbers["attribution"].items():
             r = a["residual"]
-            md.append(f"| {key} | {a['all']:.2f} | " + " | ".join(f"{a['only'][g]:.2f}" for g in fa.GROUPS)
+            md.append(f"| {key} | {a['all']:.2f} | " + " | ".join(f"{a['only'][g]:.2f}" for g in a["only"])
                       + f" | {r['shares']['episode']:.2f} ({r['null']['episode'][0]:.2f}) |")  # fmt: skip
     if "predictor" in numbers:
         md += ["", "## Predictor error (one step, teacher-forced)", "", "| | error / variance | error / copy error | variance on free axes |", "|---|---|---|---|"]
@@ -401,6 +432,7 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--run", help="the run directory (checkpoints for the predictor); without it no predictor part")
     parser.add_argument("--no-mlp", action="store_true", help="skip the MLP fits (linear only)")
+    parser.add_argument("--layout", action="store_true", help="add the whole view map as a group (needs many episodes)")
     parser.add_argument("--batches", type=int, default=100, help="random batches per composition")
     args = parser.parse_args()
 
@@ -410,7 +442,7 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     sample, feats = load(Path(args.features))
-    numbers = compute(sample, feats, run=Path(args.run) if args.run else None, mlp=not args.no_mlp, n_batches=args.batches)
+    numbers = compute(sample, feats, run=Path(args.run) if args.run else None, mlp=not args.no_mlp, n_batches=args.batches, layout=args.layout)
     lines = reading(numbers)
     figs = figures(numbers, out)
     (out / "slowness_numbers.json").write_text(json.dumps(numbers, default=float))
