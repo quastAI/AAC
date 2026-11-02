@@ -493,7 +493,7 @@ def create_world_model(cfg):
 
         jepas.append(jepa)
 
-    world_model = HJEPA(jepas=jepas)
+    world_model = HJEPA(jepas=jepas, obs_key=str(cfg.get("obs_key", "pixels")))
     world_model.embed_dims = embed_dims
     world_model.pixel_embed_dims = pixel_embed_dims
     world_model.proprio_embed_dims = proprio_embed_dims

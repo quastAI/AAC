@@ -21,6 +21,8 @@ def build_encoder(
     Supports:
     - type: vit -> models.encoders.hf_vit.create_hf_vit
     - type: mlp -> models.module.MLP
+    - type: state_mlp -> models.module.MLP on the simulator `state` (README, ids A3 and A4); the keys of a pixel encoder
+      (`scale`) are ignored, so a state config can extend the pixel one
     - type: latent_mlp -> models.module.ResidualLatentMLP
     - type: seq_encoder -> models.encoders.seq_encoder.FlattenedSequenceEncoder
     - type: identity -> torch.nn.Identity
@@ -55,6 +57,10 @@ def build_encoder(
 
     if encoder_type == "mlp":
         return build_mlp_encoder(encoder_kwargs)
+
+    if encoder_type == "state_mlp":
+        keep = {"input_dim", "hidden_dim", "output_dim", "final_ln"}
+        return build_mlp_encoder({k: v for k, v in encoder_kwargs.items() if k in keep})
 
     if encoder_type == "latent_mlp":
         return build_latent_mlp_encoder(encoder_kwargs)

@@ -136,19 +136,35 @@ experiments:
       - {name: A2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.map_coeff=0.1]}
     probe: [B1, A2]
 
-  # The MLP-JEPA on the simulator state (state_jepa, settled 2026-11-02): B1's losses without the pixels, the ViT and the CLS
-  # token. Its first epoch is read at many steps (from the untrained encoder on) to see whether the encoder removes what the
-  # predictor cannot predict yet, before the predictor learns it. A laptop CPU is enough (about 10 minutes a run):
-  # notebooks/local_A3_A4.ipynb, no pod. Ablations: the encoder reads the simulator's state.
-  A3:
-    title: Ablation (not a model candidate), B1's losses on an MLP encoder of the simulator state instead of the pixels (no ViT, no CLS token); its first epoch, read every few hundred steps
-    local: true  # minutes on a laptop CPU
+  # The race of the first epochs (README, ids B2, V3, A3, A4): the hypothesis is that the encoder removes, from the first steps, the
+  # variance the predictor cannot predict yet, before the predictor learns it. `dense_checkpoints` saves the model at many steps of
+  # the first two epochs (step 0 is the untrained model); `trace: true` reads the latent of every checkpoint after the training
+  # (`race.evaluate`, then `race.report`). B2 is B1 again, stopped after epoch 2 with the 10-epoch schedule kept; V3 is B1 with the
+  # prediction target detached (stop-gradient, the direct test); A3 and A4 are B2/V3's twins with an MLP encoder on the simulator
+  # state instead of the ViT on the pixels (the 2x2: pixels/state x gradient through the target/stop-gradient). All run 10 epochs on
+  # a pod except B2.
+  B2:
+    title: B1 again with dense checkpoints in the first two epochs (stopped after epoch 2, the 10-epoch schedule kept); the latent read at every checkpoint
     runs:
-      - {name: A3, script: state_jepa, args: [--epochs, 1]}
+      - {name: B2, config: craftax_hjepa, probe: false, trace: true, overrides: [num_levels=1, dense_checkpoints.enabled=true, dense_checkpoints.stop_after_epochs=2, health.probe_at_end=false]}
+
+  V3:
+    title: Variant, B1 with the prediction target detached (stop-gradient; SIGReg and the IDM are not), against B1; dense checkpoints in the first two epochs; cheap planning (set A)
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: B1, train: false, eval: craftax_plan}
+      - {name: B2, train: false, trace: true}  # the twin with the gradient through the target, read at the same steps
+      - {name: V3, config: craftax_hjepa, eval: craftax_plan, trace: true, overrides: [num_levels=1, level1.wm.detach_pred_target=true, dense_checkpoints.enabled=true]}
+    probe: [B1, V3]
+
+  A3:
+    title: Ablation (not a model candidate), B1 with an MLP encoder on the simulator state instead of the ViT on the pixels (no CLS token); dense checkpoints in the first two epochs
+    runs:
+      - {name: A3, config: craftax_hjepa_state, probe: false, trace: true, overrides: [num_levels=1, dense_checkpoints.enabled=true]}
 
   A4:
-    title: Ablation (not a model candidate), A3 with the prediction target detached (stop-gradient), against A3; does the target path remove what A3 loses
-    local: true
+    title: Ablation (not a model candidate), A3 with the prediction target detached (stop-gradient), against A3 (the state twin of V3)
     runs:
-      - {name: A3, train: false}  # the reference, trained in A3
-      - {name: A4, script: state_jepa, args: [--epochs, 1, --stop-grad]}
+      - {name: A3, train: false, trace: true}
+      - {name: A4, config: craftax_hjepa_state, probe: false, trace: true, overrides: [num_levels=1, level1.wm.detach_pred_target=true, dense_checkpoints.enabled=true]}

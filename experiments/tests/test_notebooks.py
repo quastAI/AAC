@@ -10,7 +10,9 @@ import pytest
 
 NOTEBOOK_DIR = Path(__file__).parents[2] / 'notebooks'
 NOTEBOOKS = sorted(NOTEBOOK_DIR.glob('*.ipynb'))
-VARIANTS = sorted(NOTEBOOK_DIR.glob('runpod_[VA][0-9]*.ipynb'))  # one per pod run, named by its id
+PODS = sorted(NOTEBOOK_DIR.glob('runpod_[VAB][0-9]*.ipynb'))  # one per pod run, named by its id
+VARIANTS = [p for p in PODS if 'REFERENCE = ' in p.read_text()]  # compared with B1, planned on set A
+TRACES = [p for p in PODS if 'COMPARE = ' in p.read_text()]  # the race: dense checkpoints, read after the training
 POD = (NOTEBOOK_DIR / 'pod.py').read_text()
 sys.path.insert(0, str(NOTEBOOK_DIR))
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -116,14 +118,20 @@ def variant_config(path):
     return exp, reference
 
 
-def test_every_variant_has_its_own_notebook():
-    spec = run.load_spec()
-    variants = {  # variants and ablations trained on a pod; local ones have their own notebook
+def pod_experiments(spec, planned):
+    """Experiments with a trained run that run on a pod: those with planning (`protocols`: variants and ablations compared
+    with B1) or without (the race runs, `trace` on their run)."""
+    return {
         exp_id
         for exp_id, e in spec['experiments'].items()
-        if exp_id[0] in 'VA' and not e.get('blocked') and not e.get('local')
+        if exp_id[0] in 'VAB' and exp_id != 'B1' and not e.get('blocked')
+        and bool(e.get('protocols')) == planned
         and any(r.get('train', True) for r in e.get('runs', []))
     }
+
+
+def test_every_variant_has_its_own_notebook():
+    spec = run.load_spec()
     found = set()
     for path in VARIANTS:
         exp, reference = variant_config(path)
@@ -134,7 +142,7 @@ def test_every_variant_has_its_own_notebook():
             r['name'] == reference and not r.get('train', True) for r in runs
         )
         found.add(exp)
-    assert found == variants
+    assert found == pod_experiments(spec, planned=True)
 
 
 def test_the_variant_notebooks_differ_only_in_title_and_configuration():
@@ -180,25 +188,79 @@ def test_a_variant_notebook_runs_its_run_against_the_reference():
     assert 'eval_A_val_craftax_plan' in text
 
 
-def test_the_local_notebook_runs_the_local_experiments():
+def trace_config(path):
+    config = cells_of(path)[1]
+    exp = re.search(r'EXPERIMENT = "(\w+)"', config).group(1)
+    compare = re.search(r'COMPARE = \[([^\]]*)\]', config).group(1)
+    return exp, re.findall(r'"(\w+)"', compare)
+
+
+def test_every_race_run_has_its_own_notebook():
     spec = run.load_spec()
-    local = sorted(e for e, x in spec['experiments'].items() if x.get('local'))
-    assert local == ['A3', 'A4']
-    text = text_of('local_A3_A4.ipynb')
-    for exp in local:
-        assert f'"run", "{exp}"' in text, exp
-    # A3 first: it is A4's reference
-    assert text.index('"run", "A3"') < text.index('"run", "A4"')
+    found = set()
+    for path in TRACES:
+        exp, compare = trace_config(path)
+        assert path.name == f'runpod_{exp}.ipynb'
+        runs = spec['experiments'][exp]['runs']
+        trained = [r for r in runs if r.get('train', True)]
+        assert [r['name'] for r in trained] == [exp] and trained[0]['trace']
+        assert trained[0]['overrides'].count('dense_checkpoints.enabled=true')
+        found.add(exp)
+    assert found == pod_experiments(spec, planned=False) == {'B2', 'A3', 'A4'}
+    # the 2x2 of the race: every run read at many steps
+    traced = {
+        r['name']
+        for e in spec['experiments'].values()
+        for r in e.get('runs', [])
+        if r.get('trace') and r.get('train', True)
+    }
+    assert set(trace_config(TRACES[0])[1]) == traced == {'B2', 'V3', 'A3', 'A4'}
+
+
+def test_the_race_notebooks_differ_only_in_title_and_configuration():
+    first = cells_of(TRACES[0])
+    exp0, _ = trace_config(TRACES[0])
+    for path in TRACES[1:]:
+        cells = cells_of(path)
+        exp, _ = trace_config(path)
+        assert len(cells) == len(first), path.name
+        assert cells[1].replace(
+            f'EXPERIMENT = "{exp}"', ''
+        ) == first[1].replace(f'EXPERIMENT = "{exp0}"', '')
+        for i, (a, b) in enumerate(zip(first[2:], cells[2:]), start=2):
+            assert a == b, (path.name, i)  # copies must not drift
+
+
+def test_a_race_notebook_smokes_the_dense_checkpoints_and_the_readout():
+    text = '\n'.join(cells_of(TRACES[0]))
     for needle in (
-        'state_jepa.train',  # the smoke run
-        '--max-steps',
-        "'relabel' in f.attrs",  # the files hold the executed actions
-        'symlink_to',  # the episode files are linked, not copied
-        'OMP_NUM_THREADS',
-        'A4_trace.md',
-        'REPO / "reports" / "A3_A4"',
+        'launch(EXPERIMENT',
+        '"dense_checkpoints.steps=[5,10]"',  # the smoke run saves dense steps
+        '"dense_checkpoints.stop_after_epochs=null"',
+        '"-m", "race.evaluate"',  # and reads them
+        '"-m", "race.report"',  # the four runs side by side
+        'only="race/"',  # the others' readouts, not their models
+        'f"{EXPERIMENT}_*.png"',
     ):
         assert needle in text, needle
+    exp, _ = trace_config(TRACES[0])
+    jobs = run.build_jobs(run.load_spec(), exp, [42], home='/data')
+    assert [j.name for j in jobs if j.kind == 'compare'][0].endswith('_trace')
+    assert any(j.name == f'trace_{exp}_s42' for j in jobs)
+
+
+def test_a_variant_that_is_traced_fetches_the_race_of_its_reference():
+    spec = run.load_spec()
+    assert pod.traced_references.__name__ == 'traced_references'
+    refs = [
+        r['name']
+        for r in spec['experiments']['V3']['runs']
+        if r.get('trace') and not r.get('train', True)
+    ]
+    assert refs == ['B2']  # V3's race report puts B2 next to it
+    assert 'pod.traced_references(EXPERIMENT)' in '\n'.join(
+        cells_of(NOTEBOOK_DIR / 'runpod_V3.ipynb')
+    )
 
 
 def test_the_relabel_notebook_checks_before_it_replaces_the_hub_files():
@@ -418,6 +480,23 @@ def test_fetch_takes_a_run_folder_from_the_hub(pod_dirs):
     assert (run / 'flat_object.ckpt').read_text() == 'hub'
 
 
+def test_fetch_can_take_only_the_readouts_of_a_run(pod_dirs):
+    hub = [
+        'runs/B2/seed42/config.yaml',
+        'runs/B2/seed42/B2_object.ckpt',
+        'runs/B2/seed42/race/trace.json',
+        'runs/B2/seed42/race/meta.json',
+    ]
+    downloaded = []
+    pod.fetch(
+        FakeApi(hub), 'org/repo', 'B2/seed42',
+        download=fake_download(pod_dirs, downloaded), only='race/',
+    )
+    assert downloaded == hub[2:]
+    assert (pod.run_dir('B2') / 'race' / 'trace.json').exists()
+    assert not (pod.run_dir('B2') / 'B2_object.ckpt').exists()
+
+
 def test_fetch_keeps_what_the_volume_has_and_finds_other_layouts(pod_dirs):
     run = pod.run_dir('flat')
     run.mkdir(parents=True)
@@ -480,7 +559,7 @@ def test_upload_leaves_out_the_training_state_and_smoke_runs(pod_dirs):
     runs, reports = api.uploads
     assert runs['path_in_repo'] == 'runs'
     assert runs['allow_patterns'] == ['flat_x/**', 'flat/**']
-    for pattern in ('**/lightning_resume/**', '*_epoch_*_object.ckpt', '*_smoke/**'):
+    for pattern in ('**/lightning_resume/**', '*_epoch_*_object.ckpt', '*_step_*_object.ckpt', '*_smoke/**'):
         assert pattern in runs['ignore_patterns']
     assert reports['allow_patterns'] == ['V1_x_*.md']
     pod.upload(api, 'org/repo')

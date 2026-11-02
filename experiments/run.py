@@ -55,15 +55,6 @@ def folder_of(spec: dict, model: str) -> str:
     return model
 
 
-def script_of(spec: dict, model: str) -> str | None:
-    """The training script of a model id that is not trained by `main_hjepa.py` (`state_jepa` for A3 and A4), else None."""
-    for exp in spec["experiments"].values():
-        for r in exp.get("runs", []):
-            if r["name"] == model and r.get("train", True):
-                return r.get("script")
-    return None
-
-
 def _eval_dir(home, model, seed, protocol, split, eval_name, suffix="") -> str:
     # the split is part of the path: exploration (val worlds) and headline (test worlds) results never share a directory
     return f"{_run_dir(home, model, seed)}/eval_{protocol}_{split}_{eval_name}{suffix}"
@@ -209,20 +200,13 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
         folder = folder_of(spec, run.get("model", run["name"]))
         for seed in seeds:
             train_name = None
-            if run.get("train", True) and run.get("script") == "state_jepa":  # A3, A4: the MLP-JEPA on the state, a laptop is enough
-                directory = _run_dir(home, folder, seed)
-                cmd = [python, "-m", "state_jepa.train", "--train-file", f"{home}/{train_ds}.h5", "--val-file", f"{home}/{val_ds}.h5",
-                       "--out", directory, "--seed", str(seed), *map(str, run.get("args", []))]  # fmt: skip
-                train_name = f"train_{run['name']}_s{seed}"
-                # model.pt is written at the end (trace.json grows during the run, so it does not mean done)
-                jobs.append(Job(train_name, "train", cmd, output=f"{directory}/model.pt"))
-            elif run.get("train", True):
+            if run.get("train", True):
                 cmd = [python, "main_hjepa.py", "--config-name", run["config"], f"output_model_name={folder}",
                        f"seed={seed}", f"data.dataset.name={train_ds}", f"data.dataset.val_name={val_ds}",
                        *run.get("overrides", []), *overrides]  # fmt: skip
                 train_name = f"train_{run['name']}_s{seed}"
                 jobs.append(Job(train_name, "train", cmd, output=f"{_run_dir(home, folder, seed)}/{folder}_object.ckpt"))
-            for p in protocols:
+            for p in protocols if run.get("eval") else []:  # a run without `eval` is only read (B2's race in V3)
                 t = spec["tasks"][p]
                 suffix = f"_x{run['planner_scale']}" if "planner_scale" in run else ""
                 directory = _eval_dir(home, folder, seed, p, split, run["eval"], suffix)
@@ -262,7 +246,18 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
                             output=f"{_run_dir(home, folder, seed)}/health/probe_report.md"))  # fmt: skip
             probes.append(f"{model}_s{seed}={_run_dir(home, folder, seed)}")
 
-    traced = [r for r in exp.get("runs", []) if script_of(spec, r.get("model", r["name"])) == "state_jepa"]
+    traced = []  # `trace: true` on a run: its checkpoints are read at many steps (race.evaluate), after its training
+    for run in exp.get("runs", []):
+        if not run.get("trace"):
+            continue
+        folder = folder_of(spec, run.get("model", run["name"]))
+        for seed in seeds:
+            directory = _run_dir(home, folder, seed)
+            traced.append(f"{run['name']}_s{seed}={directory}")
+            if run.get("train", True):
+                cmd = [python, "-m", "race.evaluate", "--run", directory, "--val-file", f"{home}/{val_ds}.h5"]
+                jobs.append(Job(f"trace_{run['name']}_s{seed}", "probe", cmd, after=[f"train_{run['name']}_s{seed}"],
+                                output=f"{directory}/race/trace_done"))  # fmt: skip
     flag = "--scaling" if exp.get("compare") == "scaling" else "--planning"
     report = f"{exp_id}_{tag}" if tag and tag != exp_id else exp_id  # one pod per run: `run.py run V1 --run V1` is V1
     for p, dirs in eval_dirs.items():  # one comparison per protocol: the baseline differs between task sets
@@ -272,21 +267,22 @@ def build_jobs(spec: dict, exp_id: str, seeds: list[int], overrides=(), home: st
             cmd += ["--baseline", "random"]
         after = [j.name for j in jobs if j.kind == "eval" and j.name.endswith(f"_{p}")]
         jobs.append(Job(f"compare_{exp_id}_{p}", "compare", cmd, after=after, output=out, cwd=ROOT))
-    if traced:  # the readouts of the MLP-JEPA runs over their steps, side by side
+    if traced:  # the readouts of the traced runs over their steps, side by side
         out = f"{home}/reports/{report}_trace.md"
-        cmd = [python, "-m", "state_jepa.report", "--out", out,
-               *[f"{r['name']}_s{s}={_run_dir(home, folder_of(spec, r.get('model', r['name'])), s)}" for r in traced for s in seeds]]  # fmt: skip
-        after = [j.name for j in jobs if j.kind == "train"]
-        jobs.append(Job(f"compare_{exp_id}_trace", "compare", cmd, after=after, output=out))
-    trained = [r for r in exp.get("runs", []) if r.get("train", True) and not r.get("script")]
+        cmd = [python, "-m", "race.report", "--out", out, *traced]
+        jobs.append(Job(f"compare_{exp_id}_trace", "compare", cmd, after=[j.name for j in jobs if j.name.startswith("trace_")], output=out))
+    trained = [r for r in exp.get("runs", []) if r.get("train", True)]
     if trained or probes:
         out = f"{home}/reports/{report}_models.md"
         cmd = [python, str(ROOT / "analysis" / "compare_runs.py"), "--out", out]
         if trained:  # with the reference runs (trained before), which the trained ones are compared against
             cmd += ["--training", *[f"{r['name']}_s{s}={_run_dir(home, folder_of(spec, r.get('model', r['name'])), s)}"
                                     for r in exp.get("runs", []) for s in seeds]]  # fmt: skip
-        probed = probes or [f"{r['name']}_s{s}={_run_dir(home, folder_of(spec, r['name']), s)}" for r in trained for s in seeds]
-        cmd += ["--probing", *probed]
+        # a run without `probe: false` is probed at the end of its training (the state runs and the stopped ones are not)
+        probed = probes or [f"{r['name']}_s{s}={_run_dir(home, folder_of(spec, r['name']), s)}"
+                            for r in trained if r.get("probe", True) for s in seeds]  # fmt: skip
+        if probed:
+            cmd += ["--probing", *probed]
         after = [j.name for j in jobs if j.kind in ("train", "probe")]
         jobs.append(Job(f"compare_{exp_id}_models", "compare", cmd, after=after, output=out, cwd=ROOT))
     return jobs

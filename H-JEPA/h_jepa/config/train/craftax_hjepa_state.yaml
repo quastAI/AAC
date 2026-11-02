@@ -1,0 +1,25 @@
+# Craftax-Classic: B1's model with an MLP encoder of the simulator state instead of the ViT of the pixels (README ids A3 and A4).
+# An ablation, never a model candidate: the encoder reads the `state` column (1345 floats per frame: block type and mobs of the 63 view
+# tiles, inventory, vitals, facing, daylight, sleeping), which a real agent would not have. Everything else is the flat baseline's: the
+# projector (an MLP with BatchNorm into the latent of 192), the causal predictor, the losses (prediction, SIGReg 0.09, IDM 0.1), the
+# optimiser, the schedule and the data (clips of 4 frames, the dead frame padded after a death). The ViT has no counterpart here: there is
+# no patch grid to pool into one vector. Use it with `num_levels=1`; the probe suite and the planning evaluation read pixels and are off.
+defaults:
+- craftax_hjepa
+- _self_
+output_model_name: craftax_hjepa_state
+obs_key: state
+data:
+  dataset:
+    keys_to_load:
+    - state  # the observation (float32, never z-scored: data.RAW_COLUMNS)
+    - action
+    - source
+level1:
+  encoder:
+    type: state_mlp
+    input_dim: 1345  # probing.targets.STATE_DIM
+    hidden_dim: 1024
+    output_dim: ${level1.wm.embed_dim}  # the projector (MLP, BatchNorm) then maps it to the latent, as it maps the ViT's CLS token in B1
+health:
+  probe_at_end: false  # the probe suite reads pixels, ViT tokens and the CLS token

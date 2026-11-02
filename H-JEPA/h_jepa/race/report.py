@@ -1,9 +1,9 @@
-"""The runs of the MLP-JEPA side by side: what the latent holds over the steps of the training.
+"""The runs of the race side by side: what the latent holds over the steps of the training.
 
-    python -m state_jepa.report --out <report.md> A3_s42=<run dir> A4_s42=<run dir>
+    python -m race.report --out <report.md> B2=<run dir> V3=<run dir> A3=<run dir> A4=<run dir>
 
 Writes the markdown table (selected steps and the last one, per run) and `<report>.png` (one panel per readout, the steps
-on a log scale, one line per run). A run is a directory of `state_jepa.train` (its `trace.json` and `config.json`).
+on a log scale, one line per run). A run is a run directory of the training with `race/trace.json` and `race/meta.json` (`race.evaluate`).
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ from pathlib import Path
 FACTORS = ("mob:cow", "mob:zombie", "mob:skeleton", "mob:arrow", "view:iron", "view:coal", "view:diamond", "view:lava",
            "view:grass", "vital:food", "inv:wood", "daylight")  # fmt: skip
 LATENT = ("near", "rank", "dead_axes", "clip_share", "pred_over_copy")
-STEPS = (0, 100, 500, 1000, 2000)
+STEPS = (0, 50, 100, 300, 1000, 2000, 5000, 15000)
 
 
 def load(run: Path) -> tuple[dict, list[dict]]:
-    return json.loads((run / "config.json").read_text()), json.loads((run / "trace.json").read_text())
+    return json.loads((run / "race" / "meta.json").read_text()), json.loads((run / "race" / "trace.json").read_text())
 
 
 def value(entry: dict, key: str):
@@ -71,16 +71,14 @@ def figure(runs: dict[str, tuple[dict, list[dict]]], path: Path) -> None:
 
 
 def markdown(runs: dict[str, tuple[dict, list[dict]]], figure_name: str) -> str:
-    md = ["# MLP-JEPA on the state: what the latent holds over the training", "",
+    md = ["# What the latent holds over the first steps of the training", "",
           "Linear read (ridge, held-out episodes) of the latent at each check; `near`: the four tiles next to the player; "
           "`rank`: effective rank; `dead_axes`: principal axes under a tenth of the mean variance; `clip_share`: the "
           "variance inside a clip of 4 frames; `pred_over_copy`: the one-step error over copying the last latent. Step 0 is "
-          "the untrained encoder.", ""]  # fmt: skip
-    for name, (cfg, trace) in runs.items():
-        m = cfg["model"]
-        md.append(f"- **{name}**: stop-grad {m['stop_grad']}, latent {m['latent_dim']}, history {m['history']}, SIGReg {m['sigreg']}, "
-                  f"IDM {m['idm']}, lr {cfg['args']['lr']}, {cfg['steps']} steps ({cfg['steps'] / max(cfg['steps_per_epoch'], 1):.2f} epochs), "
-                  f"{len(trace)} checks")  # fmt: skip
+          "the untrained encoder; steps are checkpoints, the epoch ends are the multiples of the steps per epoch.", ""]  # fmt: skip
+    for name, (meta, trace) in runs.items():
+        md.append(f"- **{name}** ({meta['run']}): encoder reads {meta['obs_key']}, stop-grad {meta['stop_grad']}, history {meta['history']}, "
+                  f"SIGReg {meta['sigreg']}, {meta['steps_per_epoch']} steps per epoch, {len(trace)} checks, last step {trace[-1]['step']}")  # fmt: skip
     return "\n".join(md + [""] + table(runs) + ["", f"![{figure_name}]({figure_name})", ""])
 
 

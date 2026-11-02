@@ -187,30 +187,44 @@ def test_the_balanced_ablation_is_one_change_against_the_baseline(spec):
     assert a1['compare_A1_A'].output.endswith('A1_A_val.md')
 
 
-def test_the_state_mlp_runs_are_trained_by_their_script_and_compared(spec):
-    a3 = by_name(jobs_of(spec, 'A3'))
-    train = a3['train_A3_s42']
-    assert train.command[:3] == ['python', '-m', 'state_jepa.train']
-    assert '--stop-grad' not in train.command
-    assert '/data/craftax_expert_train.h5' in train.command
-    assert '/data/craftax_expert_val.h5' in train.command  # read on held-out worlds
-    out = train.command[train.command.index('--out') + 1]
-    assert out == '/data/ckpts/craftax/A3/seed42'
-    # the trace grows during the run: only the model at its end means done
-    assert train.output == '/data/ckpts/craftax/A3/seed42/model.pt'
-    # no planning, no probe suite, no Hydra overrides for these
-    assert not any(j.kind in ('eval', 'probe', 'tasks') for j in a3.values())
-    assert 'compare_A3_models' not in a3
-    a4 = by_name(jobs_of(spec, 'A4', overrides=['level1.lr=1e-4']))
-    assert '--stop-grad' in a4['train_A4_s42'].command  # the one change
-    assert 'level1.lr=1e-4' not in a4['train_A4_s42'].command
-    assert 'train_A3_s42' not in a4  # A3 is the reference, trained in A3
+def test_the_race_runs_are_traced_after_their_training_and_compared(spec):
+    b2 = by_name(jobs_of(spec, 'B2'))
+    train = b2['train_B2_s42'].command
+    assert 'dense_checkpoints.enabled=true' in train
+    assert 'dense_checkpoints.stop_after_epochs=2' in train  # B1's schedule
+    trace = b2['trace_B2_s42']
+    assert trace.command[:3] == ['python', '-m', 'race.evaluate']
+    assert trace.command[trace.command.index('--run') + 1] == '/data/ckpts/craftax/B2/seed42'
+    assert '/data/craftax_expert_val.h5' in trace.command  # held-out worlds
+    assert trace.after == ['train_B2_s42']
+    assert trace.output == '/data/ckpts/craftax/B2/seed42/race/trace_done'  # trace.json grows
+    # no planning for B2, and no probe suite of its own (it is stopped after 2 epochs)
+    assert not any(j.kind in ('eval', 'tasks') for j in b2.values())
+    assert '--probing' not in b2['compare_B2_models'].command
+    # the state twins: B1's config with the MLP encoder; A4's one change is the stop-gradient
+    a3 = by_name(jobs_of(spec, 'A3'))['train_A3_s42'].command
+    assert a3[a3.index('--config-name') + 1] == 'craftax_hjepa_state'
+    assert not any('detach_pred_target' in c for c in a3)
+    a4 = by_name(jobs_of(spec, 'A4'))
+    train = a4['train_A4_s42'].command
+    assert 'level1.wm.detach_pred_target=true' in train
+    assert 'train_A3_s42' not in a4 and 'trace_A3_s42' not in a4  # the reference was trained and traced in A3
     report = a4['compare_A4_trace']
-    assert report.command[:3] == ['python', '-m', 'state_jepa.report']
+    assert report.command[:3] == ['python', '-m', 'race.report']
     assert 'A3_s42=/data/ckpts/craftax/A3/seed42' in report.command
     assert 'A4_s42=/data/ckpts/craftax/A4/seed42' in report.command
-    assert report.after == ['train_A4_s42'] and report.output == '/data/reports/A4_trace.md'
-    assert spec['experiments']['A3'].get('local') and spec['experiments']['A4'].get('local')
+    assert report.after == ['trace_A4_s42'] and report.output == '/data/reports/A4_trace.md'
+
+
+def test_v3_is_b1_with_the_target_detached_and_is_planned_and_traced(spec):
+    v3 = by_name(jobs_of(spec, 'V3'))
+    train = v3['train_V3_s42'].command
+    assert 'level1.wm.detach_pred_target=true' in train and 'dense_checkpoints.enabled=true' in train
+    assert 'dense_checkpoints.stop_after_epochs=2' not in train  # all 10 epochs
+    assert 'eval_V3_s42_A' in v3 and 'probe_V3_s42' in v3
+    assert 'train_B2_s42' not in v3  # B2 is the twin with the gradient, trained in B2
+    assert 'B2_s42=/data/ckpts/craftax/B2/seed42' in v3['compare_V3_trace'].command
+    assert 'V3_s42=/data/ckpts/craftax/V3/seed42' in v3['compare_V3_trace'].command
 
 
 def test_a_probe_of_an_existing_run_has_no_training(spec):

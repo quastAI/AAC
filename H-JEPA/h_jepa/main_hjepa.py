@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from cpu_threads import limit_threads
 from hjepa_utils import create_world_model, hjepa_forward
 from utils import (
+    DenseCheckpoints,
     ModelObjectCallBack,
     local_spt_dir,
     DebugArtifactCleanupCallback,
@@ -288,6 +289,13 @@ def run(cfg):
         filename=cfg.output_model_name,
         epoch_interval=int(cfg.save_every_n_epochs),
     )
+    dense_cfg = cfg.get("dense_checkpoints", None)
+    dense_callbacks = []
+    if dense_cfg is not None and dense_cfg.enabled:
+        dense_callbacks.append(DenseCheckpoints(
+            run_dir, cfg.output_model_name, steps=dense_cfg.steps, every=dense_cfg.every, epochs=dense_cfg.epochs,
+            stop_after_epochs=dense_cfg.get("stop_after_epochs", None),
+        ))
     debug_cleanup_callback = DebugArtifactCleanupCallback(
         enabled=bool(cfg.get("quick_debug", False)),
         run_dir=run_dir,
@@ -322,6 +330,7 @@ def run(cfg):
             frames=int(health_cfg.long_clip_frames),
             batch_size=int(health_cfg.clip_batch_size),
             max_clips=int(health_cfg.max_clips),
+            columns=(str(cfg.get("obs_key", "pixels")), "action"),  # the state of A3 and A4 instead of the pixels
         )
         if health_loader is None:
             logging.warning("health: no validation clips; per-epoch drift and geometry metrics are off")
@@ -350,6 +359,7 @@ def run(cfg):
         *health_callbacks,
         debug_cleanup_callback,
         object_dump_callback,
+        *dense_callbacks,
         planning_eval_callback,
         final_probing_decoding_eval_callback,
         lr_callback,

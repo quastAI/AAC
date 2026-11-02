@@ -225,13 +225,28 @@ def folder_of(model):
     return out.stdout.strip()
 
 
-def fetch(api, repo_id, folder, required=True, download=None):
+def traced_references(experiment):
+    """The models of an experiment that are read at many steps but trained elsewhere (`train: false`, `trace: true`: B2 in V3),
+    whose `race/` files `fetch(..., only="race/")` takes from the Hub."""
+    script = ("import json, sys, yaml; spec = yaml.safe_load(open(sys.argv[1])); "
+              "print(json.dumps([r.get('model', r['name']) for r in spec['experiments'][sys.argv[2]].get('runs', []) "
+              "if r.get('trace') and not r.get('train', True)]))")  # fmt: skip
+    out = subprocess.run([PYTHON, "-c", script, REPO / "experiments" / "experiments.yaml", experiment],
+                         env=ENV, capture_output=True, text=True)  # fmt: skip
+    assert out.returncode == 0, f"{experiment}: {out.stderr.strip().splitlines()[-1:]}"
+    return json.loads(out.stdout)
+
+
+def fetch(api, repo_id, folder, required=True, download=None, only=None):
     """Copy a folder of ckpts/craftax (a run `flat/seed42`, the baseline `random/eval_A_val`) from `runs/` of the Hub repo,
-    where the notebooks upload them, to this pod; files the volume has already are kept. Returns the copied Hub paths."""
+    where the notebooks upload them, to this pod; files the volume has already are kept. `only` keeps the files under that
+    path of the folder (`race/`: the readouts of a run, not its model). Returns the copied Hub paths."""
     if download is None:
         from huggingface_hub import hf_hub_download as download
     key = f"/{folder.strip('/')}/"
     hub = [f for f in api.list_repo_files(repo_id, repo_type="dataset") if f.startswith("runs/") and key in "/" + f]
+    if only:
+        hub = [f for f in hub if ("/" + f).split(key, 1)[1].startswith(only)]
     prefixes = sorted({("/" + f).split(key)[0] for f in hub})
     if not hub:
         assert not required, f"{folder} is neither on this pod nor under runs/ in {repo_id}"
@@ -269,13 +284,13 @@ def current_probe_report(run) -> bool:
     return False
 
 
-UPLOAD_IGNORE = ["**/lightning_resume/**", "*_epoch_*_object.ckpt", "*_smoke/**", "**/hydra/**", "**/spt/**", "**/spt_volume*/**"]
+UPLOAD_IGNORE = ["**/lightning_resume/**", "*_epoch_*_object.ckpt", "*_step_*_object.ckpt", "*_smoke/**", "**/hydra/**", "**/spt/**", "**/spt_volume*/**"]
 
 
 def upload(api, repo_id, folders=None, reports=("B*.md", "P*.md", "V*.md", "A*.md", "F*.md")):
     """Runs (`folders` of ckpts/craftax, all by default) to runs/ and the comparison reports to reports/ of the Hub repo
     (by experiment id; `F*.md` are the reports named before the ids). Left out: the resumable training state, the
-    per-epoch models and the smoke runs."""
+    per-epoch and dense models (`race/` holds their readouts) and the smoke runs."""
     allow = [f"{f.strip('/')}/**" for f in folders] if folders else None
     api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=str(DATA / "ckpts" / "craftax"), path_in_repo="runs",
                       allow_patterns=allow, ignore_patterns=UPLOAD_IGNORE)  # fmt: skip

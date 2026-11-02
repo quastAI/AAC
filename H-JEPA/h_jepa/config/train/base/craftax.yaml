@@ -42,8 +42,18 @@ seed: 42
 img_size: 63
 patch_size: 7
 encoder_scale: tiny
+obs_key: pixels  # the level-1 observation the encoder reads; `state` (the simulator state, README ids A3 and A4) is craftax_hjepa_state
 dump_object: true
 save_every_n_epochs: 1
+# Dense checkpoints for the race of the first epochs (README ids B2, V3, A3, A4): the model is saved as <name>_step_<N>_object.ckpt at the
+# untrained start, at `steps` and then every `every` steps, while the run is within its first `epochs` epochs (utils.DenseCheckpoints);
+# `stop_after_epochs` ends the run there (the schedule stays the one of trainer.max_epochs). `race.evaluate` reads them.
+dense_checkpoints:
+  enabled: false
+  steps: [50, 100, 200, 300, 500, 750, 1000, 1500, 2000]
+  every: 1000
+  epochs: 2
+  stop_after_epochs: null
 spt_dir: null  # a local folder for stable-pretraining's logs and checkpoints (<run>/spt then links to it; the notebook sets it): they are written at every logging step
 resume_every_n_steps: 2000  # full-state resume checkpoint (0 = off), see utils.ResumeCheckpoint
 grad_clip_per_level: true  # each level clips its own gradient norm (trainer.gradient_clip_val), as in the DROID recipe
@@ -127,6 +137,7 @@ level1:
     embed_dim: 192
     use_proprio: false
     num_actions: 17  # discrete actions, one-hot encoded (see data.OneHotColumn)
+    detach_pred_target: false  # stop-gradient on the prediction target (README ids V3 and A4): the prediction loss then reaches the encoder only through the context; SIGReg and the IDM are not detached
   action_embed:
     type: linear  # one action per step: a lookup table for the one-hot, no conv and no hidden layer
   encoder:

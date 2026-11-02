@@ -8,13 +8,20 @@ from torch import nn
 class HJEPA(nn.Module):
 	"""Hierarchical container for multiple JEPA models.
 
+	`obs_key` names the level-1 observation the encoder reads ("pixels", or "state" for the simulator state, ids A3 and A4).
+	It is a class default, so models saved before it existed load as pixel models.
+
 	Args:
 		jepas: Ordered JEPA modules where jepas[0] is level 1,
 			jepas[1] is level 2, etc.
 	"""
 
-	def __init__(self, jepas: Sequence[nn.Module]):
+	obs_key = "pixels"
+
+	def __init__(self, jepas: Sequence[nn.Module], obs_key: str | None = None):
 		super().__init__()
+		if obs_key is not None:
+			self.obs_key = obs_key
 
 		if not isinstance(jepas, Sequence):
 			raise TypeError("jepas must be a sequence of nn.Module instances")
@@ -239,20 +246,21 @@ class HJEPA(nn.Module):
 			info[output_key] = value
 
 	def encode_hierarchical(self, info: dict, sparse_level1_encode: bool = True) -> dict:
-		"""Encode the level-1 sequence ("pixels_level1", "action_level1") through
+		"""Encode the level-1 sequence (`obs_key`_level1, "action_level1") through
 		all levels and randomly crop each level's outputs to its target length."""
 		level_info = self._collect_level_info(info, 1)
 		self._add_level_target_aliases(level_info, 1)
 		level1_working_keys = set(level_info)
 
-		seq_len = level_info["pixels"].size(1)
+		obs = level_info[self.obs_key]
+		seq_len = obs.size(1)
 		if sparse_level1_encode:
 			crop_starts, frame_indices = self._draw_crops_and_level1_frames(
-				seq_len, self.num_levels, level_info["pixels"].device
+				seq_len, self.num_levels, obs.device
 			)
 		else:
 			crop_starts, frame_indices = {}, range(seq_len)
-		self._encode_level1(level_info, "pixels", frame_indices)
+		self._encode_level1(level_info, self.obs_key, frame_indices)
 
 		for level in range(2, self.num_levels + 1):
 			jepa = self.jepas[level - 1]
