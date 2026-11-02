@@ -38,25 +38,23 @@ def test_every_experiment_builds_or_is_blocked(spec):
                 assert set(j.after) <= set(names[: names.index(j.name)])
 
 
-def test_flat_model_is_trained_then_probed(spec):
-    jobs = by_name(jobs_of(spec, 'F1'))
-    train = jobs['train_flat_s42']
+def test_the_baseline_is_trained_probed_and_planned(spec):
+    jobs = by_name(jobs_of(spec, 'B1'))
+    train = jobs['train_B1_s42']
     assert train.command[:4] == ['python', 'main_hjepa.py', '--config-name', 'craftax_hjepa']
     assert 'num_levels=1' in train.command  # the flat model is level 1 alone
+    # B1 was trained before the ids: it keeps its folder and checkpoint name
     assert 'output_model_name=flat' in train.command and 'seed=42' in train.command
+    assert train.output == '/data/ckpts/craftax/flat/seed42/flat_object.ckpt'
     assert 'data.dataset.name=craftax_expert_train' in train.command
-    probe = jobs['probe_flat_s42']
-    assert probe.after == ['train_flat_s42']  # trained in the same experiment: probed after it
+    probe = jobs['probe_B1_s42']
+    assert probe.after == ['train_B1_s42']  # trained in the same experiment: probed after it
     assert '--run' in probe.command and '/data/ckpts/craftax/flat/seed42' in probe.command
-    assert '--probing' in jobs['compare_F1_models'].command
-    assert set(jobs['compare_F1_models'].after) == {'train_flat_s42', 'probe_flat_s42'}
-
-
-def test_planning_reuses_the_flat_model(spec):
-    jobs = by_name(jobs_of(spec, 'F3'))
-    assert not any(j.kind == 'train' for j in jobs.values())
-    ev = jobs['eval_flat_s42_A']
-    assert ev.after == ['tasks_A']
+    assert '--probing' in jobs['compare_B1_models'].command
+    assert set(jobs['compare_B1_models'].after) == {'train_B1_s42', 'probe_B1_s42'}
+    # the cheap planning P1 (set A) is part of the baseline, after its training
+    ev = jobs['eval_B1_s42_A']
+    assert ev.after == ['tasks_A', 'train_B1_s42']
     assert 'policy=ckpts/craftax/flat/seed42' in ev.command
     assert 'output.dir=seed42/eval_A_val_craftax_plan' in ev.command
     assert 'load_eval_trajs_path=/data/eval_tasks/A_val.pt' in ev.command
@@ -64,15 +62,32 @@ def test_planning_reuses_the_flat_model(spec):
     base = jobs['eval_random_A']
     assert 'policy=random' in base.command and 'output.dir=/data/ckpts/craftax/random/eval_A_val' in base.command
     # the comparison of a protocol waits for its evaluations and names the baseline
-    compare = jobs['compare_F3_A']
-    assert set(compare.after) == {'eval_flat_s42_A', 'eval_random_A'}
+    compare = jobs['compare_B1_A']
+    assert set(compare.after) == {'eval_B1_s42_A', 'eval_random_A'}
     assert '--baseline' in compare.command and any(c.startswith('random=') for c in compare.command)
-    full = by_name(jobs_of(spec, 'F5'))
+    assert compare.output == '/data/reports/B1_A_val.md'
+
+
+def test_planning_to_the_diamond_reuses_the_baseline(spec):
+    full = by_name(jobs_of(spec, 'P3'))
+    assert not any(j.kind == 'train' for j in full.values())
     assert full['tasks_B'].command[full['tasks_B'].command.index('--mode') + 1] == 'episode'
     assert 'eval_random_B' in full
-    chain = by_name(jobs_of(spec, 'F4'))['tasks_C'].command
+    assert 'policy=ckpts/craftax/flat/seed42' in full['eval_B1_s42_B'].command
+    chain = by_name(jobs_of(spec, 'P2'))['tasks_C'].command
     assert chain[chain.index('--mode') + 1] == 'chain'
     assert chain[chain.index('--offsets') + 1] == '50' and '--subgoal-budget' in chain
+
+
+def test_every_trained_run_is_named_by_its_experiment_id(spec):
+    for exp_id, exp in spec['experiments'].items():
+        trained = [r['name'] for r in exp.get('runs', []) if r.get('train', True)]
+        assert trained in ([], [exp_id]), exp_id
+        assert exp_id[0] in 'BVAPD', exp_id
+    # the folders of the runs trained before the ids, and of a new run
+    assert run.folder_of(spec, 'B1') == 'flat'
+    assert run.folder_of(spec, 'A1') == 'flat_balanced'
+    assert run.folder_of(spec, 'V1') == 'V1'
 
 
 def test_seeds_multiply_the_runs_and_overrides_reach_training_only(spec):
@@ -86,118 +101,124 @@ def test_seeds_multiply_the_runs_and_overrides_reach_training_only(spec):
 
 def test_variants_set_their_overrides(spec):
     v1 = by_name(jobs_of(spec, 'V1'))
-    rollout = v1['train_flat_h1_rollout4_s42'].command
+    rollout = v1['train_V1_s42'].command
     assert 'level1.wm.history_size=1' in rollout
     assert 'level1.wm.rollout_n=4' in rollout
-    sigreg = v1['train_flat_sigreg003_s42'].command
+    assert 'output_model_name=V1' in rollout  # a new run trains into its id
+    v2 = by_name(jobs_of(spec, 'V2'))
+    sigreg = v2['train_V2_s42'].command
     assert 'level1.loss.embed.sigreg.weight=0.03' in sigreg
-    assert 'level1.wm.rollout_n=4' not in sigreg  # one change against F1
-    assert v1['probe_flat_h1_rollout4_s42'].after == [
-        'train_flat_h1_rollout4_s42'
-    ]
+    assert 'level1.wm.rollout_n=4' not in sigreg  # one change against B1
+    assert v1['probe_V1_s42'].after == ['train_V1_s42']
     # the cheap planning set A only: no episode or chain tasks for a variant
     assert not any(n.startswith('tasks_') and n != 'tasks_A' for n in v1)
-    assert v1['eval_flat_sigreg003_s42_A'].after == [
-        'tasks_A',
-        'train_flat_sigreg003_s42',
-    ]
+    assert v2['eval_V2_s42_A'].after == ['tasks_A', 'train_V2_s42']
 
 
-def test_the_map_decoder_ablation_is_one_change_against_f1(spec):
+def test_the_map_decoder_ablation_is_one_change_against_the_baseline(spec):
     a2 = by_name(jobs_of(spec, 'A2'))
-    command = a2['train_flat_map_decoder_s42'].command
+    command = a2['train_A2_s42'].command
     assert 'level1.map_coeff=0.1' in command and 'num_levels=1' in command
     # the state column is loaded by the data config itself, not by an override
     assert not any('keys_to_load' in c for c in command)
-    # F1's settings otherwise: SIGReg stays 0.09, no rollout or history change
+    # B1's settings otherwise: SIGReg stays 0.09, no rollout or history change
     assert not any('sigreg' in c or 'rollout' in c or 'history' in c for c in command)
-    assert 'train_flat_s42' not in a2  # F1 is the reference
-    assert a2['probe_flat_map_decoder_s42'].after == [
-        'train_flat_map_decoder_s42'
-    ]
-    assert a2['eval_flat_map_decoder_s42_A'].after == [
-        'tasks_A',
-        'train_flat_map_decoder_s42',
-    ]
-    assert a2['eval_flat_s42_A'].output == (
-        by_name(jobs_of(spec, 'F3'))['eval_flat_s42_A'].output
+    assert 'train_B1_s42' not in a2  # B1 is the reference
+    assert a2['probe_A2_s42'].after == ['train_A2_s42']
+    assert a2['eval_A2_s42_A'].after == ['tasks_A', 'train_A2_s42']
+    assert a2['eval_B1_s42_A'].output == (
+        by_name(jobs_of(spec, 'B1'))['eval_B1_s42_A'].output
     )
-    tag = run.select_runs(spec, 'A2', ['flat_map_decoder'])
-    tagged = by_name(run.build_jobs(spec, 'A2', [42], home='/data', tag=tag))
-    assert tagged['compare_A2_A'].output.endswith(
-        'A2_flat_map_decoder_A_val.md'
-    )
-    # not a variant of V1: that experiment keeps its two runs
-    assert 'train_flat_map_decoder_s42' not in by_name(jobs_of(spec, 'V1'))
+    assert a2['compare_A2_A'].output == '/data/reports/A2_A_val.md'
 
 
-def test_variants_are_compared_against_f1(spec):
+def test_variants_are_compared_against_the_baseline(spec):
     v1 = by_name(jobs_of(spec, 'V1'))
-    # F1 is planned on set A in the same directory as in F3: done once
-    f3 = by_name(jobs_of(spec, 'F3'))
-    assert v1['eval_flat_s42_A'].output == f3['eval_flat_s42_A'].output
-    assert 'train_flat_s42' not in v1
-    assert v1['probe_flat_s42'].after == []  # trained before: its report
+    # B1 is planned on set A in the same directory as in its own experiment: done once
+    b1 = by_name(jobs_of(spec, 'B1'))
+    assert v1['eval_B1_s42_A'].output == b1['eval_B1_s42_A'].output
+    assert 'train_B1_s42' not in v1
+    assert v1['probe_B1_s42'].after == []  # trained before: its report
     plan = v1['compare_V1_A'].command
-    assert any(c.startswith('flat_s42=') for c in plan)
+    assert any(c.startswith('B1_s42=') for c in plan)
     models = v1['compare_V1_models'].command
     training = models[models.index('--training') + 1 : models.index('--probing')]
-    assert 'flat_s42=/data/ckpts/craftax/flat/seed42' in training
-    assert len(training) == 3
+    assert 'B1_s42=/data/ckpts/craftax/flat/seed42' in training
+    assert 'V1_s42=/data/ckpts/craftax/V1/seed42' in training
+    assert len(training) == 2
 
 
-def test_one_variant_per_pod(spec):
-    tag = run.select_runs(spec, 'V1', ['flat_sigreg003'])
-    assert tag == 'flat_sigreg003'
-    jobs = by_name(jobs_of(spec, 'V1'))
-    assert not any('rollout4' in name for name in jobs)
-    # the reference, the tasks and the random baseline stay (skipped when done)
-    for name in ('tasks_A', 'eval_flat_s42_A', 'eval_random_A',
-                 'probe_flat_s42', 'train_flat_sigreg003_s42',
-                 'probe_flat_sigreg003_s42', 'eval_flat_sigreg003_s42_A'):
+def test_one_run_per_pod(spec):
+    # every experiment trains one run: --run only names it, the reports keep the experiment's name
+    tag = run.select_runs(spec, 'V2', ['V2'])
+    jobs = by_name(run.build_jobs(spec, 'V2', [42], home='/data', tag=tag))
+    for name in ('tasks_A', 'eval_B1_s42_A', 'eval_random_A', 'probe_B1_s42',
+                 'train_V2_s42', 'probe_V2_s42', 'eval_V2_s42_A'):
         assert name in jobs, name
-    # two pods upload their reports to the same Hub folder
-    tagged = by_name(run.build_jobs(spec, 'V1', [42], home='/data', tag=tag))
-    assert tagged['compare_V1_A'].output == (
-        '/data/reports/V1_flat_sigreg003_A_val.md'
-    )
-    assert tagged['compare_V1_models'].output == (
-        '/data/reports/V1_flat_sigreg003_models.md'
-    )
+    assert jobs['compare_V2_A'].output == '/data/reports/V2_A_val.md'
+    assert jobs['compare_V2_models'].output == '/data/reports/V2_models.md'
     with pytest.raises(SystemExit, match='no trained run'):
-        run.select_runs(run.load_spec(), 'V1', ['flat'])  # the reference
+        run.select_runs(run.load_spec(), 'V2', ['B1'])  # the reference
 
 
 def test_cli_runs_one_variant(capsys):
-    run.main(['plan', 'V1', '--run', 'flat_h1_rollout4'])
+    run.main(['plan', 'V1'])
     plan = capsys.readouterr().out
-    assert 'train_flat_h1_rollout4_s42' in plan and 'sigreg' not in plan
-    assert 'V1_flat_h1_rollout4_A_val.md' in plan
+    assert 'train_V1_s42' in plan and 'sigreg' not in plan
+    assert 'V1_A_val.md' in plan
 
 
-def test_the_balanced_ablation_is_one_change_against_f1(spec):
+def test_the_balanced_ablation_is_one_change_against_the_baseline(spec):
     a1 = by_name(jobs_of(spec, 'A1'))
-    train = a1['train_flat_balanced_s42'].command
+    train = a1['train_A1_s42'].command
     assert 'data.balance.enabled=true' in train
     assert 'num_levels=1' in train
-    # F1's settings otherwise: SIGReg stays 0.09, no rollout or history change
+    # trained before the ids: its folder stays
+    assert 'output_model_name=flat_balanced' in train
+    # B1's settings otherwise: SIGReg stays 0.09, no rollout or history change
     assert not any('sigreg' in c or 'rollout' in c or 'history' in c for c in train)
-    # F1 is the reference, planned and probed as for the variants
-    assert 'train_flat_s42' not in a1
-    assert a1['probe_flat_balanced_s42'].after == ['train_flat_balanced_s42']
-    assert a1['eval_flat_s42_A'].output == (
-        by_name(jobs_of(spec, 'F3'))['eval_flat_s42_A'].output
+    # B1 is the reference, planned and probed as for the variants
+    assert 'train_B1_s42' not in a1
+    assert a1['probe_A1_s42'].after == ['train_A1_s42']
+    assert '/data/ckpts/craftax/flat_balanced/seed42' in a1['probe_A1_s42'].command
+    assert a1['eval_B1_s42_A'].output == (
+        by_name(jobs_of(spec, 'B1'))['eval_B1_s42_A'].output
     )
-    tag = run.select_runs(spec, 'A1', ['flat_balanced'])
-    tagged = by_name(run.build_jobs(spec, 'A1', [42], home='/data', tag=tag))
-    assert tagged['compare_A1_A'].output.endswith('A1_flat_balanced_A_val.md')
+    assert a1['compare_A1_A'].output.endswith('A1_A_val.md')
+
+
+def test_the_state_mlp_runs_are_trained_by_their_script_and_compared(spec):
+    a3 = by_name(jobs_of(spec, 'A3'))
+    train = a3['train_A3_s42']
+    assert train.command[:3] == ['python', '-m', 'state_jepa.train']
+    assert '--stop-grad' not in train.command
+    assert '/data/craftax_expert_train.h5' in train.command
+    assert '/data/craftax_expert_val.h5' in train.command  # read on held-out worlds
+    out = train.command[train.command.index('--out') + 1]
+    assert out == '/data/ckpts/craftax/A3/seed42'
+    # the trace grows during the run: only the model at its end means done
+    assert train.output == '/data/ckpts/craftax/A3/seed42/model.pt'
+    # no planning, no probe suite, no Hydra overrides for these
+    assert not any(j.kind in ('eval', 'probe', 'tasks') for j in a3.values())
+    assert 'compare_A3_models' not in a3
+    a4 = by_name(jobs_of(spec, 'A4', overrides=['level1.lr=1e-4']))
+    assert '--stop-grad' in a4['train_A4_s42'].command  # the one change
+    assert 'level1.lr=1e-4' not in a4['train_A4_s42'].command
+    assert 'train_A3_s42' not in a4  # A3 is the reference, trained in A3
+    report = a4['compare_A4_trace']
+    assert report.command[:3] == ['python', '-m', 'state_jepa.report']
+    assert 'A3_s42=/data/ckpts/craftax/A3/seed42' in report.command
+    assert 'A4_s42=/data/ckpts/craftax/A4/seed42' in report.command
+    assert report.after == ['train_A4_s42'] and report.output == '/data/reports/A4_trace.md'
+    assert spec['experiments']['A3'].get('local') and spec['experiments']['A4'].get('local')
 
 
 def test_a_probe_of_an_existing_run_has_no_training(spec):
-    spec['experiments']['P'] = {'title': 'probes only', 'probe': ['flat']}
-    jobs = jobs_of(spec, 'P')
+    spec['experiments']['P9'] = {'title': 'probes only', 'probe': ['B1']}
+    jobs = jobs_of(spec, 'P9')
     probes = [j for j in jobs if j.kind == 'probe']
     assert len(probes) == 1 and probes[0].after == []
+    assert '/data/ckpts/craftax/flat/seed42' in probes[0].command
     assert not any(j.kind == 'train' for j in jobs)
 
 
@@ -222,16 +243,17 @@ def test_planner_scale_changes_samples_and_iterations_together(spec, tmp_path, m
         'protocols': ['A'],
         'compare': 'scaling',
         'runs': [
-            {'name': f'flat_x{s}', 'train': False, 'model': 'flat', 'eval': 'craftax_plan', 'planner_scale': s}
+            {'name': f'B1_x{s}', 'train': False, 'model': 'B1', 'eval': 'craftax_plan', 'planner_scale': s}
             for s in (1, 4)
         ],
     }
     jobs = by_name(jobs_of(spec, 'S'))
-    ev = jobs['eval_flat_x4_s42_A']
+    ev = jobs['eval_B1_x4_s42_A']
+    assert 'policy=ckpts/craftax/flat/seed42' in ev.command  # the model of B1, in its folder
     assert 'output.dir=seed42/eval_A_val_craftax_plan_x4' in ev.command
     assert 'solver.solvers.level1.num_samples=%d' % big['solver.solvers.level1.num_samples'] in ev.command
     assert '--scaling' in jobs['compare_S_A'].command
-    assert '--planning' in by_name(jobs_of(spec, 'F3'))['compare_F3_A'].command
+    assert '--planning' in by_name(jobs_of(spec, 'B1'))['compare_B1_A'].command
 
 
 def test_local_run_skips_finished_jobs_and_stops_on_failure(spec, tmp_path):
@@ -258,7 +280,7 @@ def test_sbatch_scripts_chain_dependencies(spec, tmp_path, monkeypatch):
     monkeypatch.setattr(run, 'HERE', tmp_path)
     slurm = yaml.safe_load((Path(run.__file__).parent / 'slurm.yaml').read_text())
     slurm.update(partition='gpu', account='lab', venv='/venvs/h')
-    jobs = jobs_of(spec, 'F3')
+    jobs = jobs_of(spec, 'P2')
     counter = iter(range(100, 200))
 
     class Result:
@@ -271,50 +293,48 @@ def test_sbatch_scripts_chain_dependencies(spec, tmp_path, monkeypatch):
         submitted.append(Path(cmd[-1]).read_text())
         return Result(next(counter))
 
-    ids = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'F3', submit=True, runner=fake_sbatch)
-    assert ids['tasks_A'] == '100'
-    evaluation = next(t for t in submitted if '--job-name=eval_flat_s42_A' in t)
+    ids = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'P2', submit=True, runner=fake_sbatch)
+    assert ids['tasks_C'] == '100'
+    evaluation = next(t for t in submitted if '--job-name=eval_B1_s42_C' in t)
     assert '#SBATCH --dependency=afterok:100' in evaluation
     assert '#SBATCH --gres=gpu:1' in evaluation and '#SBATCH --partition=gpu' in evaluation
     assert 'source /venvs/h/bin/activate' in evaluation and 'eval.py' in evaluation
-    compare = next(t for t in submitted if '--job-name=compare_F3_A' in t)
+    compare = next(t for t in submitted if '--job-name=compare_P2_C' in t)
     assert 'gres' not in compare  # no GPU for the comparison
     assert 'afterok:' in compare and compare.count(':') >= 3  # waits for both evaluations
 
-    dry = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'F3', submit=False)
+    dry = run.submit_slurm(jobs, slurm, str(tmp_path / 'home'), 'P2', submit=False)
     assert all(v.startswith('<') for v in dry.values())  # written, not submitted
-    assert (tmp_path / 'generated' / 'F3').is_dir()
+    assert (tmp_path / 'generated' / 'P2').is_dir()
 
 
 def test_cli_list_and_plan(spec, capsys, tmp_path):
     run.main(['list'])
     out = capsys.readouterr().out
-    assert 'F1:' in out and '[blocked' in out
-    run.main(['plan', 'F1', '--final'])
+    assert 'B1:' in out and '[blocked' in out
+    run.main(['plan', 'B1', '--final'])
     plan = capsys.readouterr().out
     assert 'seed=43' in plan and 'seed=44' in plan
-    sigreg = next(
-        r for r in spec['experiments']['V1']['runs'] if 'sigreg' in r['name']
-    )
-    sigreg['optional'] = True
+    variant = next(r for r in spec['experiments']['V2']['runs'] if r['name'] == 'V2')
+    variant['optional'] = True
     path = tmp_path / 'spec.yaml'
     path.write_text(yaml.safe_dump(spec))
-    run.main(['plan', 'V1', '--spec', str(path)])
-    assert 'flat_sigreg003' not in capsys.readouterr().out  # optional runs only with --include-optional
-    run.main(['plan', 'V1', '--spec', str(path), '--include-optional'])
-    assert 'flat_sigreg003' in capsys.readouterr().out
+    run.main(['plan', 'V2', '--spec', str(path)])
+    assert 'train_V2' not in capsys.readouterr().out  # optional runs only with --include-optional
+    run.main(['plan', 'V2', '--spec', str(path), '--include-optional'])
+    assert 'train_V2' in capsys.readouterr().out
     with pytest.raises(SystemExit, match='blocked'):
-        run.main(['plan', 'F2'])
+        run.main(['plan', 'P0'])
 
 
 def test_final_runs_take_their_tasks_from_the_test_split(spec):
     jobs = by_name(run.build_jobs(spec, 'V1', [42], home='/data', final=True))
     assert 'craftax_expert_test' in jobs['tasks_A'].command
     assert jobs['tasks_A'].output == '/data/eval_tasks/A_test.pt'
-    ev = jobs['eval_flat_h1_rollout4_s42_A']
+    ev = jobs['eval_V1_s42_A']
     assert 'eval.dataset_name=craftax_expert_test' in ev.command
     # training still validates on the validation worlds
-    train = jobs['train_flat_h1_rollout4_s42'].command
+    train = jobs['train_V1_s42'].command
     assert 'data.dataset.val_name=craftax_expert_val' in train
 
 
@@ -331,7 +351,7 @@ def test_final_and_exploration_results_never_share_a_directory(spec):
         if name.endswith('_models'):
             continue  # probes and training reports do not depend on the task split
         assert out_e[name] != out_f[name], name
-    ev = {j.name: j for j in final}['eval_flat_h1_rollout4_s42_A']
+    ev = {j.name: j for j in final}['eval_V1_s42_A']
     assert 'output.dir=seed42/eval_A_test_craftax_plan' in ev.command
 
 

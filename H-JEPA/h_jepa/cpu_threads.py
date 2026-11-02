@@ -2,7 +2,7 @@
 
 torch starts os.cpu_count() threads. In a container with a CPU quota (a RunPod pod showed 128 cores and allowed 13.6)
 they throttle each other and every CPU operation runs 10 to 40 times slower: the probe's regressions took 490 s
-instead of 12 s. OMP_NUM_THREADS, when set, decides (the flat notebook sets it for everything it starts).
+instead of 12 s. OMP_NUM_THREADS, when set, decides (the baseline notebook sets it for everything it starts).
 """
 
 import os

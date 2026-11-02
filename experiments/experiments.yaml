@@ -1,12 +1,14 @@
 # The Craftax jobs: the data plan (D1), the dataset numbers (D0) and the flat-model phase (README,
 # "Current phase"). `run.py` turns this into commands.
 #
-# A run trains `config` as `name` (unless `train: false` and `model` names an existing run),
-# then is evaluated with the evaluation config `eval` on the task sets of the experiment's
-# protocols. Overrides are Hydra overrides of the training config. Seeds come from the
-# command line (exploration: one seed; headline results: three). `probe` lists runs to probe
-# (after their training if it is in the same experiment); `planner_scale` on a run multiplies the
-# planner's samples x iterations, and `compare: scaling` compares such runs by compute.
+# Ids (README, "Ids"): B baselines, V variants (another unsupervised loss or setting: model candidates), A ablations
+# (they use simulator labels or the simulator state: never model candidates), P planning jobs on a trained model, D data.
+# A run is named by its id and trains into ckpts/craftax/<id>/ unless `folder` names the folder of a run trained before
+# the ids (B1 in `flat`, A1 in `flat_balanced`). A run with `train: false` evaluates a model trained elsewhere (`model`,
+# default its own name). Overrides are Hydra overrides of the training config. Seeds come from the command line
+# (exploration: one seed; headline results: three). `probe` lists the models to probe (after their training if it is in
+# the same experiment); `planner_scale` on a run multiplies the planner's samples x iterations, and `compare: scaling`
+# compares such runs by compute.
 #
 # Everything marked placeholder is to be set from the data analysis and the first runs.
 
@@ -42,7 +44,7 @@ collection:
 # the number of tasks and the budgets follow from the goal-test decision and the timing run.
 # A is the cheap set for the flat variants (decided 2026-10-27): offset 8 only (the probe-readable horizon of
 # level 1 is about 8 steps; the planner's horizon is 8 as well, so the goal is the last predicted frame; offset 16
-# was dropped, the F1 distance to the goal has no signal there), 128 tasks (a task needs its own episode and the
+# was dropped, the B1 distance to the goal has no signal there), 128 tasks (a task needs its own episode and the
 # validation split has 128 that reach the diamond; the 95% interval of a success rate is about +-9 points, 300 tasks
 # would have given +-6 but do not exist), budget 2x the offset. By the README's bound (18 s per task at 400 steps) that is minutes
 # per model, to be timed with time_run.py. B and C are for the final flat-against-hierarchy comparison.
@@ -62,73 +64,91 @@ experiments:
     title: Dataset section numbers (lengths, achievements, change matrix, clip coverage, actions, entity gap; `dataset_section compute`)
     analysis: true
 
-  # The flat-model phase. Every variant runs the cycle: training, probes, planning P1-P3 (protocols A, B and
-  # the oracle chain), each with the random baseline. The planning settings (goal offset, horizon, CEM) are
-  # set on the F1 model (F2) and then frozen for every variant. Coefficient, delta and CLS/patch variants are
-  # added when they are run (README).
-  F1:
-    title: Default flat model (level 1 alone, IDM on, history 3, rollout_n 1, CLS latent), training and probes
-    runs:
-      - {name: flat, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
-    probe: [flat]  # the training already probes at its end (health.probe_clips): this job only runs if that failed
-
-  F2:
-    title: Planning settings (goal offset, planning horizon, CEM) on the F1 model, then frozen for every variant
-    blocked: not designed yet (no full sweep; decided once the F1 model exists)
-
-  F3:
-    title: P1, planning toward fixed-offset goals (protocol A) with the F1 model
+  # The flat-model phase. Every model runs the cycle: training, probes and the cheap planning P1 (set A), with the random
+  # baseline on the same tasks; P2 and P3 (to the diamond) are planning jobs of their own. The planning settings (goal
+  # offset, horizon, CEM) are set on B1 (P0) and then frozen for every variant (README).
+  B1:
+    title: Flat baseline (level 1 alone, IDM on, history 3, rollout_n 1, CLS latent); training, probes and the cheap P1 (set A)
     protocols: [A]
     baseline: true  # a random policy on the same tasks
     runs:
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      - {name: B1, folder: flat, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1]}
+    probe: [B1]  # the training already probes at its end (health.probe_clips): this job only runs if that failed
 
-  F4:
-    title: P2, planning to the diamond through oracle subgoals (the expert's frames at multiples of the goal offset)
+  P0:
+    title: Planning settings (goal offset, planning horizon, CEM) on B1, then frozen for every variant
+    blocked: not designed yet (no full sweep; decided once the B1 model exists)
+
+  P2:
+    title: P2, planning to the diamond through oracle subgoals (the expert's frames at multiples of the goal offset) with B1
     protocols: [C]
     baseline: true
     runs:
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      - {name: B1, train: false, eval: craftax_plan}
 
-  F5:
-    title: P3, planning to the diamond from the final goal only (protocol B) with the F1 model
+  P3:
+    title: P3, planning to the diamond from the final goal only (protocol B) with B1
     protocols: [B]
     baseline: true
     runs:
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
+      - {name: B1, train: false, eval: craftax_plan}
 
   V1:
-    title: First variants against F1, full runs (the rollout model with history 1, SIGReg weight 0.03); cheap planning (set A)
+    title: Variant, the rollout model (history 1 and a 4-step open-loop loss; the planner rolls out with history 1), against B1; cheap planning (set A)
     protocols: [A]
-    baseline: true  # the same jobs as in F3: skipped when done
+    baseline: true  # the same jobs as in B1: skipped when done
     runs:
-      # F1, the reference: planned on set A (the same jobs as in F3, skipped when done) and in both comparisons
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
-      # the rollout model: history 1 and a 4-step open-loop loss (the planner rolls out with history 1); F1 settings otherwise
-      - {name: flat_h1_rollout4, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.history_size=1, level1.wm.rollout_n=4]}
-      # SIGReg weight 3x lower (0.09 in F1); the health monitor stops a run whose effective rank collapses
-      - {name: flat_sigreg003, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.loss.embed.sigreg.weight=0.03]}
-    probe: [flat, flat_h1_rollout4, flat_sigreg003]  # F1's probe job only runs when its report is missing
+      # the reference: planned on set A in the same directory as in B1 (done once) and in both comparisons
+      - {name: B1, train: false, eval: craftax_plan}
+      - {name: V1, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.wm.history_size=1, level1.wm.rollout_n=4]}
+    probe: [B1, V1]  # B1's probe job only runs when its report is missing
+
+  V2:
+    title: Variant, SIGReg weight 0.03 (B1 0.09), against B1; cheap planning (set A)
+    protocols: [A]
+    baseline: true
+    runs:
+      - {name: B1, train: false, eval: craftax_plan}
+      # B1 settings otherwise; the health monitor stops a run whose effective rank collapses
+      - {name: V2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.loss.embed.sigreg.weight=0.03]}
+    probe: [B1, V2]
 
   A1:
-    title: Ablation (not a model candidate), F1 with balanced clip sampling (the rare faced blocks and events drawn more often); cheap planning (set A)
+    title: Ablation (not a model candidate), B1 with balanced clip sampling (the rare faced blocks and events drawn more often); cheap planning (set A)
     protocols: [A]
     baseline: true
     runs:
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
-      # F1 settings (SIGReg 0.09) and one change: the weights of balance.py, from simulator labels a real agent would not have
-      - {name: flat_balanced, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, data.balance.enabled=true]}
-    probe: [flat, flat_balanced]
+      - {name: B1, train: false, eval: craftax_plan}
+      # B1 settings (SIGReg 0.09) and one change: the weights of balance.py, from simulator labels a real agent would not have
+      - {name: A1, folder: flat_balanced, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, data.balance.enabled=true]}
+    probe: [B1, A1]
 
   A2:
-    title: Ablation (not a model candidate), F1 with an auxiliary decoder of the view map from the latent (can the latent hold the scene when the loss demands it); cheap planning (set A)
+    title: Ablation (not a model candidate), B1 with an auxiliary decoder of the view map from the latent (can the latent hold the scene when the loss demands it); cheap planning (set A)
     protocols: [A]
     baseline: true
     runs:
-      - {name: flat, train: false, model: flat, eval: craftax_plan}
-      # F1 settings (SIGReg 0.09) and one change: an auxiliary decoder of the 7x9 view map (block type and mobs per tile) from the latent, trained
+      - {name: B1, train: false, eval: craftax_plan}
+      # B1 settings (SIGReg 0.09) and one change: an auxiliary decoder of the 7x9 view map (block type and mobs per tile) from the latent, trained
       # with the model so that its gradient reaches the latent (loss.ViewMapLoss). The labels are the simulator's `state` column (loaded
       # automatically), which a real agent would not have. If the latent can hold the scene, the objective had dropped it; if it cannot, or the
       # decoder fights SIGReg, capacity or SIGReg is the limit
-      - {name: flat_map_decoder, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.map_coeff=0.1]}
-    probe: [flat, flat_map_decoder]
+      - {name: A2, config: craftax_hjepa, eval: craftax_plan, overrides: [num_levels=1, level1.map_coeff=0.1]}
+    probe: [B1, A2]
+
+  # The MLP-JEPA on the simulator state (state_jepa, settled 2026-11-02): B1's losses without the pixels, the ViT and the CLS
+  # token. Its first epoch is read at many steps (from the untrained encoder on) to see whether the encoder removes what the
+  # predictor cannot predict yet, before the predictor learns it. A laptop CPU is enough (about 10 minutes a run):
+  # notebooks/local_A3_A4.ipynb, no pod. Ablations: the encoder reads the simulator's state.
+  A3:
+    title: Ablation (not a model candidate), B1's losses on an MLP encoder of the simulator state instead of the pixels (no ViT, no CLS token); its first epoch, read every few hundred steps
+    local: true  # minutes on a laptop CPU
+    runs:
+      - {name: A3, script: state_jepa, args: [--epochs, 1]}
+
+  A4:
+    title: Ablation (not a model candidate), A3 with the prediction target detached (stop-gradient), against A3; does the target path remove what A3 loses
+    local: true
+    runs:
+      - {name: A3, train: false}  # the reference, trained in A3
+      - {name: A4, script: state_jepa, args: [--epochs, 1, --stop-grad]}

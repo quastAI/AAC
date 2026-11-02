@@ -1,7 +1,7 @@
 """SIGReg of the same latents under different batch compositions (no training).
 
 A training batch is B = 128 clips of B different episodes ("iid"). SIGReg sees only the marginal of the batch, so what a
-batch is made of decides what variance it can ask for. Here the F1 latents are put into other batches and SIGReg is
+batch is made of decides what variance it can ask for. Here the B1 latents are put into other batches and SIGReg is
 computed with the module of the training (`loss.SIGReg`, the same knots and 1024 projections, a fixed seed per batch):
 
     iid        B frames of B different episodes (what the training does)

@@ -10,7 +10,7 @@ import pytest
 
 NOTEBOOK_DIR = Path(__file__).parents[2] / 'notebooks'
 NOTEBOOKS = sorted(NOTEBOOK_DIR.glob('*.ipynb'))
-VARIANTS = sorted(NOTEBOOK_DIR.glob('runpod_[VA][0-9]*_*.ipynb'))
+VARIANTS = sorted(NOTEBOOK_DIR.glob('runpod_[VA][0-9]*.ipynb'))  # one per pod run, named by its id
 POD = (NOTEBOOK_DIR / 'pod.py').read_text()
 sys.path.insert(0, str(NOTEBOOK_DIR))
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -68,8 +68,8 @@ def test_the_dataset_notebook_runs_the_whole_chain():
     assert '*_state.safetensors' in text
 
 
-def test_the_flat_notebook_runs_the_level_one_cycle():
-    text = text_of('runpod_flat.ipynb') + POD  # the helpers are in pod.py
+def test_the_baseline_notebook_runs_the_level_one_cycle():
+    text = text_of('runpod_B1.ipynb') + POD  # the helpers are in pod.py
     for needle in (
         'environment/hjepa-requirements.txt',
         'main_hjepa.py',  # the smoke run on the real files
@@ -77,9 +77,9 @@ def test_the_flat_notebook_runs_the_level_one_cycle():
         'probe_report.md',
         'time_run.py',
         '--loader-batches',
-        '"run", "F1"',
-        '"run", "F3"',  # the cheap P1 of F1: the variants' reference
-        '"F4", "F5"',
+        '"run", "B1"',  # training, probes and the cheap P1: the variants' reference
+        '"P2", "P3"',
+        'pod.folder_of("B1")',  # B1 keeps the folder it was trained in
         'trainer.max_epochs',
         'trainer.devices=1',  # several GPUs: DDP stops at the mask_token
         'start_new_session=True',  # detached from the kernel
@@ -95,59 +95,57 @@ def test_the_flat_notebook_runs_the_level_one_cycle():
     # the resumable training state is not uploaded
     assert '**/lightning_resume/**' in POD
     # the variants have their own notebooks
-    assert '"run", "V1"' not in text_of('runpod_flat.ipynb')
+    assert '"run", "V1"' not in text_of('runpod_B1.ipynb')
 
 
-def test_the_flat_notebook_runs_real_jobs():
+def test_the_baseline_notebook_runs_real_jobs():
     import yaml
 
-    text = text_of('runpod_flat.ipynb')
+    text = text_of('runpod_B1.ipynb')
     spec = yaml.safe_load(
         (Path(__file__).parents[1] / 'experiments.yaml').read_text()
     )
-    for exp in ('F1', 'F3', 'F4', 'F5'):
+    for exp in ('B1', 'P2', 'P3'):
         assert exp in text and not spec['experiments'][exp].get('blocked')
 
 
 def variant_config(path):
     config = cells_of(path)[1]
-    exp, name = re.search(
-        r'EXPERIMENT, RUN = "(\w+)", "(\w+)"', config
-    ).groups()
+    exp = re.search(r'EXPERIMENT = "(\w+)"', config).group(1)
     reference = re.search(r'REFERENCE = "(\w+)"', config).group(1)
-    return exp, name, reference
+    return exp, reference
 
 
 def test_every_variant_has_its_own_notebook():
     spec = run.load_spec()
-    variants = {
-        (exp_id, r['name'])
+    variants = {  # variants and ablations trained on a pod; local ones have their own notebook
+        exp_id
         for exp_id, e in spec['experiments'].items()
-        if exp_id[0] in 'VA' and not e.get('blocked')  # variants, ablations
-        for r in e.get('runs', [])
-        if r.get('train', True)
+        if exp_id[0] in 'VA' and not e.get('blocked') and not e.get('local')
+        and any(r.get('train', True) for r in e.get('runs', []))
     }
     found = set()
     for path in VARIANTS:
-        exp, name, reference = variant_config(path)
-        assert path.name == f'runpod_{exp}_{name}.ipynb'
+        exp, reference = variant_config(path)
+        assert path.name == f'runpod_{exp}.ipynb'
         runs = spec['experiments'][exp]['runs']
+        assert [r['name'] for r in runs if r.get('train', True)] == [exp]
         assert any(
             r['name'] == reference and not r.get('train', True) for r in runs
         )
-        found.add((exp, name))
+        found.add(exp)
     assert found == variants
 
 
 def test_the_variant_notebooks_differ_only_in_title_and_configuration():
     first = cells_of(VARIANTS[0])
-    exp0, name0, _ = variant_config(VARIANTS[0])
+    exp0, _ = variant_config(VARIANTS[0])
     for path in VARIANTS[1:]:
         cells = cells_of(path)
-        exp, name, _ = variant_config(path)
+        exp, _ = variant_config(path)
         assert len(cells) == len(first), path.name
-        assert cells[1].replace(f'"{exp}", "{name}"', '') == first[1].replace(
-            f'"{exp0}", "{name0}"', ''
+        assert cells[1].replace(f'"{exp}"', '') == first[1].replace(
+            f'"{exp0}"', ''
         )
         for i, (a, b) in enumerate(zip(first[2:], cells[2:]), start=2):
             assert a == b, (path.name, i)  # copies must not drift
@@ -156,31 +154,51 @@ def test_the_variant_notebooks_differ_only_in_title_and_configuration():
 def test_a_variant_notebook_runs_its_run_against_the_reference():
     text = '\n'.join(cells_of(VARIANTS[0]))
     for needle in (
-        '"--run", RUN',
-        'f"{REFERENCE}/seed',  # F1 from the Hub
+        '"run", EXPERIMENT',
+        'pod.folder_of(EXPERIMENT)',  # B1 and A1 keep their older folders
+        'f"{REFERENCE_FOLDER}/seed',  # B1 from the Hub
         '"random/eval_A_val"',
         'pod.current_probe_report(reference)',
         'SPEC["config"], *SPEC.get("overrides", [])',  # the smoke run
         '+trainer.limit_train_batches',
-        'launch(RUN',
-        'f"{EXPERIMENT}_{RUN}_*.md"',
+        'launch(EXPERIMENT',
+        'f"{EXPERIMENT}_*.md"',
     ):
         assert needle in text, needle
+    assert 'RUN' not in re.findall(r'\b[A-Z_]+\b', text)  # the id names the run
     # the reports the notebook reads and uploads are the ones run.py writes
-    exp, name, _ = variant_config(VARIANTS[0])
+    exp, _ = variant_config(VARIANTS[0])
     spec = run.load_spec()
-    tag = run.select_runs(spec, exp, [name])
-    jobs = run.build_jobs(spec, exp, [42], home='/data', tag=tag)
+    jobs = run.build_jobs(spec, exp, [42], home='/data')
     reports = [j.output for j in jobs if j.kind == 'compare']
-    assert reports and all(
-        Path(r).name.startswith(f'{exp}_{name}_') for r in reports
-    )
-    # the Hub folder of F1's set-A results is the one the notebook checks
-    ref = next(j for j in jobs if j.name == 'eval_flat_s42_A')
+    assert reports and all(Path(r).name.startswith(f'{exp}_') for r in reports)
+    # the Hub folder of B1's set-A results is the one the notebook checks
+    ref = next(j for j in jobs if j.name == 'eval_B1_s42_A')
     assert ref.output.endswith(
         'flat/seed42/eval_A_val_craftax_plan/planning_report.md'
     )
     assert 'eval_A_val_craftax_plan' in text
+
+
+def test_the_local_notebook_runs_the_local_experiments():
+    spec = run.load_spec()
+    local = sorted(e for e, x in spec['experiments'].items() if x.get('local'))
+    assert local == ['A3', 'A4']
+    text = text_of('local_A3_A4.ipynb')
+    for exp in local:
+        assert f'"run", "{exp}"' in text, exp
+    # A3 first: it is A4's reference
+    assert text.index('"run", "A3"') < text.index('"run", "A4"')
+    for needle in (
+        'state_jepa.train',  # the smoke run
+        '--max-steps',
+        "'relabel' in f.attrs",  # the files hold the executed actions
+        'symlink_to',  # the episode files are linked, not copied
+        'OMP_NUM_THREADS',
+        'A4_trace.md',
+        'REPO / "reports" / "A3_A4"',
+    ):
+        assert needle in text, needle
 
 
 def test_the_relabel_notebook_checks_before_it_replaces_the_hub_files():
@@ -319,6 +337,14 @@ def pod_dirs(tmp_path, monkeypatch):
         seeds='42,43',
     )
     return tmp_path
+
+
+def test_folder_of_reads_the_spec_with_the_venvs_python(pod_dirs, monkeypatch):
+    monkeypatch.setattr(pod, 'REPO', Path(__file__).parents[2])
+    monkeypatch.setattr(pod, 'PYTHON', sys.executable)
+    assert pod.folder_of('B1') == 'flat'  # trained before the ids
+    assert pod.folder_of('A1') == 'flat_balanced'
+    assert pod.folder_of('V1') == 'V1'
 
 
 def test_configure_links_the_volume_and_sets_the_environment(pod_dirs):
@@ -462,7 +488,7 @@ def test_upload_leaves_out_the_training_state_and_smoke_runs(pod_dirs):
 
 
 def flat_cells():
-    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_flat.ipynb').read_text())
+    nb = json.loads((NOTEBOOKS[0].parent / 'runpod_B1.ipynb').read_text())
     return [''.join(c['source']) for c in nb['cells']]
 
 
@@ -471,7 +497,7 @@ def test_the_probe_suite_runs_detached_and_has_a_monitor_cell():
     start = next(
         i
         for i, c in enumerate(cells)
-        if c.startswith("# --- 2. The probe suite on F1's final model")
+        if c.startswith("# --- 2. The probe suite on B1's final model")
     )
     # detached with a live log: `sh` would show nothing until it exits
     assert 'launch("probe_suite"' in cells[start]

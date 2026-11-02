@@ -1,4 +1,4 @@
-"""Helpers of the RunPod notebooks of the flat phase (`runpod_flat.ipynb` and one notebook per variant).
+"""Helpers of the RunPod notebooks of the flat phase (`runpod_B1.ipynb` and one notebook per variant or ablation).
 
 A notebook calls `configure()` once, then imports what it uses (`from pod import sh, launch, ...`). The paths: the network
 volume at `/workspace` refuses `chmod` (`git clone`, `venv` and `pip` fail on it) and stalls on the random reads of the
@@ -216,6 +216,15 @@ def run_spec(experiment, run):
     return json.loads(out.stdout)
 
 
+def folder_of(model):
+    """The checkpoint folder of a model id (`run.folder_of`, read with the venv's yaml): B1 and A1 keep the folders they were
+    trained in before the ids (`flat`, `flat_balanced`), a newer run trains into its id."""
+    script = "import sys; sys.path.insert(0, sys.argv[1]); import run; print(run.folder_of(run.load_spec(), sys.argv[2]))"
+    out = subprocess.run([PYTHON, "-c", script, REPO / "experiments", model], env=ENV, capture_output=True, text=True)
+    assert out.returncode == 0, f"no folder for {model}: {out.stderr.strip().splitlines()[-1:]}"
+    return out.stdout.strip()
+
+
 def fetch(api, repo_id, folder, required=True, download=None):
     """Copy a folder of ckpts/craftax (a run `flat/seed42`, the baseline `random/eval_A_val`) from `runs/` of the Hub repo,
     where the notebooks upload them, to this pod; files the volume has already are kept. Returns the copied Hub paths."""
@@ -263,9 +272,10 @@ def current_probe_report(run) -> bool:
 UPLOAD_IGNORE = ["**/lightning_resume/**", "*_epoch_*_object.ckpt", "*_smoke/**", "**/hydra/**", "**/spt/**", "**/spt_volume*/**"]
 
 
-def upload(api, repo_id, folders=None, reports=("F*.md", "V*.md", "A*.md")):
-    """Runs (`folders` of ckpts/craftax, all by default) to runs/ and the comparison reports to reports/ of the Hub repo.
-    Left out: the resumable training state, the per-epoch models and the smoke runs."""
+def upload(api, repo_id, folders=None, reports=("B*.md", "P*.md", "V*.md", "A*.md", "F*.md")):
+    """Runs (`folders` of ckpts/craftax, all by default) to runs/ and the comparison reports to reports/ of the Hub repo
+    (by experiment id; `F*.md` are the reports named before the ids). Left out: the resumable training state, the
+    per-epoch models and the smoke runs."""
     allow = [f"{f.strip('/')}/**" for f in folders] if folders else None
     api.upload_folder(repo_id=repo_id, repo_type="dataset", folder_path=str(DATA / "ckpts" / "craftax"), path_in_repo="runs",
                       allow_patterns=allow, ignore_patterns=UPLOAD_IGNORE)  # fmt: skip
