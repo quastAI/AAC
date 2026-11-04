@@ -29,6 +29,9 @@ def action_embedding(jepa, action: np.ndarray, num_actions: int) -> torch.Tensor
     a = torch.from_numpy(action[..., 0])
     valid = ~torch.isnan(a)
     onehot = torch.nn.functional.one_hot(a.nan_to_num(0).long(), num_actions).float() * valid.unsqueeze(-1)
+    # the model may sit on a GPU (race.readout moves it); a stand-in without parameters stays on the CPU
+    weight = next(jepa.action_embed.parameters(), None)
+    onehot = onehot.to(weight.device if weight is not None else "cpu")
     with torch.no_grad():
         return jepa.action_embed(jepa.action_encoder(onehot)).float().cpu()
 

@@ -261,6 +261,26 @@ def test_one_step_lines_up_the_transitions_and_drops_missing_actions():
     assert np.allclose(target[0], latent[0, 0, 3])
 
 
+def test_action_embedding_follows_the_model_device():
+    """The one-hot must reach the action embedding on the device of its
+    weights (a GPU model, race.evaluate); 'meta' stands in for a GPU."""
+
+    class OnDevice(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.empty(1, device='meta'))
+
+        def forward(self, x):
+            assert x.device == self.weight.device, x.device
+            return torch.zeros(*x.shape[:-1], 4)
+
+    jepa = CopyJepa()
+    jepa.action_embed = OnDevice()
+    action = np.zeros((2, 5, 1), np.float32)
+    out = pe.action_embedding(jepa, action, 3)
+    assert out.shape == (2, 5, 4)
+
+
 def test_per_axis_error_of_a_copy_equals_the_copy_error():
     rng = np.random.default_rng(1)
     latent = np.cumsum(rng.normal(size=(6, 2, 40, 4)), 2).astype(np.float32)
