@@ -295,6 +295,7 @@ def run(cfg):
         dense_callbacks.append(DenseCheckpoints(
             run_dir, cfg.output_model_name, steps=dense_cfg.steps, every=dense_cfg.every, epochs=dense_cfg.epochs,
             stop_after_epochs=dense_cfg.get("stop_after_epochs", None),
+            stop_after_steps=dense_cfg.get("stop_after_steps", None),
         ))
     debug_cleanup_callback = DebugArtifactCleanupCallback(
         enabled=bool(cfg.get("quick_debug", False)),

@@ -179,17 +179,19 @@ class DenseCheckpoints(Callback):
 
     Saves `<filename>_step_<N>_object.ckpt` (the whole model, like `ModelObjectCallBack`) at the untrained start (step 0),
     at every step of `steps`, and then every `every` steps while the run is within its first `epochs` epochs. With
-    `stop_after_epochs` the run ends after that epoch (the learning-rate schedule stays the one of `trainer.max_epochs`).
+    `stop_after_epochs` the run ends after that epoch, with `stop_after_steps` after that training step (the checkpoint of
+    that step is saved first); the learning-rate schedule stays the one of `trainer.max_epochs` in both cases.
     `dense_checkpoints.json` in the run folder holds the steps per epoch, which `race.evaluate` needs to place the epoch
     checkpoints between them. The checkpoints are not uploaded to the Hub (pod.UPLOAD_IGNORE): `race.evaluate` reads them on
     the pod, and its small `race/` folder is what travels.
     """
 
-    def __init__(self, dirpath, filename, steps=(), every=1000, epochs=2, stop_after_epochs=None):
+    def __init__(self, dirpath, filename, steps=(), every=1000, epochs=2, stop_after_epochs=None, stop_after_steps=None):
         super().__init__()
         self.dirpath, self.filename = Path(dirpath), filename
         self.steps, self.every, self.epochs = {int(s) for s in steps}, int(every), int(epochs)
         self.stop_after_epochs = None if stop_after_epochs is None else int(stop_after_epochs)
+        self.stop_after_steps = None if stop_after_steps is None else int(stop_after_steps)
 
     def _save(self, trainer, pl_module, step: int) -> None:
         if not trainer.is_global_zero:
@@ -203,7 +205,8 @@ class DenseCheckpoints(Callback):
         self.dirpath.mkdir(parents=True, exist_ok=True)
         (self.dirpath / 'dense_checkpoints.json').write_text(
             json.dumps({'steps_per_epoch': int(trainer.num_training_batches), 'steps': sorted(self.steps),
-                        'every': self.every, 'epochs': self.epochs, 'stop_after_epochs': self.stop_after_epochs})
+                        'every': self.every, 'epochs': self.epochs, 'stop_after_epochs': self.stop_after_epochs,
+                        'stop_after_steps': self.stop_after_steps})
         )  # fmt: skip
         if trainer.global_step == 0:  # not after a resume: the untrained model is what the run started from
             self._save(trainer, pl_module, 0)
@@ -212,6 +215,9 @@ class DenseCheckpoints(Callback):
         step = int(trainer.global_step)
         if step in self.steps or (step % self.every == 0 and trainer.current_epoch < self.epochs):
             self._save(trainer, pl_module, step)
+        if self.stop_after_steps is not None and step >= self.stop_after_steps:
+            logging.info(f'Stopping after step {step} (dense_checkpoints.stop_after_steps)')
+            trainer.should_stop = True
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self.stop_after_epochs is not None and trainer.current_epoch + 1 >= self.stop_after_epochs:

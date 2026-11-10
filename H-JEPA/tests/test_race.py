@@ -81,6 +81,22 @@ def test_dense_checkpoints_stop_after_the_epoch_they_are_told_to(tmp_path):
     assert not never.should_stop
 
 
+def test_dense_checkpoints_stop_after_the_step_they_are_told_to(tmp_path):
+    cb = DenseCheckpoints(tmp_path, 'm', steps=[5], every=100, epochs=1, stop_after_steps=5)
+    trainer, module = fake_trainer(), FakeModule()
+    for step in range(1, 5):
+        trainer.global_step = step
+        cb.on_train_batch_end(trainer, module, None, None, 0)
+    assert not trainer.should_stop
+    trainer.global_step = 5
+    cb.on_train_batch_end(trainer, module, None, None, 0)
+    assert trainer.should_stop and saved(tmp_path) == [5]  # the checkpoint of the last step is written before the stop
+    never = fake_trainer()
+    never.global_step = 50
+    DenseCheckpoints(tmp_path, 'm', steps=[]).on_train_batch_end(never, module, None, None, 0)
+    assert not never.should_stop
+
+
 def test_the_state_encoder_reads_the_state_and_ignores_pixel_keys():
     encoder, dim = build_encoder(
         {

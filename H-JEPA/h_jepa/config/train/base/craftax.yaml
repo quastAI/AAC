@@ -54,6 +54,7 @@ dense_checkpoints:
   every: 1000
   epochs: 2
   stop_after_epochs: null
+  stop_after_steps: null  # ends the run after this training step (A5: 2000), the schedule stays the one of trainer.max_epochs
 spt_dir: null  # a local folder for stable-pretraining's logs and checkpoints (<run>/spt then links to it; the notebook sets it): they are written at every logging step
 resume_every_n_steps: 2000  # full-state resume checkpoint (0 = off), see utils.ResumeCheckpoint
 grad_clip_per_level: true  # each level clips its own gradient norm (trainer.gradient_clip_val), as in the DROID recipe
