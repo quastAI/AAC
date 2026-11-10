@@ -206,7 +206,7 @@ def test_every_race_run_has_its_own_notebook():
         assert [r['name'] for r in trained] == [exp] and trained[0]['trace']
         assert trained[0]['overrides'].count('dense_checkpoints.enabled=true')
         found.add(exp)
-    assert found == pod_experiments(spec, planned=False) == {'B2', 'A3', 'A4'}
+    assert found == pod_experiments(spec, planned=False) == {'B2', 'A3', 'A4', 'A5'}
     # the 2x2 of the race: every run read at many steps
     traced = {
         r['name']
@@ -214,7 +214,7 @@ def test_every_race_run_has_its_own_notebook():
         for r in e.get('runs', [])
         if r.get('trace') and r.get('train', True)
     }
-    assert set(trace_config(TRACES[0])[1]) == traced == {'B2', 'V3', 'A3', 'A4'}
+    assert set(trace_config(TRACES[0])[1]) == traced == {'B2', 'V3', 'A3', 'A4', 'A5'}
 
 
 def test_the_race_notebooks_differ_only_in_title_and_configuration():

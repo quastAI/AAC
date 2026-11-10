@@ -168,3 +168,13 @@ experiments:
     runs:
       - {name: A3, train: false, trace: true}
       - {name: A4, config: craftax_hjepa_state, probe: false, trace: true, overrides: [num_levels=1, level1.wm.detach_pred_target=true, dense_checkpoints.enabled=true]}
+
+  A5:
+    title: Ablation (not a model candidate), B1 without the prediction loss (SIGReg and the IDM only; the predictor is not trained), stopped after step 2000 with the 10-epoch schedule kept; the latent read at the dense checkpoints, next to B2 and V3
+    runs:
+      # B1 settings otherwise. The prediction term gets weight 0 (the term stays in the graph, so every logged key exists): the encoder is shaped by
+      # SIGReg (0.09) and the IDM (0.1) alone. If the mobs and ores the untrained encoder reads survive here and are lost in B2 and V3, the
+      # prediction loss is the force that removes them (the race); if they are lost here too, SIGReg and the IDM remove them before the
+      # predictor has any say. `stop_after_steps` ends the run at step 2000, the last dense checkpoint of the early race (B2: the predictor reaches
+      # copy-level error at about 1000 to 2000), the learning-rate schedule stays B1's.
+      - {name: A5, config: craftax_hjepa, probe: false, trace: true, overrides: [num_levels=1, +level1.loss.embed.pred.enabled=true, +level1.loss.embed.pred.weight=0.0, dense_checkpoints.enabled=true, dense_checkpoints.stop_after_steps=2000, health.probe_at_end=false]}
