@@ -1,0 +1,485 @@
+{
+ "file": "data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_val.h5",
+ "episodes": 262,
+ "frames": 151017,
+ "seed": 0,
+ "seconds": 20,
+ "total_pixel_variance_per_pixel": 2274.226333571212,
+ "strip_share_of_variance": 0.24858370417238623,
+ "map_share_of_variance": 0.7514162958276137,
+ "daylight_linear_share_of_variance": 0.09269271456806528,
+ "class_mass": {
+  "block:grass": 0.1309090406145373,
+  "block:sand": 0.11205184100594641,
+  "block:water": 0.06273896320439688,
+  "block:stone": 0.03629900440675161,
+  "block:tree": 0.015712290843192128,
+  "block:path": 0.013641307837149869,
+  "block:lava": 0.009544917238235686,
+  "mob:cow": 0.003371256734750037,
+  "block:coal": 0.002984011491937315,
+  "block:furnace": 0.002617922872193842,
+  "player:facing": 0.001935066253588118,
+  "block:iron": 0.001656417002044721,
+  "mob:zombie": 0.0015290083512059713,
+  "block:out_of_bounds": 0.0014822944436521798,
+  "block:crafting_table": 0.0014641775153960669,
+  "block:plant": 0.0006719398718846462,
+  "mob:skeleton": 0.0005977724654528353,
+  "block:diamond": 0.00047711988512467665,
+  "mob:arrow": 9.9529643168228e-05,
+  "block:ripe_plant": 9.84045345523488e-06
+ },
+ "class_tile_share": {
+  "block:out_of_bounds": 0.0074514148909105935,
+  "block:grass": 0.4029435267595381,
+  "block:water": 0.13264763825990963,
+  "block:stone": 0.17408967202367945,
+  "block:tree": 0.03243717274299603,
+  "block:path": 0.10332857206633647,
+  "block:coal": 0.006372813827625046,
+  "block:iron": 0.004561545837501311,
+  "block:diamond": 0.0006026879691177686,
+  "block:crafting_table": 0.004548729506419593,
+  "block:furnace": 0.004868924177944504,
+  "block:sand": 0.11585461324905313,
+  "block:lava": 0.008974529037213713,
+  "block:plant": 0.001301498421348419,
+  "block:ripe_plant": 1.666123040623284e-05,
+  "mob:zombie": 0.006177578384146882,
+  "mob:cow": 0.0065220172819680415,
+  "mob:skeleton": 0.002231216438568014,
+  "mob:arrow": 0.0013850181788976118
+ },
+ "between_class_share": 0.3997937221340638,
+ "steps_moved_share": 0.4187257470730656,
+ "plain_diff_energy_share_on_moved_steps": 0.8971407728092641,
+ "plain_diff_energy_per_step": {
+  "moved": 11396856.266265346,
+  "still": 941274.5421431017
+ },
+ "aligned_diff_share": {
+  "mob": 0.20801874966661188,
+  "block": 0.04872273683167536,
+  "player": 0.17985745423162616,
+  "rest": 0.5634010592700865
+ },
+ "aligned_over_plain_energy": 0.2352234850137919,
+ "strip_diff_energy_over_map_plain": 0.05817859044126829,
+ "spearman_mass_vs_latent_r2": {
+  "A5": {
+   "step": 2000,
+   "n": 18,
+   "rho_mass": 0.8448828825572454,
+   "rho_tile_share": 0.8552241663094763,
+   "pairs": [
+    {
+     "class": "block:out_of_bounds",
+     "mass": 0.0014822944436521798,
+     "tile_share": 0.0074514148909105935,
+     "latent_r2": 0.15
+    },
+    {
+     "class": "block:grass",
+     "mass": 0.1309090406145373,
+     "tile_share": 0.4029435267595381,
+     "latent_r2": 0.91
+    },
+    {
+     "class": "block:water",
+     "mass": 0.06273896320439688,
+     "tile_share": 0.13264763825990963,
+     "latent_r2": 0.92
+    },
+    {
+     "class": "block:stone",
+     "mass": 0.03629900440675161,
+     "tile_share": 0.17408967202367945,
+     "latent_r2": 0.89
+    },
+    {
+     "class": "block:tree",
+     "mass": 0.015712290843192128,
+     "tile_share": 0.03243717274299603,
+     "latent_r2": 0.35
+    },
+    {
+     "class": "block:path",
+     "mass": 0.013641307837149869,
+     "tile_share": 0.10332857206633647,
+     "latent_r2": 0.79
+    },
+    {
+     "class": "block:coal",
+     "mass": 0.002984011491937315,
+     "tile_share": 0.006372813827625046,
+     "latent_r2": 0.22
+    },
+    {
+     "class": "block:iron",
+     "mass": 0.001656417002044721,
+     "tile_share": 0.004561545837501311,
+     "latent_r2": 0.13
+    },
+    {
+     "class": "block:diamond",
+     "mass": 0.00047711988512467665,
+     "tile_share": 0.0006026879691177686,
+     "latent_r2": 0.01
+    },
+    {
+     "class": "block:crafting_table",
+     "mass": 0.0014641775153960669,
+     "tile_share": 0.004548729506419593,
+     "latent_r2": 0.14
+    },
+    {
+     "class": "block:furnace",
+     "mass": 0.002617922872193842,
+     "tile_share": 0.004868924177944504,
+     "latent_r2": 0.04
+    },
+    {
+     "class": "block:sand",
+     "mass": 0.11205184100594641,
+     "tile_share": 0.11585461324905313,
+     "latent_r2": 0.83
+    },
+    {
+     "class": "block:lava",
+     "mass": 0.009544917238235686,
+     "tile_share": 0.008974529037213713,
+     "latent_r2": 0.51
+    },
+    {
+     "class": "block:plant",
+     "mass": 0.0006719398718846462,
+     "tile_share": 0.001301498421348419,
+     "latent_r2": 0.16
+    },
+    {
+     "class": "mob:zombie",
+     "mass": 0.0015290083512059713,
+     "tile_share": 0.006177578384146882,
+     "latent_r2": 0.05
+    },
+    {
+     "class": "mob:cow",
+     "mass": 0.003371256734750037,
+     "tile_share": 0.0065220172819680415,
+     "latent_r2": 0.04
+    },
+    {
+     "class": "mob:skeleton",
+     "mass": 0.0005977724654528353,
+     "tile_share": 0.002231216438568014,
+     "latent_r2": 0.04
+    },
+    {
+     "class": "mob:arrow",
+     "mass": 9.9529643168228e-05,
+     "tile_share": 0.0013850181788976118,
+     "latent_r2": 0.03
+    }
+   ],
+   "n_kept": 18,
+   "rho_mass_vs_kept_ratio": 0.7316821465428276,
+   "kept_ratio": {
+    "block:out_of_bounds": 0.2459016393442623,
+    "block:grass": 0.9578947368421054,
+    "block:water": 0.989247311827957,
+    "block:stone": 0.978021978021978,
+    "block:tree": 0.4430379746835443,
+    "block:path": 0.9080459770114943,
+    "block:coal": 0.3283582089552239,
+    "block:iron": 0.20634920634920637,
+    "block:diamond": 0.0625,
+    "block:crafting_table": 0.2545454545454546,
+    "block:furnace": 0.0784313725490196,
+    "block:sand": 0.9120879120879121,
+    "block:lava": 0.6538461538461539,
+    "block:plant": 0.5925925925925926,
+    "mob:zombie": 0.09803921568627451,
+    "mob:cow": 0.06451612903225806,
+    "mob:skeleton": 0.08695652173913043,
+    "mob:arrow": 0.16666666666666666
+   }
+  },
+  "B2": {
+   "step": 2000,
+   "n": 18,
+   "rho_mass": 0.8431372549019607,
+   "rho_tile_share": 0.7770897832817338,
+   "pairs": [
+    {
+     "class": "block:out_of_bounds",
+     "mass": 0.0014822944436521798,
+     "tile_share": 0.0074514148909105935,
+     "latent_r2": 0.018061740419428207
+    },
+    {
+     "class": "block:grass",
+     "mass": 0.1309090406145373,
+     "tile_share": 0.4029435267595381,
+     "latent_r2": 0.9577688476313916
+    },
+    {
+     "class": "block:water",
+     "mass": 0.06273896320439688,
+     "tile_share": 0.13264763825990963,
+     "latent_r2": 0.9561955064048324
+    },
+    {
+     "class": "block:stone",
+     "mass": 0.03629900440675161,
+     "tile_share": 0.17408967202367945,
+     "latent_r2": 0.911593893417114
+    },
+    {
+     "class": "block:tree",
+     "mass": 0.015712290843192128,
+     "tile_share": 0.03243717274299603,
+     "latent_r2": 0.40132356429283966
+    },
+    {
+     "class": "block:path",
+     "mass": 0.013641307837149869,
+     "tile_share": 0.10332857206633647,
+     "latent_r2": 0.8656032616443232
+    },
+    {
+     "class": "block:coal",
+     "mass": 0.002984011491937315,
+     "tile_share": 0.006372813827625046,
+     "latent_r2": 0.2212998681496411
+    },
+    {
+     "class": "block:iron",
+     "mass": 0.001656417002044721,
+     "tile_share": 0.004561545837501311,
+     "latent_r2": 0.11845262006947932
+    },
+    {
+     "class": "block:diamond",
+     "mass": 0.00047711988512467665,
+     "tile_share": 0.0006026879691177686,
+     "latent_r2": 0.013913155824857193
+    },
+    {
+     "class": "block:crafting_table",
+     "mass": 0.0014641775153960669,
+     "tile_share": 0.004548729506419593,
+     "latent_r2": 0.13708088085646375
+    },
+    {
+     "class": "block:furnace",
+     "mass": 0.002617922872193842,
+     "tile_share": 0.004868924177944504,
+     "latent_r2": 0.02425538296399321
+    },
+    {
+     "class": "block:sand",
+     "mass": 0.11205184100594641,
+     "tile_share": 0.11585461324905313,
+     "latent_r2": 0.9157734127083574
+    },
+    {
+     "class": "block:lava",
+     "mass": 0.009544917238235686,
+     "tile_share": 0.008974529037213713,
+     "latent_r2": 0.48067720434774575
+    },
+    {
+     "class": "block:plant",
+     "mass": 0.0006719398718846462,
+     "tile_share": 0.001301498421348419,
+     "latent_r2": 0.2013427663644909
+    },
+    {
+     "class": "mob:zombie",
+     "mass": 0.0015290083512059713,
+     "tile_share": 0.006177578384146882,
+     "latent_r2": 0.0656565004817452
+    },
+    {
+     "class": "mob:cow",
+     "mass": 0.003371256734750037,
+     "tile_share": 0.0065220172819680415,
+     "latent_r2": 0.03545903152846108
+    },
+    {
+     "class": "mob:skeleton",
+     "mass": 0.0005977724654528353,
+     "tile_share": 0.002231216438568014,
+     "latent_r2": 0.04864224305693288
+    },
+    {
+     "class": "mob:arrow",
+     "mass": 9.9529643168228e-05,
+     "tile_share": 0.0013850181788976118,
+     "latent_r2": 0.022450099169258886
+    }
+   ],
+   "n_kept": 18,
+   "rho_mass_vs_kept_ratio": 0.6759545923632612,
+   "kept_ratio": {
+    "block:out_of_bounds": 0.03205186134908386,
+    "block:grass": 1.0248530222361543,
+    "block:water": 1.0394251455315524,
+    "block:stone": 1.0303795399969298,
+    "block:tree": 0.5174235965652868,
+    "block:path": 1.0316696953606348,
+    "block:coal": 0.3546966050268329,
+    "block:iron": 0.19803859988610797,
+    "block:diamond": 0.10373170385819584,
+    "block:crafting_table": 0.2649466828702768,
+    "block:furnace": 0.051445705062647215,
+    "block:sand": 1.030587557752871,
+    "block:lava": 0.6439995926366281,
+    "block:plant": 0.9078195989172521,
+    "mob:zombie": 0.16013692942469107,
+    "mob:cow": 0.06421702959582812,
+    "mob:skeleton": 0.1209341821107889,
+    "mob:arrow": 0.14950073885508144
+   }
+  },
+  "V3": {
+   "step": 2000,
+   "n": 18,
+   "rho_mass": 0.8596491228070176,
+   "rho_tile_share": 0.8039215686274509,
+   "pairs": [
+    {
+     "class": "block:out_of_bounds",
+     "mass": 0.0014822944436521798,
+     "tile_share": 0.0074514148909105935,
+     "latent_r2": 0.02579212280483023
+    },
+    {
+     "class": "block:grass",
+     "mass": 0.1309090406145373,
+     "tile_share": 0.4029435267595381,
+     "latent_r2": 0.9604169672529553
+    },
+    {
+     "class": "block:water",
+     "mass": 0.06273896320439688,
+     "tile_share": 0.13264763825990963,
+     "latent_r2": 0.9433174177258898
+    },
+    {
+     "class": "block:stone",
+     "mass": 0.03629900440675161,
+     "tile_share": 0.17408967202367945,
+     "latent_r2": 0.9282160814905432
+    },
+    {
+     "class": "block:tree",
+     "mass": 0.015712290843192128,
+     "tile_share": 0.03243717274299603,
+     "latent_r2": 0.4083442092584695
+    },
+    {
+     "class": "block:path",
+     "mass": 0.013641307837149869,
+     "tile_share": 0.10332857206633647,
+     "latent_r2": 0.8331392550256532
+    },
+    {
+     "class": "block:coal",
+     "mass": 0.002984011491937315,
+     "tile_share": 0.006372813827625046,
+     "latent_r2": 0.22852220391086164
+    },
+    {
+     "class": "block:iron",
+     "mass": 0.001656417002044721,
+     "tile_share": 0.004561545837501311,
+     "latent_r2": 0.13158364619285912
+    },
+    {
+     "class": "block:diamond",
+     "mass": 0.00047711988512467665,
+     "tile_share": 0.0006026879691177686,
+     "latent_r2": 0.01817120364613467
+    },
+    {
+     "class": "block:crafting_table",
+     "mass": 0.0014641775153960669,
+     "tile_share": 0.004548729506419593,
+     "latent_r2": 0.2461749043361523
+    },
+    {
+     "class": "block:furnace",
+     "mass": 0.002617922872193842,
+     "tile_share": 0.004868924177944504,
+     "latent_r2": 0.02602690369908689
+    },
+    {
+     "class": "block:sand",
+     "mass": 0.11205184100594641,
+     "tile_share": 0.11585461324905313,
+     "latent_r2": 0.9029358718607814
+    },
+    {
+     "class": "block:lava",
+     "mass": 0.009544917238235686,
+     "tile_share": 0.008974529037213713,
+     "latent_r2": 0.476651339982066
+    },
+    {
+     "class": "block:plant",
+     "mass": 0.0006719398718846462,
+     "tile_share": 0.001301498421348419,
+     "latent_r2": 0.19330493930061332
+    },
+    {
+     "class": "mob:zombie",
+     "mass": 0.0015290083512059713,
+     "tile_share": 0.006177578384146882,
+     "latent_r2": 0.05497487675074253
+    },
+    {
+     "class": "mob:cow",
+     "mass": 0.003371256734750037,
+     "tile_share": 0.0065220172819680415,
+     "latent_r2": 0.04188460052230858
+    },
+    {
+     "class": "mob:skeleton",
+     "mass": 0.0005977724654528353,
+     "tile_share": 0.002231216438568014,
+     "latent_r2": 0.041555267458325384
+    },
+    {
+     "class": "mob:arrow",
+     "mass": 9.9529643168228e-05,
+     "tile_share": 0.0013850181788976118,
+     "latent_r2": 0.01688573154444517
+    }
+   ],
+   "n_kept": 18,
+   "rho_mass_vs_kept_ratio": 0.6656346749226005,
+   "kept_ratio": {
+    "block:out_of_bounds": 0.04334339438452919,
+    "block:grass": 1.0209360698093692,
+    "block:water": 1.0166275378723935,
+    "block:stone": 1.0287668582381142,
+    "block:tree": 0.5189021904360701,
+    "block:path": 0.9772812641217977,
+    "block:coal": 0.3520696857084456,
+    "block:iron": 0.21013779127869878,
+    "block:diamond": 0.12036140180569116,
+    "block:crafting_table": 0.44251199623647874,
+    "block:furnace": 0.05432930358861273,
+    "block:sand": 1.0214268452316337,
+    "block:lava": 0.6984056527387966,
+    "block:plant": 0.7448666442694939,
+    "mob:zombie": 0.11037056978251465,
+    "mob:cow": 0.0741569754279788,
+    "mob:skeleton": 0.09210196301765565,
+    "mob:arrow": 0.11043907165721033
+   }
+  }
+ }
+}

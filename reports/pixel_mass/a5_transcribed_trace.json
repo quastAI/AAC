@@ -1,0 +1,48 @@
+[
+ {
+  "step": 0,
+  "r2": {
+   "view:coal": 0.67,
+   "view:iron": 0.63,
+   "view:diamond": 0.16,
+   "view:lava": 0.78,
+   "view:crafting_table": 0.55,
+   "view:furnace": 0.51,
+   "view:tree": 0.79,
+   "view:grass": 0.95,
+   "view:water": 0.93,
+   "view:stone": 0.91,
+   "view:sand": 0.91,
+   "view:path": 0.87,
+   "view:plant": 0.27,
+   "view:out_of_bounds": 0.61,
+   "mob:cow": 0.62,
+   "mob:zombie": 0.51,
+   "mob:skeleton": 0.46,
+   "mob:arrow": 0.18
+  }
+ },
+ {
+  "step": 2000,
+  "r2": {
+   "view:coal": 0.22,
+   "view:iron": 0.13,
+   "view:diamond": 0.01,
+   "view:lava": 0.51,
+   "view:crafting_table": 0.14,
+   "view:furnace": 0.04,
+   "view:tree": 0.35,
+   "view:grass": 0.91,
+   "view:water": 0.92,
+   "view:stone": 0.89,
+   "view:sand": 0.83,
+   "view:path": 0.79,
+   "view:plant": 0.16,
+   "view:out_of_bounds": 0.15,
+   "mob:cow": 0.04,
+   "mob:zombie": 0.05,
+   "mob:skeleton": 0.04,
+   "mob:arrow": 0.03
+  }
+ }
+]

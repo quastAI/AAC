@@ -1,0 +1,159 @@
+{
+ "file": "data/hf/craftax-classic-pqn-rnn-v1/data/craftax_expert_val.h5",
+ "frames": 151017,
+ "episodes": 262,
+ "D": 192,
+ "kappa": 1.5,
+ "tau": 0.0078125,
+ "k": 96,
+ "seconds": 25,
+ "cluster_purity_vs_labels": 0.916083577003828,
+ "cluster_nmi_vs_labels": 0.5588248201676179,
+ "label_free": {
+  "ess": 0.5000277486521992,
+  "max_weight": 8.12665252960149,
+  "frames_upweighted": 0.2774853162226769,
+  "targets": 68,
+  "clusters_below_tau": 68,
+  "clusters_at_tau_after": 5
+ },
+ "with_labels": {
+  "ess": 0.5000034474648216,
+  "max_weight": 8.21191748676008
+ },
+ "label_classes": {
+  "grass": {
+   "mass_before": 0.12784218193553581,
+   "mass_label_free": 0.15682545248726623,
+   "mass_with_labels": 0.12232472939524304,
+   "best_tenth": 0.4806613028265344,
+   "frames_with": 0.9283325718296616
+  },
+  "sand": {
+   "mass_before": 0.10911153788670157,
+   "mass_label_free": 0.11340441800770897,
+   "mass_with_labels": 0.09842414499864295,
+   "best_tenth": 0.5564700128432007,
+   "frames_with": 0.6955905626518869
+  },
+  "water": {
+   "mass_before": 0.06266138342533593,
+   "mass_label_free": 0.06237050248921605,
+   "mass_with_labels": 0.057368764244689695,
+   "best_tenth": 0.36691190127367007,
+   "frames_with": 0.5272254117086156
+  },
+  "stone": {
+   "mass_before": 0.03629900502507551,
+   "mass_label_free": 0.04753446495709802,
+   "mass_with_labels": 0.03994821282158074,
+   "best_tenth": 0.18716173429251082,
+   "frames_with": 0.764039810087606
+  },
+  "tree": {
+   "mass_before": 0.01571229069238954,
+   "mass_label_free": 0.020441435471115123,
+   "mass_with_labels": 0.01422467298507565,
+   "best_tenth": 0.08025120949539584,
+   "frames_with": 0.6682029175523285
+  },
+  "path": {
+   "mass_before": 0.013164549626332614,
+   "mass_label_free": 0.01646155776431337,
+   "mass_with_labels": 0.01578157207029229,
+   "best_tenth": 0.08868734516670296,
+   "frames_with": 0.6877238986339286
+  },
+  "lava": {
+   "mass_before": 0.009510417295398995,
+   "mass_label_free": 0.013942275879094121,
+   "mass_with_labels": 0.011642793502307456,
+   "best_tenth": 0.10438433129216916,
+   "frames_with": 0.16980207526304986
+  },
+  "coal": {
+   "mass_before": 0.0029840114866725325,
+   "mass_label_free": 0.004898498927351669,
+   "mass_with_labels": 0.0035815032301635217,
+   "best_tenth": 0.023653069638108024,
+   "frames_with": 0.2827893548408457
+  },
+  "mob:cow": {
+   "mass_before": 0.0027602019052659025,
+   "mass_label_free": 0.004663497427208962,
+   "mass_with_labels": 0.0035352320006533603,
+   "best_tenth": 0.018232232487063963,
+   "frames_with": 0.3268771065509181
+  },
+  "furnace": {
+   "mass_before": 0.0026179228727713335,
+   "mass_label_free": 0.004005974303532406,
+   "mass_with_labels": 0.0032764622458725918,
+   "best_tenth": 0.02152527857976712,
+   "frames_with": 0.24687286861744043
+  },
+  "iron": {
+   "mass_before": 0.0016564169737248713,
+   "mass_label_free": 0.0022786061921619355,
+   "mass_with_labels": 0.0021208013136034118,
+   "best_tenth": 0.015572444598729085,
+   "frames_with": 0.2142738896945377
+  },
+  "out_of_bounds": {
+   "mass_before": 0.0014822944453631239,
+   "mass_label_free": 0.0018576056984399248,
+   "mass_with_labels": 0.002033315814205781,
+   "best_tenth": 0.013818466543946766,
+   "frames_with": 0.043326248038300326
+  },
+  "crafting_table": {
+   "mass_before": 0.0014641775398151423,
+   "mass_label_free": 0.002061244089249577,
+   "mass_with_labels": 0.001856714987114449,
+   "best_tenth": 0.010393128083784071,
+   "frames_with": 0.2663011449042161
+  },
+  "mob:zombie": {
+   "mass_before": 0.001217674768196764,
+   "mass_label_free": 0.0025241013944796455,
+   "mass_with_labels": 0.001809798723897836,
+   "best_tenth": 0.009051419276728829,
+   "frames_with": 0.30718395942178695
+  },
+  "mob:skeleton": {
+   "mass_before": 0.0007234195886277804,
+   "mass_label_free": 0.0011621982822892275,
+   "mass_with_labels": 0.002059218866927531,
+   "best_tenth": 0.007877037159566874,
+   "frames_with": 0.1273830098598171
+  },
+  "plant": {
+   "mass_before": 0.0006719398777778143,
+   "mass_label_free": 0.0010776653227140252,
+   "mass_with_labels": 0.0011521427950820023,
+   "best_tenth": 0.006314672096966422,
+   "frames_with": 0.07837528225299138
+  },
+  "diamond": {
+   "mass_before": 0.0004771198800105105,
+   "mass_label_free": 0.0005902346973753671,
+   "mass_with_labels": 0.000962794291294926,
+   "best_tenth": 0.004603088454427022,
+   "frames_with": 0.03543971870716542
+  },
+  "mob:arrow": {
+   "mass_before": 0.00012372002396161697,
+   "mass_label_free": 0.0001843899337448099,
+   "mass_with_labels": 0.0004391929112828564,
+   "best_tenth": 0.0012001560949953646,
+   "frames_with": 0.07822960328969586
+  },
+  "ripe_plant": {
+   "mass_before": 9.840453324708278e-06,
+   "mass_label_free": 1.554452412970985e-05,
+   "mass_with_labels": 8.154455993097933e-06,
+   "best_tenth": 8.944075868743362e-05,
+   "frames_with": 0.0010329962851864359
+  }
+ }
+}
