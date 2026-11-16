@@ -22,6 +22,9 @@ PANELS = [
     ("prediction MSE", r"^(fit|train|validate)/pred_loss_level1(_step|_epoch)?$"),
     ("SIGReg", r"^(fit|train|validate)/sigreg_loss_level1(_step|_epoch)?$"),
     ("inverse dynamics", r"^(fit|train|validate)/idm_(loss|accuracy_loss)_level1(_step|_epoch)?$"),
+    # the Sieve (V4): reconstruction (stage 1), decoded prediction and gated reconstruction (stage 2), per patch summed
+    ("Sieve: pixel terms", r"^(fit|train|validate)/(recon|recon_plain|decoded_pred|gated_recon)_loss_level1(_step|_epoch)?$"),
+    ("Sieve: gate open, sharp patches", r"^(fit|train|validate)/(gate_open|sharp_share)_loss_level1(_step|_epoch)?$"),
     ("latent: rank, scale", r"^health(_val)?/level1/rep/(erank_frac|std_mean|dead_dim_frac)$"),
     ("dynamics: against copy and shuffled actions", r"^health(_val)?/level1/dyn/(pred_over_copy|action_lift)$"),
     ("open-loop drift (validation)", r"^health_val/level1/drift_h\d+/(ratio_last|useful_horizon)$"),

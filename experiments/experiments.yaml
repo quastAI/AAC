@@ -178,3 +178,14 @@ experiments:
       # predictor has any say. `stop_after_steps` ends the run at step 2000, the last dense checkpoint of the early race (B2: the predictor reaches
       # copy-level error at about 1000 to 2000), the learning-rate schedule stays B1's.
       - {name: A5, config: craftax_hjepa, probe: false, trace: true, overrides: [num_levels=1, +level1.loss.embed.pred.enabled=true, +level1.loss.embed.pred.weight=0.0, dense_checkpoints.enabled=true, dense_checkpoints.stop_after_steps=2000, health.probe_at_end=false]}
+
+  # The Sieve (aac_recipe.md; config craftax_sieve, package H-JEPA/h_jepa/sieve): the two-stage model of the grid study. One id for both stages:
+  # stage 1 trains into V4/, stage 2 into V4_stage2_from<E>/, forked from the stage-1 epoch E that the stage-1 report proposes and the user sets.
+  # Both stages run from notebooks/runpod_V4.ipynb, each as two workers on one GPU: the training and the metrics worker (`sieve.watch`), which
+  # reads every epoch checkpoint as it appears. A stage is extended by resuming with more epochs (constant learning rate). No planning and no
+  # comparison with B1 yet (decided 2026-11-16: first a sound flat model). `run.py plan V4` shows stage 1's training only.
+  V4:
+    title: Variant, the Sieve (two stages, aac_recipe.md); stage 1 here, stage 2 forked from a stage-1 epoch, both from runpod_V4.ipynb with the metrics worker
+    stages: true  # the notebook runs the stages and the metrics; tests and run.py treat it apart from the variants compared with B1
+    runs:
+      - {name: V4, config: craftax_sieve, probe: false}

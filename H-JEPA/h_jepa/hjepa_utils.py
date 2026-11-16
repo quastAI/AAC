@@ -256,6 +256,20 @@ def hjepa_forward(self, batch, stage, cfg, *, normalize_batch):
                 output[f"map_{name}_loss{level_suffix}"] = value  # *_loss: the names that get logged
             level_loss = level_loss + map_coeff * map_loss
 
+        sieve_cfg = level_cfg.get("sieve", None)
+        if level == 1 and sieve_cfg is not None and sieve_cfg.get("enabled", False):
+            # the Sieve's pixel terms (sieve/losses.py, README id V4); its prediction term is the one above
+            from sieve.losses import sieve_terms
+
+            if nsteps is not None or rollout_n != 1:
+                raise ValueError("the Sieve predicts one step (level1.wm.rollout_n 1, no nsteps)")
+            terms = sieve_terms(jepa.decoder, emb, teacher_pred[:, -1], batch["pixels_level1"], sieve_cfg, history_size)
+            for name, value in terms.items():
+                if name != "sieve_loss":
+                    output[f"{name}{level_suffix}"] = value
+            output[f"sieve_loss{level_suffix}"] = terms["sieve_loss"]
+            level_loss = terms["sieve_loss"] if level_loss is None else level_loss + terms["sieve_loss"]
+
         pop_vq_aux = getattr(jepa.action_encoder, "pop_aux", None)
         vq_aux = pop_vq_aux() if callable(pop_vq_aux) else None
         if vq_aux is not None:
@@ -489,6 +503,18 @@ def create_world_model(cfg):
                 class_power=float(level_cfg.map.class_power),
                 max_ratio=float(level_cfg.map.max_ratio),
                 tile_mask=player,
+            )
+
+        sieve_cfg = level_cfg.get("sieve", None)
+        if level == 1 and sieve_cfg is not None and sieve_cfg.get("enabled", False):
+            from sieve.decoder import PatchDecoder
+
+            # the Sieve's pixel decoder (README id V4): reads the latent only, trained and saved with the model
+            jepa.decoder = PatchDecoder(
+                embed_dim,
+                hidden_dim=int(sieve_cfg.decoder.hidden_dim),
+                patch_dim=int(sieve_cfg.decoder.patch_dim),
+                tau_scale=float(sieve_cfg.tau_scale),
             )
 
         jepas.append(jepa)

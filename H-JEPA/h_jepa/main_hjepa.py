@@ -89,7 +89,8 @@ class ResumableManager(spt.Manager):
 
 def _build_hjepa_optimizer_factory(model, cfg):
     optimizer_cfg = OmegaConf.to_container(cfg.optimizer, resolve=True)
-    optimizer_cfg.pop("warmup_ratio", None)
+    for key in ("warmup_ratio", "schedule", "warmup_steps"):  # the schedule's settings, not the optimizer's
+        optimizer_cfg.pop(key, None)
 
     def optimizer_factory(params):
         param_groups = []
@@ -113,6 +114,45 @@ def _build_hjepa_optimizer_factory(model, cfg):
         return spt.optim.create_optimizer(param_groups, optimizer_cfg)
 
     return optimizer_factory
+
+
+def warmup_factor(step: int, warmup: int) -> float:
+    """The learning-rate factor of the constant schedule: linear from 1/warmup to 1, then 1."""
+    return 1.0 if warmup <= 0 else min(1.0, (step + 1) / warmup)
+
+
+def constant_schedule(warmup_steps: int):
+    """A short linear warmup, then a constant rate (`optimizer.schedule: constant`, the Sieve). Unlike the cosine
+    schedule it does not end at `trainer.max_epochs`: a run is extended by resuming with more epochs."""
+
+    def scheduler(optimizer):
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, partial(warmup_factor, warmup=int(warmup_steps)))
+
+    return scheduler
+
+
+def load_initial_weights(world_model, path) -> None:
+    """The weights of a saved model object (`*_object.ckpt`) into the new model, before training: a fork (the Sieve's stage
+    2 starts from a stage-1 checkpoint with a fresh optimiser). A resumed run then loads its own state over them."""
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    saved = saved if hasattr(saved, "get_level") else saved.model
+    world_model.load_state_dict(saved.state_dict())
+    logging.info(f"Initial weights from {path}")
+
+
+def _sieve_setup(cfg, world_model, train_dataset, run_dir) -> None:
+    """The Sieve's pixel variance (and so `tau`) from the training frames, into the decoder and `<run>/sieve_pixels.json`."""
+    sieve_cfg = cfg.level1.get("sieve", None)
+    if sieve_cfg is None or not sieve_cfg.get("enabled", False):
+        return
+    from sieve.decoder import pixel_variance
+
+    decoder = world_model.get_level(1).decoder
+    variance = pixel_variance(train_dataset.h5_path, frames=int(sieve_cfg.pixel_variance_frames), seed=int(cfg.seed))
+    decoder.set_pixel_variance(variance)
+    info = {"pixel_variance": variance, "tau": float(decoder.tau), "tau_scale": decoder.tau_scale, "stage": int(sieve_cfg.stage)}
+    (Path(run_dir) / "sieve_pixels.json").write_text(json.dumps(info, indent=1))
+    logging.info(f"Sieve stage {info['stage']}: pixel variance {variance:.4f}, tau {info['tau']:.5f}")
 
 
 def _configure_runtime_performance():
@@ -212,11 +252,17 @@ def run(cfg):
         "model": world_model,
     }
 
+    if cfg.get("init_from", None):  # a fork: these weights, a fresh optimiser (the Sieve's stage 2)
+        load_initial_weights(world_model, cfg.init_from)
+
     optimizers = {}
     hjepa_optimizer = _build_hjepa_optimizer_factory(world_model, cfg)
     scheduler = {"type": "LinearWarmupCosineAnnealingLR"}
+    interval = "epoch"
     warmup_ratio = cfg.optimizer.get("warmup_ratio", None)
-    if warmup_ratio is not None:
+    if cfg.optimizer.get("schedule", "cosine") == "constant":
+        scheduler, interval = constant_schedule(int(cfg.optimizer.get("warmup_steps", 0))), "step"
+    elif warmup_ratio is not None:
         def scheduler(optimizer, module):
             total_steps = int(module.trainer.estimated_stepping_batches)
             return spt.optim.create_scheduler(
@@ -234,7 +280,7 @@ def run(cfg):
             "modules": str(model_name),
             "optimizer": hjepa_optimizer,
             "scheduler": scheduler,
-            "interval": "epoch",
+            "interval": interval,
         }
 
     data_module = spt.data.DataModule(train=train, val=val)
@@ -282,12 +328,14 @@ def run(cfg):
         (run_dir / "balance.json").write_text(json.dumps(balance_summary, indent=1))
     normalizer_path = save_normalizer_artifact(normalizer_artifact, run_dir)
     logging.info(f"Saved training normalizer artifact to {normalizer_path}")
+    _sieve_setup(cfg, models["model"], train_dataset, run_dir)
 
     lr_callback = pl.pytorch.callbacks.LearningRateMonitor(logging_interval="step")
     object_dump_callback = ModelObjectCallBack(
         dirpath=run_dir,
         filename=cfg.output_model_name,
         epoch_interval=int(cfg.save_every_n_epochs),
+        save_initial=bool(cfg.get("save_initial_model", False)),
     )
     dense_cfg = cfg.get("dense_checkpoints", None)
     dense_callbacks = []

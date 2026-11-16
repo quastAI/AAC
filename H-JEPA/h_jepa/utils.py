@@ -140,16 +140,29 @@ class DebugArtifactCleanupCallback(Callback):
 
 
 class ModelObjectCallBack(Callback):
-    """Save the model object periodically and when training finishes."""
+    """Save the model object periodically and when training finishes.
 
-    def __init__(self, dirpath, filename='model_object', epoch_interval=1):
+    `save_initial`: also `<filename>_epoch_0_object.ckpt`, the model the run starts from (untrained, or the weights a
+    fork loaded), written once at the start of a fresh run (not after a resume).
+    """
+
+    def __init__(self, dirpath, filename='model_object', epoch_interval=1, save_initial=False):
         super().__init__()
         self.dirpath, self.filename, self.epoch_interval = (
             Path(dirpath),
             filename,
             epoch_interval,
         )
+        self.save_initial = bool(save_initial)
         self._saved_final = False
+
+    def on_train_start(self, trainer, pl_module):
+        if not (self.save_initial and trainer.is_global_zero) or trainer.global_step:
+            return
+        path = self.dirpath / f'{self.filename}_epoch_0_object.ckpt'
+        self.dirpath.mkdir(parents=True, exist_ok=True)
+        torch.save(pl_module.model, path)
+        logging.info(f'Saved the starting model to {path}')
 
     def _save_final(self, trainer, pl_module):
         if self._saved_final or not trainer.is_global_zero:

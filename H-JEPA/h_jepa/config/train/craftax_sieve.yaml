@@ -1,0 +1,48 @@
+# Craftax-Classic: the Sieve, the two-stage world model of aac_recipe.md (README id V4; the package sieve/).
+# Level 1 alone. Against B1: SIGReg off, IDM off, the prediction target detached, history 1, a pixel decoder from the
+# latent, a constant learning rate, batch 256. The encoder, the predictor (transformer, depth 4) and the action embedding are
+# B1's. Stage 1 (availability, `level1.sieve.stage=1`): the error-weighted reconstruction of every frame + the next-latent
+# MSE. Stage 2 (consolidation, `level1.sieve.stage=2 init_from=<a stage-1 *_epoch_N_object.ckpt> optimizer.warmup_steps=0`):
+# the decoded prediction + the prediction-gated reconstruction + the next-latent MSE, a fresh optimiser, the same rate.
+# Every value marked heuristic is the grid study's starting point, not tuned in Craftax.
+defaults:
+- craftax_hjepa
+- _self_
+output_model_name: craftax_sieve
+num_levels: 1
+init_from: null  # a model object whose weights the run starts from (stage 2: the stage-1 epoch checkpoint), a fresh optimiser
+save_initial_model: true  # <name>_epoch_0_object.ckpt: the untrained model (stage 1) or the fork's parent (stage 2), read like an epoch
+loader:
+  batch_size: 256  # B1: 128; the smoke run of the notebook times both
+optimizer:
+  lr: 7.0e-05
+  schedule: constant  # a linear warmup, then constant: a stage is extended by resuming with more epochs (main_hjepa.constant_schedule)
+  warmup_steps: 500  # stage 1; stage 2 switches instantly (0)
+trainer:
+  max_epochs: 6  # stage 1; stage 2 runs 4 (the notebook sets both); about 7.8k steps per epoch at batch 256
+health:
+  probe_at_end: false  # the old probe suite is not used for this model: the sieve metrics read every epoch (sieve.watch)
+level1:
+  lr: 7.0e-05  # B1's 5e-5 x sqrt(2) for the doubled batch (heuristic)
+  idm_coeff: 0.0
+  wm:
+    history_size: 1
+    rollout_n: 1
+    detach_pred_target: true
+  loss:
+    embed:
+      sigreg:
+        enabled: false
+  sieve:
+    enabled: true
+    stage: 1
+    recon_weight: 0.3  # lambda_rec, stage 1 (heuristic; the metrics log the encoder gradient of the reconstruction over the prediction's)
+    error_power: 1.0  # w_i = (e_i / mean e)^power, mean 1 ...
+    error_cap: 20.0  # ... capped
+    decoded_pred_weight: 1.0  # stage 2
+    gated_recon_weight: 1.0  # stage 2
+    tau_scale: 0.03  # tau = tau_scale x the mean per-pixel variance of the training frames (heuristic, the grid's 0.005 at a variance of 0.154)
+    pixel_variance_frames: 4096  # frames the variance is measured on at the start of a run
+    decoder:
+      hidden_dim: 512
+      patch_dim: 128

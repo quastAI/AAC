@@ -134,6 +134,110 @@ def progress(name, key, n=1):
     return [line.strip()[:200] for line in lines[-n:]] or ["(no progress line yet)"]
 
 
+STEP_LINE = re.compile(r"\[Epoch (\d+)/(\d+)\] step (\d+)/(\d+) \(([\d.]+) it/s\)")
+
+
+def training_progress(name):
+    """(epoch, step, steps per epoch, it/s) of the last progress line of a training log, or None. Outside a terminal
+    stable-pretraining prints `[Epoch e/E] step s/S (r it/s)` every 50 batches; r is the mean since the epoch began."""
+    lines = progress(name, "] step ", 1)
+    m = STEP_LINE.search(lines[0]) if lines else None
+    return None if m is None else (int(m.group(1)), int(m.group(3)), int(m.group(4)), float(m.group(5)))
+
+
+def steady_rate(log_path, skip=100):
+    """Steps per second of a training log after its first `skip` steps (start-up and the first batches left out): from two
+    progress lines of the last epoch, whose rates are means since the epoch began (elapsed = step / rate)."""
+    text = Path(log_path).read_text(errors="replace")
+    points = [(int(m.group(1)), int(m.group(3)), float(m.group(5))) for m in STEP_LINE.finditer(text)]
+    if not points:
+        return None
+    last_epoch = points[-1][0]
+    points = [(s, r) for e, s, r in points if e == last_epoch and r > 0]
+    early = [p for p in points if p[0] >= skip][:1] or points[:1]
+    (s1, r1), (s2, r2) = early[0], points[-1]
+    return r2 if s2 == s1 else (s2 - s1) / (s2 / r2 - s1 / r1)
+
+
+class GpuSampler:
+    """`with GpuSampler() as gpu: ...` samples nvidia-smi every `every` s; then gpu.utilization (mean %) and gpu.memory (max MiB)."""
+
+    def __init__(self, every=2.0):
+        self.every, self.samples, self.utilization, self.memory = every, [], None, None
+
+    def _run(self):
+        while not self._stop.wait(self.every):
+            out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+                                 capture_output=True, text=True)  # fmt: skip
+            try:
+                util, mem = out.stdout.strip().splitlines()[0].split(",")
+                self.samples.append((float(util), float(mem)))
+            except (ValueError, IndexError):
+                pass
+
+    def __enter__(self):
+        import threading
+
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=5)
+        busy = self.samples[len(self.samples) // 4 :] or self.samples  # the start-up quarter left out
+        if busy:
+            self.utilization = sum(u for u, _ in busy) / len(busy)
+            self.memory = max(m for _, m in self.samples)
+        return False
+
+
+def follow(bars, every=20):
+    """Progress bars of detached jobs until all of them have ended (interrupting the cell stops the bars, not the jobs).
+    `bars` maps a label to (job name, position), position() -> (done, total) or None while unknown."""
+    from tqdm.auto import tqdm
+
+    shown = {label: tqdm(total=1, desc=label, unit="", dynamic_ncols=True) for label in bars}
+
+    def update():
+        for label, (_, position) in bars.items():
+            got = position()
+            if got is not None:
+                done, total = got
+                bar = shown[label]
+                bar.total = max(int(total), 1)
+                bar.n = min(int(done), bar.total)
+                bar.refresh()
+
+    try:
+        while any(running(job) for job, _ in bars.values()):
+            update()
+            time.sleep(every)
+        update()
+    finally:
+        for bar in shown.values():
+            bar.close()
+    for label, (job, _) in bars.items():
+        path = LOGS / f"{job}.log"
+        last_launch = path.read_text(errors="replace").rsplit(LAUNCH_MARK, 1)[-1] if path.exists() else ""
+        traceback = "Traceback (most recent call last)" in last_launch  # can be a harmless one: read the log's end
+        print(f"{label}: ended" + (f", with a traceback in {path}: check whether it failed" if traceback else ""))
+
+
+def sieve_bars(train_job, metrics_job, run, epochs):
+    """The two bars of a Sieve stage: the training's steps over `epochs` epochs and the metrics worker's epochs (0 to `epochs`)."""
+
+    def steps():
+        p = training_progress(train_job)
+        return None if p is None else (p[0] * p[2] + p[1], epochs * p[2])
+
+    def checks():
+        return len(list((Path(run) / "sieve").glob("epoch_*.json"))), epochs + 1
+
+    return {f"{train_job}: training (steps)": (train_job, steps), f"{metrics_job}: metrics (epochs)": (metrics_job, checks)}
+
+
 def wait(name, key, every=120):
     while running(name):
         time.sleep(every)

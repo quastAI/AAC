@@ -49,6 +49,7 @@ Every model and job has an id, used in `experiments/experiments.yaml`, `run.py`,
 | A3 | state_mlp | B1 with an MLP encoder of the simulator `state` instead of the ViT on the pixels (everything else B1's, 10 epochs); dense checkpoints in the first two epochs | built |
 | A4 | state_mlp_stopgrad | A3 with the prediction target detached (the state twin of V3) | built |
 | A5 | flat_no_pred | B1 with the prediction term at weight 0 (SIGReg and the IDM only; the predictor is not trained), stopped after step 2000 (`dense_checkpoints.stop_after_steps`, B1's schedule): what the latent holds before prediction has a say, read next to B2 and V3 (mobs and ores lost by the prediction loss, or by SIGReg and the IDM first?) | built |
+| V4 | sieve | the Sieve, the two-stage model of `aac_recipe.md` (config `craftax_sieve`): no SIGReg, no IDM, target detached, history 1, a pixel decoder from the latent, constant rate, batch 256. Stage 1 (error-weighted reconstruction + next-latent MSE) trains in `V4`; stage 2 (decoded prediction + prediction-gated reconstruction) forks from a stage-1 epoch into `V4_stage2_from<E>`. A metrics worker (`sieve.watch`) reads every epoch; `runpod_V4.ipynb` | built |
 | P0 | planning_settings | goal offset, horizon and CEM, set on B1 | not designed |
 | P2 | plan_oracle_chain | B1 to the diamond through oracle subgoals (set C) | for the final comparison |
 | P3 | plan_diamond | B1 to the diamond from the final goal only (set B) | for the final comparison |

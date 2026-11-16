@@ -125,9 +125,57 @@ def pod_experiments(spec, planned):
         exp_id
         for exp_id, e in spec['experiments'].items()
         if exp_id[0] in 'VAB' and exp_id != 'B1' and not e.get('blocked')
+        and not e.get('stages')  # the Sieve (V4): its own notebook, below
         and bool(e.get('protocols')) == planned
         and any(r.get('train', True) for r in e.get('runs', []))
     }
+
+
+def test_the_sieve_notebook_runs_both_stages_with_a_metrics_worker():
+    spec = run.load_spec()
+    staged = [k for k, e in spec['experiments'].items() if e.get('stages')]
+    assert staged == ['V4']
+    trained = [r for r in spec['experiments']['V4']['runs'] if r.get('train', True)]
+    assert [r['name'] for r in trained] == ['V4']
+    assert trained[0]['config'] == 'craftax_sieve'
+    path = NOTEBOOK_DIR / 'runpod_V4.ipynb'
+    assert path not in VARIANTS and path not in TRACES
+    text = text_of('runpod_V4.ipynb')
+    for needle in (
+        'EXPERIMENT = "V4"',
+        'SPEC["config"]',  # the config of experiments.yaml
+        '"sieve.counterfactuals"',  # the bank, once
+        'pod.GpuSampler()',  # the smoke run times the batch sizes ...
+        'pod.steady_rate(',
+        'sorted({128, BATCH_SIZE})',
+        '"--once"',  # ... and one metrics pass of each stage
+        'launch(TRAIN1',  # stage 1: two workers
+        'launch(METRICS1',
+        '"sieve.watch"',
+        '"--training-pid-file"',
+        'pod.follow(pod.sieve_bars(',  # progress bars
+        '"level1.sieve.stage=2"',  # stage 2: a fork with a fresh optimiser
+        'f"init_from={parent}"',
+        '"optimizer.warmup_steps=0"',
+        'FORK_EPOCH = None',  # set by the user from the report
+        'pod.upload(',
+    ):
+        assert needle in text, needle
+    for name in ('GpuSampler', 'steady_rate', 'follow', 'sieve_bars', 'training_progress'):
+        assert hasattr(pod, name), name
+
+
+def test_the_training_progress_and_the_steady_rate_are_read_from_the_log(pod_dirs):
+    log = pod.LOGS / 'job.log'
+    log.write_text(
+        f'{pod.LAUNCH_MARK} job\n'
+        '[Epoch 0/1] step 50/300 (2.0 it/s)\n'  # the start-up is slow
+        '[Epoch 0/1] step 100/300 (4.0 it/s)\n'  # elapsed 25 s
+        '[Epoch 0/1] step 300/300 (6.0 it/s)\n'  # elapsed 50 s
+    )
+    assert pod.training_progress('job') == (0, 300, 300, 6.0)
+    assert pod.steady_rate(log) == pytest.approx(200 / 25)  # steps 100 to 300 in 25 s
+    assert pod.training_progress('missing') is None
 
 
 def test_every_variant_has_its_own_notebook():
