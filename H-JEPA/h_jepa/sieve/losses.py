@@ -3,7 +3,14 @@ prediction term of `hjepa_forward` (`level1.wm.detach_pred_target: true`).
 
     stage 1   recon_weight * sum_i w_i e_i(D(z_t), x_t)                  every frame of the clip, w_i error-weighted
     stage 2   sum_i e_i(D(p), x_next)                                     decoded prediction
-              + sum_i exp(-sg(e_i(D(p), x_next)) / tau) e_i(D(z_next), x_next)   prediction-gated reconstruction
+              + sum_i exp(-sg(g_i) / tau) e_i(D(z_next), x_next)          prediction-gated reconstruction
+
+The gate's error g_i (`gate`): `abs` (the recipe's) e_i(D(p), x_next), the decoded prediction against the pixels, so a
+patch the decoder cannot draw within tau is shut even where the prediction is right; `diff` e_i(D(p), D(z_next)), the
+decoded prediction against the decoded latent of the next frame: only what the prediction changes in the picture, the
+decoder's precision left out (`gate_analysis.py`, 2026-11-17: on stage-1 epoch 8 it opens the ores and stations from
+about 0.1 to 0.6, keeps entering and changed tiles at about half the unchanged ones, and does not shut night noise the
+latent does not hold).
 
 `e_i` is the mean squared error of patch i (pixels in [0, 1]); sums run over the 81 patches, means over frames and
 clips. Every value whose key holds `loss` is logged by `hjepa_forward` (train and validation): the diagnostic ones are
@@ -48,12 +55,20 @@ def sieve_terms(decoder, emb: torch.Tensor, pred: torch.Tensor, pixels: torch.Te
             e_pred = patch_errors(decoder(pred), x_next)
         out["sieve_loss"] = float(cfg.get("recon_weight", 0.3)) * recon
     elif stage == 2:
-        e_pred = patch_errors(decoder(pred), x_next)  # (B, 81)
-        e_real = patch_errors(decoder(emb[:, history]), x_next)
+        decoded_pred, decoded_real = decoder(pred), decoder(emb[:, history])
+        e_pred = patch_errors(decoded_pred, x_next)  # (B, 81)
+        e_real = patch_errors(decoded_real, x_next)
         tau = decoder.tau
         if not torch.isfinite(tau):
             raise ValueError("the decoder's tau is not set: the training sets it from the pixel variance (PatchDecoder.set_pixel_variance)")
-        gate = torch.exp(-e_pred.detach() / tau)
+        kind = str(cfg.get("gate", "abs"))
+        if kind == "abs":
+            gate_error = e_pred.detach()
+        elif kind == "diff":
+            gate_error = patch_errors(decoded_pred.detach(), decoded_real.detach())
+        else:
+            raise ValueError(f"level1.sieve.gate must be abs or diff, got {kind}")
+        gate = torch.exp(-gate_error / tau)
         decoded = e_pred.sum(-1).mean()
         gated = (gate * e_real).sum(-1).mean()
         out["decoded_pred_loss"] = decoded

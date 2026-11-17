@@ -41,6 +41,7 @@ level1:
     error_cap: 20.0  # ... capped
     decoded_pred_weight: 1.0  # stage 2
     gated_recon_weight: 1.0  # stage 2
+    gate: abs  # stage 2: abs = the decoded prediction against the pixels (the recipe's); diff = against the decoded latent of the next frame (sieve/losses.py)
     tau_scale: 0.03  # tau = tau_scale x the mean per-pixel variance of the training frames (heuristic, the grid's 0.005 at a variance of 0.154)
     pixel_variance_frames: 4096  # frames the variance is measured on at the start of a run
     decoder:

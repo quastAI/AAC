@@ -124,6 +124,30 @@ def test_stage_two_needs_tau():
         )
 
 
+def test_the_diff_gate_leaves_the_decoders_precision_out():
+    torch.manual_seed(0)
+    decoder = dec.PatchDecoder(8, hidden_dim=16, patch_dim=8)
+    decoder.set_pixel_variance(1e-4 / decoder.tau_scale)  # a tight tau
+    emb = torch.randn(3, 2, 8, requires_grad=True)
+    pixels = torch.randn(3, 2, 3, 63, 63)  # nothing the decoder can draw
+    same = emb[:, 1].detach().clone().requires_grad_(True)  # foreseen
+
+    def run(pred, gate):
+        cfg = {'stage': 2, 'gate': gate}
+        return ls.sieve_terms(decoder, emb, pred, pixels, cfg, history=1)
+
+    out = {g: run(same, g) for g in ('abs', 'diff')}
+    assert float(out['abs']['gate_open_loss']) < 1e-3  # pixels: shut
+    assert float(out['diff']['gate_open_loss']) == pytest.approx(1.0)
+    g_emb, g_pred = grads(out['diff']['gated_recon_loss'], emb, same)
+    assert g_pred.abs().sum() == 0  # still a stop-gradient
+    assert g_emb[:, 1].abs().sum() > 0
+    missed = run(torch.randn(3, 8) * 10, 'diff')  # a wrong prediction
+    assert float(missed['gate_open_loss']) < 0.5
+    with pytest.raises(ValueError, match='gate'):
+        run(same, 'other')
+
+
 def test_pixel_variance_reads_runs_of_frames(tmp_path):
     rng = np.random.default_rng(0)
     pixels = rng.choice([0, 255], (200, 63, 63, 3)).astype(np.uint8)
