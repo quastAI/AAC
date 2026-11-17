@@ -189,3 +189,15 @@ experiments:
     stages: true  # the notebook runs the stages and the metrics; tests and run.py treat it apart from the variants compared with B1
     runs:
       - {name: V4, config: craftax_sieve, probe: false}
+
+  # The one-stage Sieve (config craftax_sieve_joint, sieve/losses.py mode `joint`; decided 2026-11-17 after V4's first runs): V4's two
+  # stages as one training from the start, with a relative, floored gate on the decoded difference (the decoded prediction against the
+  # decoded latent of the next frame, measured against the batch's mean error). The gate starts about uniform (stage 1) and grows
+  # selective as the predictor learns (stage 2); no fork, no tau in the gate, and a floor that keeps every patch reconstructed a little.
+  # Runs from notebooks/runpod_V5.ipynb as two workers on one GPU (the training and the metrics worker, `sieve.watch`); the report
+  # proposes the epoch to stop at. Compared with V4's stages by the same metrics; no planning and no comparison with B1 yet.
+  V5:
+    title: Variant, the one-stage Sieve (V4's terms in one run, a relative floored gate on the decoded difference), from runpod_V5.ipynb with the metrics worker
+    stages: true  # notebook-driven like V4 (one stage here): tests and run.py treat it apart from the variants compared with B1
+    runs:
+      - {name: V5, config: craftax_sieve_joint, probe: false}

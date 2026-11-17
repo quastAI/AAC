@@ -1,0 +1,22 @@
+# Craftax-Classic: the one-stage Sieve (README id V5; sieve/losses.py, mode `joint`). The Sieve's two stages as one training
+# from the start: the decoded prediction + the reconstruction of the next frame under a relative, floored gate + the next-latent
+# MSE. The gate reads the decoded prediction against the decoded latent of the next frame (`diff`, no pixels), relative to the
+# batch's mean error (no tau), so it is about uniform early (stage 1: everything is reconstructed) and grows selective as the
+# predictor gets content right (stage 2: what the predictor cannot foresee falls to the floor); the floor keeps a minimum
+# reconstruction pressure on every patch. Everything else is the Sieve's (craftax_sieve): no SIGReg, no IDM, target detached,
+# history 1, the pixel decoder from the latent, constant learning rate after a 500-step warmup, batch 256.
+# The gate's numbers are heuristics, not tuned: floor 0.1, beta 1 (at errors that are all alike the gate is 0.43 everywhere;
+# a patch at a tenth of the mean error gets 0.91, at five times the mean the floor).
+defaults:
+- craftax_sieve
+- _self_
+output_model_name: craftax_sieve_joint
+trainer:
+  max_epochs: 10  # one run; extended by resuming (constant rate), as the Sieve's stages
+level1:
+  sieve:
+    stage: joint
+    gate: diff  # the gate's error: the decoded prediction against the decoded latent of the next frame
+    gate_floor: 0.1  # the lowest gate: every patch keeps a tenth of its reconstruction weight
+    gate_beta: 1.0  # selectivity: the gate at the batch's mean error is floor + (1 - floor) e^(-1/beta)
+    error_power: 0.0  # stage 1's error weights off: the gate alone weighs the patches

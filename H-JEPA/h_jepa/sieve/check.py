@@ -22,7 +22,7 @@ Actions (the bypass: content drawn from the action alone is not held in the late
     action_follow_facing      fed a move, the share of predictions whose probed facing is that move's direction
 What moves the latent (counterfactual frames, squared distance over that to an unrelated frame, the planner's unit):
     moves_for_facing, moves_for_mob, moves_for_tile, moves_for_item, moves_for_noise
-Content held at all (stage 2; in stage 1 the own decoder trains on real latents and says the same):
+Content held at all (stage 2 and the one-stage `joint`; in stage 1 the own decoder trains on real latents and says the same):
     fresh_decoder_error       a new decoder fitted to the frozen training latents, its held-out error per patch (mean) ...
     fresh_decoder_worst1pct   ... and its 99th percentile
 """
@@ -156,7 +156,7 @@ def _moves(jepa, bank: dict, device) -> dict:
 
 def evaluate(model, sample, bank=None, sieve_cfg=None, device="cpu", fresh: bool = False, probe_steps: int = pr.STEPS,
              fresh_steps: int = FRESH_STEPS, log=lambda msg: None) -> dict:  # fmt: skip
-    """The metrics of one model (a saved `HJEPA`) on the sample; `fresh` adds the fresh decoder (stage 2)."""
+    """The metrics of one model (a saved `HJEPA`) on the sample; `fresh` adds the fresh decoder (stage 2, joint)."""
     t0 = time.time()
     model = model.to(device)
     model.eval()

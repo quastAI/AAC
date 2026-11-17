@@ -10,7 +10,10 @@ Stage 1 is ready (the epoch to fork stage 2 from) at the first epoch E for which
     (soft)          the predicted facing and faced tile beat copying the last latent (shown, not required)
 Stage 2 can stop at the first epoch E for which E and the epoch before both pass: the facing, the faced tile and the mobs
 no longer rise (as above), the noise moves the latent little (moves_for_noise <= 0.1) and steadily (change <= 0.02), and
-the effective rank moved by at most 5%. Epoch 0 (the start) never qualifies. The thresholds are heuristics (THRESHOLDS),
+the effective rank moved by at most 5%. The one-stage Sieve (`joint`, V5) can stop at the first epoch E for which E and
+the epoch before both pass: no headline probe rises (as above), the noise moves the latent little and steadily (as in
+stage 2), the effective rank moved by at most 5%, and the train/held-out gaps did not grow by more than 0.05 (as in
+stage 1; the reconstruction is gated, so its error is not asked to be flat). Epoch 0 (the start) never qualifies. The thresholds are heuristics (THRESHOLDS),
 not tuned in Craftax; the recipe warns that a dip and recovery inside an epoch is not seen at epoch checkpoints.
 """
 
@@ -77,14 +80,27 @@ def _rel(cur, prev, key):
     return None if a is None or b is None or b == 0 else abs(a - b) / abs(b)
 
 
-def epoch_checks(entries: list[dict], stage: int, thr=THRESHOLDS) -> dict[int, dict]:
+def _gap_growth(cur, prev, thr) -> list[str]:
+    out = []
+    for key in ("recon_gap", "latent_error_gap"):
+        a, b = _num(cur.get(key)), _num(prev.get(key))
+        if a is not None and b is not None and a - b > thr["gap_growth"]:
+            out.append(f"{key} grew {a - b:+.3f}")
+    return out
+
+
+def stage_label(stage) -> str:
+    return "one stage" if stage == "joint" else f"stage {stage}"
+
+
+def epoch_checks(entries: list[dict], stage, thr=THRESHOLDS) -> dict[int, dict]:
     """Per epoch (from the second): whether it passes against the epoch before, and why not."""
     out = {}
     best_rank = 0.0
     for prev, cur in zip(entries, entries[1:]):
         reasons = []
-        if stage == 2:
-            rising = _rising(cur, prev, STAGE2_PROBES, thr)
+        if stage in (2, "joint"):
+            rising = _rising(cur, prev, STAGE2_PROBES if stage == 2 else HEADLINE, thr)
             if rising:
                 reasons.append("still rising: " + ", ".join(rising))
             noise, noise_prev = _num(cur.get("moves_for_noise")), _num(prev.get("moves_for_noise"))
@@ -93,6 +109,8 @@ def epoch_checks(entries: list[dict], stage: int, thr=THRESHOLDS) -> dict[int, d
             r = _rel(cur, prev, "effective_rank")
             if r is not None and r > thr["rank_flat"]:
                 reasons.append(f"rank moved {r:.0%}")
+            if stage == "joint":
+                reasons += _gap_growth(cur, prev, thr)
         else:
             rising = _rising(cur, prev, HEADLINE, thr)
             if rising:
@@ -106,10 +124,7 @@ def epoch_checks(entries: list[dict], stage: int, thr=THRESHOLDS) -> dict[int, d
                 best_rank = max(best_rank, rank)
             if rank < thr["rank_keep"] * best_rank:
                 reasons.append(f"rank fell to {rank:.0f} (best {best_rank:.0f})")
-            for key in ("recon_gap", "latent_error_gap"):
-                a, b = _num(cur.get(key)), _num(prev.get(key))
-                if a is not None and b is not None and a - b > thr["gap_growth"]:
-                    reasons.append(f"{key} grew {a - b:+.3f}")
+            reasons += _gap_growth(cur, prev, thr)
         soft = all(
             _num(cur.get(f"foresees_{n}")) is not None and cur[f"foresees_{n}"] > (_num(cur.get(f"copy_{n}")) or 0)
             for n in ("facing", "faced_tile")
@@ -118,8 +133,8 @@ def epoch_checks(entries: list[dict], stage: int, thr=THRESHOLDS) -> dict[int, d
     return out
 
 
-def ready_epoch(entries: list[dict], stage: int, thr=THRESHOLDS) -> int | None:
-    """The first epoch that passes with the epoch before it passing too (stage 1: the fork; stage 2: the stop)."""
+def ready_epoch(entries: list[dict], stage, thr=THRESHOLDS) -> int | None:
+    """The first epoch that passes with the epoch before it passing too (stage 1: the fork; stage 2 and joint: the stop)."""
     checks = epoch_checks(entries, stage, thr)
     epochs = [e["epoch"] for e in entries]
     for prev, cur in zip(epochs, epochs[1:]):
@@ -144,12 +159,13 @@ def render(run) -> tuple[str, dict]:
     entries = load(run)
     if not entries:
         return f"# Sieve report: {run.parent.name}/{run.name}\n\nNo epoch evaluated yet.\n", {}
-    stage = int(entries[-1].get("stage", 1))
+    stage = entries[-1].get("stage", 1)
+    stage = stage if stage == "joint" else int(stage)
     checks = epoch_checks(entries, stage)
     ready = ready_epoch(entries, stage)
     epochs = [e["epoch"] for e in entries]
-    lines = [f"# Sieve report: {run.parent.name}/{run.name} (stage {stage})", ""]
-    what = "fork stage 2 from" if stage == 1 else "stop stage 2 at"
+    lines = [f"# Sieve report: {run.parent.name}/{run.name} ({stage_label(stage)})", ""]
+    what = {1: "fork stage 2 from", 2: "stop stage 2 at"}.get(stage, "stop the run at")
     if ready is None:
         last = checks.get(epochs[-1])
         why = "; ".join(last["reasons"]) if last and last["reasons"] else "needs two passing epochs in a row"

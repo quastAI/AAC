@@ -6,7 +6,7 @@
 Reads `<name>_epoch_<N>_object.ckpt` (epoch 0 is the model the run started from), writes `<run>/sieve/epoch_<N>.json` per
 checkpoint and `<run>/sieve/report.md` (+ `.png`, `report.json`) after each; a rerun skips the epochs done. It stops after
 epoch `--until-epoch`, after one pass with `--once`, or when the training process of `--training-pid-file` has ended and
-nothing new is left. The run's `config.yaml` says the stage (stage 2 adds the fresh decoder). Progress lines start with
+nothing new is left. The run's `config.yaml` says the stage (stage 2 and the one-stage `joint` add the fresh decoder). Progress lines start with
 `[sieve]`.
 """
 
@@ -65,6 +65,7 @@ def watch(run, train_file, val_file, bank=None, until_epoch=None, pid_file=None,
     from cpu_threads import limit_threads
 
     from . import check, report
+    from .losses import stage_of
     from . import counterfactuals as cf
     from . import sample as sm
 
@@ -78,7 +79,7 @@ def watch(run, train_file, val_file, bank=None, until_epoch=None, pid_file=None,
         time.sleep(poll)
     cfg = OmegaConf.load(run / "config.yaml")
     sieve_cfg = cfg.level1.get("sieve", None)
-    stage = int(sieve_cfg.stage) if sieve_cfg is not None else 0
+    stage = stage_of(sieve_cfg) if sieve_cfg is not None else 0
     t0 = time.time()
     sample = sm.load(train_file, val_file, size=size)
     bank_arrays = cf.load(bank) if bank and Path(bank).exists() else None
@@ -98,7 +99,7 @@ def watch(run, train_file, val_file, bank=None, until_epoch=None, pid_file=None,
                 log(f"epoch {epoch}: not readable yet ({error!r})")
                 continue
             budget = sm.SIZES[size]
-            metrics = check.evaluate(model, sample, bank_arrays, sieve_cfg, device, fresh=stage == 2,
+            metrics = check.evaluate(model, sample, bank_arrays, sieve_cfg, device, fresh=stage in (2, "joint"),
                                      probe_steps=budget["probe_steps"], fresh_steps=budget["fresh_steps"],
                                      log=lambda step, e=epoch: log(f"epoch {e}: {step}"))  # fmt: skip
             metrics.update(epoch=epoch, stage=stage, checkpoint=path.name)

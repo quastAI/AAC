@@ -134,7 +134,7 @@ def pod_experiments(spec, planned):
 def test_the_sieve_notebook_runs_both_stages_with_a_metrics_worker():
     spec = run.load_spec()
     staged = [k for k, e in spec['experiments'].items() if e.get('stages')]
-    assert staged == ['V4']
+    assert staged == ['V4', 'V5']  # the Sieve and the one-stage Sieve
     trained = [r for r in spec['experiments']['V4']['runs'] if r.get('train', True)]
     assert [r['name'] for r in trained] == ['V4']
     assert trained[0]['config'] == 'craftax_sieve'
@@ -163,6 +163,38 @@ def test_the_sieve_notebook_runs_both_stages_with_a_metrics_worker():
         assert needle in text, needle
     for name in ('GpuSampler', 'steady_rate', 'follow', 'sieve_bars', 'training_progress'):
         assert hasattr(pod, name), name
+
+
+def test_the_one_stage_sieve_notebook_runs_one_training_with_its_worker():
+    spec = run.load_spec()
+    runs = spec['experiments']['V5']['runs']
+    trained = [r for r in runs if r.get('train', True)]
+    assert [r['name'] for r in trained] == ['V5']
+    assert trained[0]['config'] == 'craftax_sieve_joint'
+    path = NOTEBOOK_DIR / 'runpod_V5.ipynb'
+    assert path not in VARIANTS and path not in TRACES
+    text = text_of('runpod_V5.ipynb')
+    for needle in (
+        'EXPERIMENT = "V5"',
+        'SPEC["config"]',  # craftax_sieve_joint, from experiments.yaml
+        '"sieve.counterfactuals"',  # the bank, once
+        'pod.GpuSampler()',  # the smoke run times the batch ...
+        'pod.steady_rate(',
+        '"--once"',  # ... and one metrics pass
+        'launch(TRAIN_JOB',  # one training and its metrics worker
+        'launch(METRICS_JOB',
+        '"sieve.watch"',
+        '"--training-pid-file"',
+        'pod.follow(pod.sieve_bars(',
+        'level1.sieve.gate_floor=',  # the gate's two settings
+        'level1.sieve.gate_beta=',
+        '"sieve.gate_analysis"',
+        'pod.upload(',
+    ):
+        assert needle in text, needle
+    for absent in ('init_from', 'FORK_EPOCH', 'level1.sieve.stage=',
+                   'import h5py'):  # one stage; the kernel has no h5py
+        assert absent not in text, absent
 
 
 def test_the_training_progress_and_the_steady_rate_are_read_from_the_log(pod_dirs):

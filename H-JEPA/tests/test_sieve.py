@@ -148,6 +148,49 @@ def test_the_diff_gate_leaves_the_decoders_precision_out():
         run(same, 'other')
 
 
+def test_the_joint_gate_is_relative_uniform_when_alike_and_floored():
+    import math
+
+    errors = torch.tensor([0.1, 1.0, 1.0, 5.0, 0.0])
+    g = ls.relative_gate(errors, floor=0.1, beta=1.0)
+    assert torch.allclose(g, ls.relative_gate(errors * 1000, 0.1, 1.0))
+    assert float(g.min()) >= 0.1 and float(g[-1]) == pytest.approx(1.0)
+    assert float(g[0]) > float(g[1]) > float(g[3])  # small error: open
+    alike = ls.relative_gate(torch.full((50,), 3.0), floor=0.1, beta=1.0)
+    assert torch.allclose(alike, torch.full((50,), 0.1 + 0.9 * math.exp(-1)))
+    sharper = ls.relative_gate(errors, floor=0.1, beta=0.25)
+    assert float(sharper[3]) < float(g[3])
+    for floor, beta in ((1.0, 1.0), (-0.1, 1.0), (0.1, 0.0)):
+        with pytest.raises(ValueError):
+            ls.relative_gate(errors, floor, beta)
+
+
+def test_one_stage_decodes_the_prediction_and_gates_the_next_frame():
+    torch.manual_seed(0)
+    decoder = dec.PatchDecoder(8, hidden_dim=16, patch_dim=8)  # no tau
+    emb = torch.randn(3, 2, 8, requires_grad=True)
+    pred = torch.randn(3, 8, requires_grad=True)
+    pixels = torch.randn(3, 2, 3, 63, 63)
+    cfg = {'stage': 'joint', 'gate': 'diff', 'gate_floor': 0.1}
+    out = ls.sieve_terms(decoder, emb, pred, pixels, cfg, history=1)
+    for key in ('decoded_pred_loss', 'gated_recon_loss', 'gate_open_loss',
+                'gate_shut_share_loss', 'gate_std_loss', 'recon_plain_loss'):
+        assert key in out, key
+    assert 'sharp_share_loss' not in out  # tau is not needed here
+    assert 0.1 <= float(out['gate_open_loss']) <= 1.0
+    g_emb, g_pred = grads(out['gated_recon_loss'], emb, pred)
+    assert g_pred.abs().sum() == 0  # the gate is a stop-gradient
+    assert g_emb[:, 0].abs().sum() == 0  # only the next frame
+    assert g_emb[:, 1].abs().sum() > 0
+    g_emb, g_pred = grads(out['decoded_pred_loss'], emb, pred)
+    assert g_pred.abs().sum() > 0 and g_emb.abs().sum() == 0
+    total = float(out['decoded_pred_loss']) + float(out['gated_recon_loss'])
+    assert float(out['sieve_loss']) == pytest.approx(total)
+    for bad in ({'stage': 3}, {'stage': 'one'}):
+        with pytest.raises(ValueError, match='stage'):
+            ls.sieve_terms(decoder, emb, pred, pixels, bad, history=1)
+
+
 def test_pixel_variance_reads_runs_of_frames(tmp_path):
     rng = np.random.default_rng(0)
     pixels = rng.choice([0, 255], (200, 63, 63, 3)).astype(np.uint8)
@@ -185,6 +228,22 @@ def test_the_config_is_b1_with_the_recipes_changes():
     assert sv['save_initial_model'] is True and sv['init_from'] is None
 
 
+def test_the_one_stage_config_is_the_sieve_with_the_relative_gate():
+    from omegaconf import OmegaConf
+
+    sv = OmegaConf.to_container(compose('craftax_sieve'), resolve=True)
+    jo = OmegaConf.to_container(compose('craftax_sieve_joint'), resolve=True)
+    s = jo['level1']['sieve']
+    assert s['stage'] == 'joint' and s['gate'] == 'diff'
+    assert s['gate_floor'] == 0.1 and s['gate_beta'] == 1.0
+    assert s['error_power'] == 0.0 and jo['trainer']['max_epochs'] == 10
+    for key in ('encoder', 'predictor', 'action_embed', 'wm', 'idm_coeff',
+                'loss', 'lr'):
+        assert jo['level1'][key] == sv['level1'][key], key
+    assert jo['optimizer'] == sv['optimizer']
+    assert jo['loader']['batch_size'] == sv['loader']['batch_size']
+
+
 def forward(model, cfg, stage):
     from hjepa_utils import hjepa_forward
     from main_hjepa import _normalize_uint8_images_on_device
@@ -218,6 +277,8 @@ def test_both_stages_train_the_model_through_the_usual_forward():
     for stage, keys in (
         (1, ('recon_loss_level1', 'pred_loss_level1')),
         (2, ('decoded_pred_loss_level1', 'gated_recon_loss_level1')),
+        ('joint', ('decoded_pred_loss_level1', 'gated_recon_loss_level1',
+                   'gate_open_loss_level1', 'gate_std_loss_level1')),
     ):
         out = forward(model, cfg, stage)
         for key in (*keys, 'sieve_loss_level1', 'loss'):
@@ -394,6 +455,21 @@ def test_stage_two_stops_when_the_noise_is_released_and_probes_settle():
     assert not rp.epoch_checks(entries, stage=2)[2]['passes']  # 0.3 -> 0.05
 
 
+def test_one_stage_stops_when_every_probe_settles_and_the_noise_is_low():
+    entries = [entry(e, c, 0.05, noise=n) for e, (c, n) in enumerate(
+        [(0.5, 0.9), (0.6, 0.3), (0.7, 0.05), (0.705, 0.05), (0.706, 0.05)]
+    )]
+    for e in entries:
+        e['stage'] = 'joint'
+    checks = rp.epoch_checks(entries, stage='joint')
+    assert not checks[2]['passes']  # the cow (a headline probe) still rises
+    assert checks[3]['passes'] and checks[4]['passes']
+    assert rp.ready_epoch(entries, stage='joint') == 4
+    grown = [dict(e) for e in entries]
+    grown[4]['latent_error_gap'] = 1.2  # the held-out gap grew
+    assert rp.ready_epoch(grown, stage='joint') is None
+
+
 # --------------------------------------------------------------------------
 # the worker, end to end on a tiny file
 
@@ -418,7 +494,7 @@ def write_files(folder, episodes=8):
             f['ep_offset'] = np.arange(episodes) * n1
 
 
-@pytest.mark.parametrize('stage', [1, 2])
+@pytest.mark.parametrize('stage', [1, 2, 'joint'])
 def test_the_worker_reads_every_epoch_and_writes_the_report(tmp_path, stage):
     from omegaconf import OmegaConf
 
@@ -451,9 +527,9 @@ def test_the_worker_reads_every_epoch_and_writes_the_report(tmp_path, stage):
                 'moves_for_mob', 'moves_for_tile', 'moves_for_item',
                 'recon_vs_pred_gradient'):
         assert key in m, key
-    assert ('fresh_decoder_error' in m) == (stage == 2)
+    assert ('fresh_decoder_error' in m) == (stage != 1)
     text = (run / 'sieve' / 'report.md').read_text()
-    assert f'(stage {stage})' in text and 'holds_mob_cow' in text
+    assert f'({rp.stage_label(stage)})' in text and 'holds_mob_cow' in text
     again = watch.watch(run, tmp_path / 'train.h5', tmp_path / 'val.h5',
                         once=True, size='quick', device='cpu')
     assert again == []  # a rerun skips the epochs done

@@ -92,10 +92,14 @@ def labels(part, t: np.ndarray, t1: np.ndarray) -> dict:
     return dict(stratum=stratum.numpy(), kind=kind.numpy(), moved=moved.numpy(), shift_agreement=agreement)
 
 
-def summarise(e_pred: np.ndarray, e_real: np.ndarray, tau: float, e_diff: np.ndarray | None = None) -> dict:
+def summarise(e_pred: np.ndarray, e_real: np.ndarray, tau: float, e_diff: np.ndarray | None = None,
+              joint_scale: float | None = None, floor: float = 0.1, beta: float = 1.0) -> dict:
     """The numbers of one group of patches (1-d arrays of errors). With `e_diff` also the two gates that leave the
     decoder's precision out: `rel_*` gates on what the prediction loses against the latent of the real next frame,
-    max(e_pred - e_real, 0); `diff_*` on the decoded prediction against the decoded latent of the next frame (no pixels)."""
+    max(e_pred - e_real, 0); `diff_*` on the decoded prediction against the decoded latent of the next frame (no pixels).
+    With `joint_scale` also `joint_gate`, the one-stage Sieve's gate (V5): floor + (1 - floor) exp(-e_diff / (beta scale)),
+    the scale the mean decoded difference of the whole sample (the training uses each batch's), and `joint_shut`, the
+    share near the floor."""
     n = int(e_pred.size)
     if n == 0:
         return dict(n=0)
@@ -115,6 +119,10 @@ def summarise(e_pred: np.ndarray, e_real: np.ndarray, tau: float, e_diff: np.nda
         for k in KS:
             out[f"rel_gate@{k}"] = float(np.exp(-excess / (k * tau)).mean())
             out[f"diff_gate@{k}"] = float(np.exp(-e_diff / (k * tau)).mean())
+        if joint_scale:
+            joint = floor + (1.0 - floor) * np.exp(-e_diff / (beta * joint_scale))
+            out["joint_gate"] = float(joint.mean())
+            out["joint_shut"] = float((joint < floor + 0.05 * (1.0 - floor)).mean())
     return out
 
 
@@ -131,7 +139,7 @@ def decoded_difference(decoder, a: np.ndarray, b: np.ndarray, device, chunk: int
     return torch.cat(out).numpy()
 
 
-def analyse(model, sample, device="cpu", label: str = "model") -> dict:
+def analyse(model, sample, device="cpu", label: str = "model", floor: float = 0.1, beta: float = 1.0) -> dict:
     """The gate analysis of one saved `HJEPA` on the held-out frames of `sample`."""
     from . import check
 
@@ -154,8 +162,10 @@ def analyse(model, sample, device="cpu", label: str = "model") -> dict:
     stratum, kind = lab["stratum"], lab["kind"]
     is_tile = stratum < NUM_STRATA  # the map tiles with a block or a mob, not the player or the strip
 
+    scale = float(e_diff.mean())
+
     def group(mask):
-        return summarise(e_pred[mask], e_real[mask], tau, e_diff[mask])
+        return summarise(e_pred[mask], e_real[mask], tau, e_diff[mask], scale, floor, beta)
 
     out = dict(label=label, tau=tau, size=dict(transitions=int(len(t)), patches=int(e_pred.size)),
                overall=group(np.ones_like(is_tile)), moved_share=float(lab["moved"].mean()),
@@ -236,15 +246,16 @@ def _row(name, g) -> str:
 
 HEADER = "| {} | n | own_ok | sharp | " + " | ".join(f"gate@{k}" for k in KS) + " | median e/tau |\n|---|---|---|---|" + "---|" * (len(KS) + 1)
 GATES3 = ("", "rel_", "diff_")
-HEADER3 = ("| {} | n | sharp abs | rel | diff | gate@1 abs | rel | diff | gate@4 abs | rel | diff |\n"
-           "|---|---|---|---|---|---|---|---|---|---|---|")  # fmt: skip
+HEADER3 = ("| {} | n | sharp abs | rel | diff | gate@1 abs | rel | diff | gate@4 abs | rel | diff | one-stage gate | near floor |\n"
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|")  # fmt: skip
 
 
 def _row3(name, g) -> str:
     if not g.get("n") or "rel_sharp" not in g:
-        return f"| {name} | {g.get('n', 0)} |" + " - |" * 9
+        return f"| {name} | {g.get('n', 0)} |" + " - |" * 11
     flag = " (few)" if g["n"] < MIN_PATCHES else ""
     cells = [_f(g[f"{p}sharp"]) for p in GATES3] + [_f(g[f"{p}gate@{k}"]) for k in (1, 4) for p in GATES3]
+    cells += [_f(g.get("joint_gate")), _f(g.get("joint_shut"))]
     return f"| {name}{flag} | {g['n']} | " + " | ".join(cells) + " |"
 
 
@@ -254,7 +265,8 @@ def render_gates(result: dict) -> str:
              "abs: exp(-e_pred / tau), the training's gate. rel: exp(-max(e_pred - e_real, 0) / tau), what the prediction "
              "loses against the decoded latent of the real next frame. diff: exp(-|D(p) - D(z_next)|^2 / tau), the decoded "
              "prediction against the decoded latent of the next frame, no pixels. sharp = the share under tau. All three "
-             "come from frames only; the labels only group the patches.", "",
+             "come from frames only; the labels only group the patches. one-stage gate: the V5 gate (floor + (1 - floor) "
+             "exp(-diff / (beta mean diff)), the mean over the whole sample); near floor: its share of patches near the floor.", "",
              "## By what the patch shows", "", HEADER3.format("stratum")]  # fmt: skip
     order = sorted(result["by_stratum"], key=lambda n: -result["by_stratum"][n]["n"])
     lines += [_row3(n, result["by_stratum"][n]) for n in order]
@@ -332,6 +344,8 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--size", default="full", choices=["full", "quick"])
     ap.add_argument("--device", default=None)
+    ap.add_argument("--gate-floor", type=float, default=0.1, help="the one-stage gate's floor (V5)")
+    ap.add_argument("--gate-beta", type=float, default=1.0, help="the one-stage gate's beta (V5)")
     args = ap.parse_args(argv)
 
     from cpu_threads import limit_threads
@@ -348,12 +362,14 @@ def main(argv=None):
             ap.error("--train-file is needed without --val-episodes")
         sample = sm.load(args.train_file, args.val_file, size=args.size)
     print(f"[gate] sample {len(sample.val)} held-out frames, {device}", flush=True)
-    results = [analyse(load_model(args.parent), sample, device, label=f"{args.parent.name} (stage-1 parent)")]
+    gate = dict(floor=args.gate_floor, beta=args.gate_beta)
+    label = f"{args.parent.name} (stage-1 parent)" if args.stage2_run else args.parent.name
+    results = [analyse(load_model(args.parent), sample, device, label=label, **gate)]
     comparison = None
     if args.stage2_run:
         last = last_epoch_checkpoint(args.stage2_run)
         if last is not None and not args.parent_only:
-            results.append(analyse(load_model(last), sample, device, label=f"{last.name} (end of stage 2)"))
+            results.append(analyse(load_model(last), sample, device, label=f"{last.name} (end of stage 2)", **gate))
         comparison = compare(results[0], stage2_loss(args.stage2_run))
     text = "\n".join(render(r, comparison if i == 0 else None) for i, r in enumerate(results))
     text += "\n" + "\n".join(render_gates(r) for r in results)

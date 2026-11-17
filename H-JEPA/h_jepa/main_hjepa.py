@@ -146,11 +146,12 @@ def _sieve_setup(cfg, world_model, train_dataset, run_dir) -> None:
     if sieve_cfg is None or not sieve_cfg.get("enabled", False):
         return
     from sieve.decoder import pixel_variance
+    from sieve.losses import stage_of
 
     decoder = world_model.get_level(1).decoder
     variance = pixel_variance(train_dataset.h5_path, frames=int(sieve_cfg.pixel_variance_frames), seed=int(cfg.seed))
     decoder.set_pixel_variance(variance)
-    info = {"pixel_variance": variance, "tau": float(decoder.tau), "tau_scale": decoder.tau_scale, "stage": int(sieve_cfg.stage)}
+    info = {"pixel_variance": variance, "tau": float(decoder.tau), "tau_scale": decoder.tau_scale, "stage": stage_of(sieve_cfg)}
     (Path(run_dir) / "sieve_pixels.json").write_text(json.dumps(info, indent=1))
     logging.info(f"Sieve stage {info['stage']}: pixel variance {variance:.4f}, tau {info['tau']:.5f}")
 
